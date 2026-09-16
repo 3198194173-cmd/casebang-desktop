@@ -1,0 +1,70 @@
+name: casebang-collaboration
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: casebang_collab
+      POSTGRES_USER: casebang
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - collaboration_database:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: collaboration-server/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./deploy/collaboration.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3100
+      STORAGE_ROOT: /data/workbooks
+      MIGRATIONS_ROOT: /app/collaboration-server/migrations
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: casebang_collab
+      DB_USER: casebang
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
+      DINGTALK_CLIENT_SECRET_FILE: /run/secrets/dingtalk_client_secret
+    secrets:
+      - postgres_password
+      - dingtalk_client_secret
+    volumes:
+      - collaboration_workbooks:/data/workbooks
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - backend
+      - outbound
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  backend:
+    internal: true
+  outbound:
+
+volumes:
+  collaboration_database:
+  collaboration_workbooks:
+
+secrets:
+  postgres_password:
+    file: ./deploy/secrets/postgres_password.txt
+  dingtalk_client_secret:
+    file: ./deploy/secrets/dingtalk_client_secret.txt

@@ -1,0 +1,30 @@
+{
+  "name": "@casebang/collaboration-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CASEBANG material lifecycle collaboration service",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "dingtalk-stream": "2.1.7-beta.1",
+    "fastify": "5.6.1",
+    "pg": "8.16.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/pg": "8.15.6",
+    "tsx": "4.20.6",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

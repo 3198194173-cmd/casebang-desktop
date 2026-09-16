@@ -1,0 +1,41 @@
+import { loadConfig } from './config.js'
+import { checkDatabase, createDatabase } from './database.js'
+import { runMigrations } from './migrations.js'
+import { buildServer } from './server.js'
+import { PrivateStorage } from './storage.js'
+import { DingTalkStreamBridge } from './stream-bridge.js'
+
+async function main(): Promise<void> {
+  const config = loadConfig()
+  const pool = createDatabase(config.database)
+  const storage = new PrivateStorage(config.storageRoot)
+  await storage.initialize()
+  await runMigrations(pool, config.migrationsRoot)
+  const stream = new DingTalkStreamBridge(config.dingtalk, pool, consoleLogger)
+  await stream.start()
+  const app = buildServer(config, {
+    database: () => checkDatabase(pool),
+    storage: () => storage.check(),
+    stream
+  })
+  const close = async (signal: string): Promise<void> => {
+    app.log.info({ signal }, '正在停止中央协同服务')
+    stream.stop()
+    await app.close()
+    await pool.end()
+  }
+  process.once('SIGTERM', () => { void close('SIGTERM').finally(() => process.exit(0)) })
+  process.once('SIGINT', () => { void close('SIGINT').finally(() => process.exit(0)) })
+  await app.listen({ host: config.host, port: config.port })
+}
+
+const consoleLogger = {
+  info: (value: object, message: string): void => console.info(message, value),
+  warn: (value: object, message: string): void => console.warn(message, value),
+  error: (value: object, message: string): void => console.error(message, value)
+}
+
+main().catch(error => {
+  console.error('中央协同服务启动失败', error instanceof Error ? error.message : String(error))
+  process.exitCode = 1
+})

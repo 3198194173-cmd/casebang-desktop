@@ -1,0 +1,11 @@
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!collaboration-server/
+!collaboration-server/package.json
+!collaboration-server/tsconfig.json
+!collaboration-server/src/
+!collaboration-server/src/**
+!collaboration-server/migrations/
+!collaboration-server/migrations/**

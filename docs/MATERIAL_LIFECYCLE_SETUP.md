@@ -4,13 +4,13 @@
 
 ## 1. 域名可以复用，但不覆盖已有程序
 
-推荐新增 `collab.casebang.tech`，指向同一服务器，为它独立配置 HTTPS 和反向代理。已有 `https://casebang.tech/AI/index.html` 的应用、路由、证书配置和数据保持不变。新数据库和私有文件目录也独立管理。
+已确认使用 `collab.casebang.tech`，DNS A 记录已解析到现有腾讯云服务器。为它独立配置 HTTPS 和反向代理。已有 `https://casebang.tech/AI/index.html` 的应用、路由、证书配置和数据保持不变。新数据库和私有文件目录也独立管理。
 
-备选是 `https://casebang.tech/material-api/` 路径；此方案必须先检查已有网站的路径匹配、登录回调和前端回退路由，避免请求被原应用接走。第一选择仍是独立子域名。尚未连接或修改用户服务器，不能假设当前已经使用 Nginx 或 Docker。
+备选是 `https://casebang.tech/material-api/` 路径；此方案必须先检查已有网站的路径匹配、登录回调和前端回退路由，避免请求被原应用接走。当前已确定采用独立子域名，不使用该备选路径。尚未连接或修改用户服务器；Nginx 与 Docker 已由用户在服务器上确认可用。
 
 原理参考：[Nginx 基于域名选择虚拟服务](https://nginx.org/en/docs/http/request_processing.html)。HTTPS 需要覆盖新主机名的有效证书，不能假设现有证书包含它：[Nginx HTTPS 配置](https://nginx.org/en/docs/http/configuring_https_servers.html)。
 
-请准备：DNS 管理权限、计划使用的测试子域名、当前网站由谁维护，以及现有部署方式（面板 / Docker / Nginx / 其他）。暂不需要发送服务器密码或 SSH 私钥。
+服务器已确认具备 Docker、Docker Compose 和运行中的 Nginx。实际部署步骤见 `deploy/README.md`。不需要发送服务器密码或 SSH 私钥。
 
 ## 2. 可先返回的服务器检查结果
 
@@ -24,9 +24,9 @@ free -h
 df -h /
 ```
 
-若提示 command not found，直接保留提示即可，不要为此立即安装或替换现有服务。回复检查结果前可隐藏主机名；不要粘贴环境变量、容器完整配置、密钥或数据库连接串。
+已确认服务器资源足以进行首轮小规模测试。不要粘贴环境变量、容器完整配置、密钥或数据库连接串。
 
-后续部署前再确认：现有 80/443 入口、测试数据库独立账号、备份与恢复方式、证书续期、可用磁盘和访问控制。PostgreSQL 与私有工作簿存储不直接公开到互联网。当前仓库仅有迁移草案，尚无可直接投产的中央服务包。
+部署仍需检查现有 80/443 入口、备份与恢复方式、证书续期和访问控制。PostgreSQL 与私有工作簿存储不直接公开到互联网。仓库已有首版中央服务与容器配置，但在真实 PostgreSQL、HTTPS 和 Stream 联调通过前仅视为测试环境，不视为投产完成。
 
 ## 3. 钉钉企业内部应用
 

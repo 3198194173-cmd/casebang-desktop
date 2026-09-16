@@ -1,6 +1,5 @@
 -- PostgreSQL foundation, not run automatically by the desktop application.
 -- Apply once to an empty TEST database; record checksum in the deployment migration runner.
-BEGIN;
 CREATE TABLE organizations (
   id uuid PRIMARY KEY, corp_id text NOT NULL UNIQUE, name text NOT NULL,
   time_zone text NOT NULL DEFAULT 'Asia/Shanghai', created_at timestamptz NOT NULL DEFAULT now()
@@ -69,4 +68,3 @@ CREATE TABLE outbox_events (
 );
 CREATE INDEX work_items_inbox ON work_items(organization_id,assignee_id,state);
 CREATE INDEX pending_outbox ON outbox_events(status,next_attempt_at);
-COMMIT;

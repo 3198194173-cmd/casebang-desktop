@@ -1,0 +1,49 @@
+{
+  "name": "casebang-desktop",
+  "version": "0.1.4",
+  "private": true,
+  "description": "CASEBANG 表格编码自动化 Windows 桌面应用",
+  "main": "./out/main/index.js",
+  "author": "CASEBANG",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "build:cli": "esbuild ./src/cli/excel-engine.ts --bundle --platform=node --format=cjs --outfile=out/cli/excel-engine.cjs",
+    "build:image-cli": "esbuild ./src/cli/image-engine.ts --bundle --platform=node --format=cjs --external:sharp --outfile=out/cli/image-engine.cjs",
+    "excel": "pnpm build:cli && node out/cli/excel-engine.cjs",
+    "image": "pnpm build:image-cli && node out/cli/image-engine.cjs",
+    "build": "pnpm typecheck && electron-vite build",
+    "package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "sharp": "0.35.4",
+    "yauzl": "^3.4.0",
+    "yazl": "3.3.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "3.3.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "esbuild": "^0.25.12",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22"
+  }
+}

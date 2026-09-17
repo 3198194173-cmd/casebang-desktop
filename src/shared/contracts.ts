@@ -137,6 +137,20 @@ export interface ApplicationSettings {
   allowNetworkFeatures: boolean
 }
 
+export interface CollaborationUser {
+  id: string
+  displayName: string
+  avatarUrl: string | null
+  organizationId: string
+  corpId: string
+}
+
+export interface CollaborationAccountState {
+  status: 'signed-out' | 'signed-in' | 'offline'
+  user: CollaborationUser | null
+  message: string
+}
+
 export interface SaveAiSettingsInput {
   provider: AiProvider
   model: string
@@ -217,6 +231,11 @@ export interface CasebangDesktopApi {
   settings: {
     get(): Promise<ApplicationSettings>
     save(input: ApplicationSettings): Promise<ApplicationSettings>
+  }
+  account: {
+    get(): Promise<CollaborationAccountState>
+    login(): Promise<CollaborationAccountState>
+    logout(): Promise<CollaborationAccountState>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

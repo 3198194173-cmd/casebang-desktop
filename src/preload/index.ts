@@ -24,6 +24,11 @@ const api: CasebangDesktopApi = {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
     save: (input) => ipcRenderer.invoke(IPC_CHANNELS.settingsSave, input)
   },
+  account: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.accountGet),
+    login: () => ipcRenderer.invoke(IPC_CHANNELS.accountLogin),
+    logout: () => ipcRenderer.invoke(IPC_CHANNELS.accountLogout)
+  },
   baseFiles: {
     select: (kind) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesSelect, kind),
     preview: (input) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesPreview, input),

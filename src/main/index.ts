@@ -8,6 +8,7 @@ import { VisionAiService } from '@main/modules/naming/vision-ai-service'
 import { SettingsRepository } from '@main/infrastructure/settings-repository'
 import { registerIpcHandlers, unregisterIpcHandlers } from '@main/ipc/register-ipc-handlers'
 import { createMainWindow } from '@main/windows/create-main-window'
+import { CollaborationAuthService } from '@main/modules/collaboration/collaboration-auth-service'
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -37,7 +38,8 @@ if (!hasSingleInstanceLock) {
       images: new ImageWorkspaceService(),
       connectors: new ConnectorRegistry(settings),
       excel: new ExcelTemplateEngine(settings),
-      ai: new VisionAiService(settings)
+      ai: new VisionAiService(settings),
+      account: new CollaborationAuthService(settings)
     })
 
     createMainWindow()

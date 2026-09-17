@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { AiSettingsSummary, ApplicationSettings, BaseFileKind, BaseFileUpdateRecord, SaveAiSettingsInput } from '@shared/contracts'
+import type { AiSettingsSummary, ApplicationSettings, BaseFileKind, BaseFileUpdateRecord, CollaborationUser, SaveAiSettingsInput } from '@shared/contracts'
 
 export interface CloudAiSettings {
   provider: 'aliyun'
@@ -18,13 +18,26 @@ interface PersistedCloudAiSettings {
 }
 
 interface PersistedSettings {
-  version: 5
+  version: 6
   baseFilePaths: Partial<Record<BaseFileKind, string>>
   baseFileUpdates: BaseFileUpdateRecord[]
   lastMasterImageDirectory: string | null
   materialMasterPath?: string | null
   application: ApplicationSettings
   cloudAi: PersistedCloudAiSettings
+  collaboration: PersistedCollaborationSession
+}
+
+interface PersistedCollaborationSession {
+  encryptedSessionToken: string | null
+  expiresAt: string | null
+  user: CollaborationUser | null
+}
+
+export interface CollaborationSession {
+  sessionToken: string
+  expiresAt: string
+  user: CollaborationUser
 }
 
 const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
@@ -40,13 +53,20 @@ const DEFAULT_CLOUD_AI: PersistedCloudAiSettings = {
   encryptedApiKey: null
 }
 
+const DEFAULT_COLLABORATION: PersistedCollaborationSession = {
+  encryptedSessionToken: null,
+  expiresAt: null,
+  user: null
+}
+
 const EMPTY_SETTINGS: PersistedSettings = {
-  version: 5,
+  version: 6,
   baseFilePaths: {},
   baseFileUpdates: [],
   lastMasterImageDirectory: null,
   application: DEFAULT_APPLICATION_SETTINGS,
-  cloudAi: DEFAULT_CLOUD_AI
+  cloudAi: DEFAULT_CLOUD_AI,
+  collaboration: DEFAULT_COLLABORATION
 }
 
 export class SettingsRepository {
@@ -114,6 +134,32 @@ export class SettingsRepository {
     return { ...settings.application }
   }
 
+  async getCollaborationSession(): Promise<CollaborationSession | null> {
+    const value = (await this.read()).collaboration
+    if (!value.encryptedSessionToken || !value.expiresAt || !value.user) return null
+    return {
+      sessionToken: decryptSecret(value.encryptedSessionToken, '登录会话'),
+      expiresAt: value.expiresAt,
+      user: { ...value.user }
+    }
+  }
+
+  async setCollaborationSession(input: CollaborationSession): Promise<void> {
+    const settings = await this.read()
+    settings.collaboration = {
+      encryptedSessionToken: encryptSecret(input.sessionToken, '登录会话'),
+      expiresAt: input.expiresAt,
+      user: { ...input.user }
+    }
+    await this.write(settings)
+  }
+
+  async clearCollaborationSession(): Promise<void> {
+    const settings = await this.read()
+    settings.collaboration = { ...DEFAULT_COLLABORATION }
+    await this.write(settings)
+  }
+
   async getCloudAiSettings(): Promise<CloudAiSettings> {
     const settings = await this.read()
     return {
@@ -150,13 +196,14 @@ export class SettingsRepository {
       const content = await readFile(this.filePath, 'utf8')
       const parsed = JSON.parse(content) as Partial<PersistedSettings>
       return {
-        version: 5,
+        version: 6,
         baseFilePaths: parsed.baseFilePaths ?? {},
         baseFileUpdates: parsed.baseFileUpdates ?? [],
         lastMasterImageDirectory: parsed.lastMasterImageDirectory ?? null,
         materialMasterPath: parsed.materialMasterPath ?? null,
         application: { ...DEFAULT_APPLICATION_SETTINGS, ...(parsed.application ?? {}) },
-        cloudAi: { ...DEFAULT_CLOUD_AI, ...(parsed.cloudAi ?? {}) }
+        cloudAi: { ...DEFAULT_CLOUD_AI, ...(parsed.cloudAi ?? {}) },
+        collaboration: { ...DEFAULT_COLLABORATION, ...(parsed.collaboration ?? {}) }
       }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
@@ -186,16 +233,24 @@ export class SettingsRepository {
 }
 
 function encryptApiKey(apiKey: string): string {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows 安全存储当前不可用，不能保存 API Key')
-  return safeStorage.encryptString(apiKey).toString('base64')
+  return encryptSecret(apiKey, 'API Key')
 }
 
 function decryptApiKey(encrypted: string | null): string | null {
   if (!encrypted) return null
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows 安全存储当前不可用，不能读取 API Key')
+  return decryptSecret(encrypted, 'API Key')
+}
+
+function encryptSecret(value: string, label: string): string {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error(`Windows 安全存储当前不可用，不能保存${label}`)
+  return safeStorage.encryptString(value).toString('base64')
+}
+
+function decryptSecret(encrypted: string, label: string): string {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error(`Windows 安全存储当前不可用，不能读取${label}`)
   try {
     return safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
   } catch {
-    throw new Error('已保存的 API Key 无法解密，请重新填写')
+    throw new Error(`已保存的${label}无法解密，请重新登录或重新填写`)
   }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { desktopApi } from '../../app/desktop-api'
 import type { BarcodeSource, LifecycleDraft, LifecycleDraftSummary } from '@shared/lifecycle-contracts'
+import type { CollaborationAccountState } from '@shared/contracts'
 import { patternVariantKey, previewMaterialCodes } from '@shared/material-coding'
 import '../../styles/lifecycle.css'
 
@@ -16,11 +17,14 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [account, setAccount] = useState<CollaborationAccountState | null>(null)
+  const [accountBusy, setAccountBusy] = useState(false)
   const run = async (operation: () => Promise<void>): Promise<void> => {
     setBusy(true); setError(''); setMessage('')
     try { await operation() } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) } finally { setBusy(false) }
   }
   useEffect(() => { if (enabled) void run(async () => setDrafts(await desktopApi.lifecycle.list())) }, [enabled])
+  useEffect(() => { if (enabled) void desktopApi.account.get().then(setAccount).catch(() => setAccount(null)) }, [enabled])
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent): void => { if (dirty) { event.preventDefault(); event.returnValue = '' } }
     window.addEventListener('beforeunload', protect)
@@ -35,22 +39,28 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const indexed = useMemo(() => new Map(results.map(row => [row.rowId, row])), [results])
   const selected = draft?.rows.find(row => row.id === active)
   const selectedKey = selected ? patternVariantKey(selected.identity) : ''
+  const loginAccount = async (): Promise<void> => {
+    setAccountBusy(true); setError(''); setMessage('已打开钉钉登录页面，正在等待确认…')
+    try { const value = await desktopApi.account.login(); setAccount(value); setMessage(`已登录：${value.user?.displayName ?? '钉钉账号'}`) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : '钉钉登录失败'); setMessage('') }
+    finally { setAccountBusy(false) }
+  }
   return <div className="lifecycle-page">
     <header className="lc-intro"><div><small>下游建档 · 第一阶段</small><h2>从新建表格，开始物料建档</h2><p>先核对物料与编码规则，再接入双人交接、图档确认和总表合并。</p></div>
       <button disabled={busy} onClick={() => { if (canReplace()) void run(async () => { const value = await desktopApi.lifecycle.importWorkbook(); if (value) open(value); setDrafts(await desktopApi.lifecycle.list()) }) }}>{busy ? '处理中…' : '导入新建工作簿'}</button></header>
-    <div className="lc-notice"><span>本地准备模式：中央服务与钉钉尚未接通。这里的候选编码不会正式发号，也不会修改原 Excel。</span><button onClick={() => setTab('setup')}>接入准备</button></div>
+    <div className="lc-notice"><span>{account?.status === 'signed-in' ? `协同服务已连接 · 当前账号：${account.user?.displayName ?? '已登录'}。正式交接和发号仍需后续模块开放。` : account?.status === 'offline' ? '账号信息已保留，但当前无法连接协同服务；本机草稿仍可继续编辑。' : '中央服务已接通；登录钉钉账号后可进入跨电脑协同。当前候选编码仍不会正式发号。'}</span>{account?.status === 'signed-in' ? <button onClick={() => setTab('setup')}>协同状态</button> : <button disabled={accountBusy} onClick={() => void loginAccount()}>{accountBusy ? '等待确认…' : '钉钉登录'}</button>}</div>
     {error && <div role="alert" className="alert error">{error}</div>}
     {message && <div role="status" className="lc-message">{message}</div>}
     <div className="lc-layout"><aside className="lc-drafts"><h3>本机工作簿</h3><p>保存准备资料，保留导入快照。</p>{!drafts.length && <p>暂无工作簿，请先导入上游生成的新建表。</p>}
       {drafts.map(item => <button key={item.id} disabled={busy} className={draft?.id === item.id ? 'selected' : ''} onClick={() => { if (canReplace()) void run(async () => open(await desktopApi.lifecycle.get(item.id))) }}><strong>{item.title}</strong><small>{item.rowCount} 条物料 · 版本 {item.version}</small></button>)}
     </aside><section className="lc-workbench">
       <nav className="lc-tabs" aria-label="建档准备步骤">{([['material', '物料编码预检'], ['barcode', '69 码来源'], ['setup', '接入准备']] as const).map(([id, title]) => <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{title}</button>)}</nav>
-      {tab === 'setup' ? <div className="lc-setup"><h3>正式协同前，需要准备这些资料</h3><ol>
-        <li><strong>服务器：</strong>Ubuntu 版本、Docker 支持情况、当前网站的部署方式。建议为新服务使用独立子域名，不影响现有 /AI/。</li>
-        <li><strong>钉钉应用：</strong>企业内部应用、登录回调地址、两个同企业测试账号及应用可见范围。密钥只放服务端，不发送到聊天或客户端。</li>
+      {tab === 'setup' ? <div className="lc-setup"><h3>协同服务接入状态</h3><ol>
+        <li><strong>中央服务：</strong>HTTPS、PostgreSQL、私有工作簿存储和钉钉 Stream 已完成基础联调。</li>
+        <li><strong>钉钉账号：</strong>{account?.user ? `${account.user.displayName} 已完成企业成员验证。` : '尚未在本机登录。'} 应用密钥只放服务端，不进入安装包。</li>
         <li><strong>测试资料：</strong>物料总表副本、已完成新建表、可访问的设计图档文件夹、在线表格测试副本。</li>
         <li><strong>发号规则：</strong>核对历史号码占用、银框标识及未覆盖产品类别；选择内部年月流水或平台来源。</li>
-      </ol><p>待开发接入：真实登录、跨电脑交接、正式发号、钉盘图档核对、Excel 外部修改同步及在线总表同步。</p></div>
+      </ol><p>待开发接入：跨电脑任务交接、正式发号、钉盘图档核对、Excel 外部修改同步及在线总表同步。</p></div>
       : !draft ? <div className="lc-empty"><h3>导入一份新建表格</h3><p>支持按业务表头识别物料行；缺失或冲突记录会保留，不会静默跳过。</p></div>
       : <><div className="lc-task-heading"><div><h3>{draft.title}</h3><small>版本 {draft.version} · {dirty ? '有未保存修改' : '准备资料已保存到本机'}</small></div><button disabled={busy || !dirty} onClick={() => void run(async () => { const value = await desktopApi.lifecycle.save({ id: draft.id, expectedVersion: draft.version, barcodeSource: source, patternVariants: variants }); setDraft(value); setDirty(false); setDrafts(await desktopApi.lifecycle.list()); setMessage('准备资料已保存；尚未发号、写入 Excel 或发送给其他账号。') })}>保存准备资料</button></div>
         {!!draft.warnings.length && <details className="lc-warnings"><summary>导入提醒（{draft.warnings.length}）</summary>{draft.warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}

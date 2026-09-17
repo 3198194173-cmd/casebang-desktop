@@ -33,6 +33,7 @@ import type { VisionAiService } from '@main/modules/naming/vision-ai-service'
 import { assertTrustedSender } from '@main/security/trusted-sender'
 import { logger } from '@main/infrastructure/logger'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
+import type { CollaborationAuthService } from '@main/modules/collaboration/collaboration-auth-service'
 
 interface IpcDependencies {
   settings: SettingsRepository
@@ -42,6 +43,7 @@ interface IpcDependencies {
   connectors: ConnectorRegistry
   excel: ExcelTemplateEngine
   ai: VisionAiService
+  account: CollaborationAuthService
 }
 
 export function registerIpcHandlers(dependencies: IpcDependencies): void {
@@ -85,6 +87,21 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     const request = applicationSettingsSchema.parse(input)
     logger.info('Saving application settings', request)
     return dependencies.settings.setApplicationSettings(request)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.accountGet, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.account.get()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.accountLogin, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.account.login()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.accountLogout, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.account.logout()
   })
 
   ipcMain.handle(IPC_CHANNELS.baseFilesSelect, async (event, input: unknown) => {

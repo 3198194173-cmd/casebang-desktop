@@ -32,4 +32,11 @@ describe('central service configuration', () => {
   it('refuses an incomplete DingTalk Stream configuration', () => {
     expect(() => loadConfig({ PUBLIC_ORIGIN: 'http://localhost', DB_PASSWORD: 'x', DINGTALK_STREAM_ENABLED: 'true', DINGTALK_CLIENT_SECRET: 'y' })).toThrow('CorpId')
   })
+  it('preserves and normalizes the public reverse-proxy path prefix', () => {
+    const value = loadConfig({
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab/',
+      DB_PASSWORD: 'test-password', STORAGE_ROOT: './tmp-test'
+    })
+    expect(value.publicOrigin).toBe('https://casebang.tech/collab')
+  })
 })

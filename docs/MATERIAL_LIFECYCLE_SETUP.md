@@ -4,9 +4,9 @@
 
 ## 1. 域名可以复用，但不覆盖已有程序
 
-已确认使用 `collab.casebang.tech`，DNS A 记录已解析到现有腾讯云服务器。为它独立配置 HTTPS 和反向代理。已有 `https://casebang.tech/AI/index.html` 的应用、路由、证书配置和数据保持不变。新数据库和私有文件目录也独立管理。
+因中国大陆服务器的独立子域名被备案系统拦截，最终采用现有 HTTPS 主机名下的独立路径 `https://casebang.tech/collab/`。已有 `https://casebang.tech/AI/index.html` 的应用、路由和数据保持不变；只在现有 HTTPS `server` 块中增加 `/collab/` 代理位置。新数据库和私有文件目录仍独立管理。
 
-备选是 `https://casebang.tech/material-api/` 路径；此方案必须先检查已有网站的路径匹配、登录回调和前端回退路由，避免请求被原应用接走。当前已确定采用独立子域名，不使用该备选路径。尚未连接或修改用户服务器；Nginx 与 Docker 已由用户在服务器上确认可用。
+代理使用尾斜杠规则：外部 `/collab/health/live` 转发为内部 `/health/live`。`PUBLIC_ORIGIN` 必须设置为 `https://casebang.tech/collab`，后续登录回调也必须基于这个公共前缀生成，不能回退到根路径或 `/AI/`。
 
 原理参考：[Nginx 基于域名选择虚拟服务](https://nginx.org/en/docs/http/request_processing.html)。HTTPS 需要覆盖新主机名的有效证书，不能假设现有证书包含它：[Nginx HTTPS 配置](https://nginx.org/en/docs/http/configuring_https_servers.html)。
 

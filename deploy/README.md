@@ -1,6 +1,6 @@
 # CASEBANG 中央协同服务部署
 
-此部署与现有 `casebang.tech/AI/` 分离：新服务使用 `collab.casebang.tech`，API 只绑定服务器本机 `127.0.0.1:3100`，PostgreSQL 不发布端口。Nginx 是唯一公网入口。
+此部署与现有 `casebang.tech/AI/` 分离：新服务使用 `https://casebang.tech/collab/`，只在现有 HTTPS 主机中增加一个独立路径。API 只绑定服务器本机 `127.0.0.1:3100`，PostgreSQL 不发布端口，Nginx 是唯一公网入口。
 
 ## 0. 部署前安全动作
 
@@ -53,25 +53,29 @@ curl -fsS http://127.0.0.1:3100/health/ready
 
 首次启动会在空测试库中自动、按校验和执行迁移。任何迁移失败都会阻止 API 启动，不会把半迁移状态宣称为可用。
 
-## 4. 新增独立 Nginx 站点与 HTTPS
+## 4. 在现有 HTTPS 站点中增加独立路径
 
-先复制独立站点配置，不编辑已有 `/AI/` 的 server block：
-
-```sh
-sudo cp deploy/nginx/collab.casebang.tech.conf.example /etc/nginx/sites-available/collab.casebang.tech
-sudo ln -s /etc/nginx/sites-available/collab.casebang.tech /etc/nginx/sites-enabled/collab.casebang.tech
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-确认 `http://collab.casebang.tech/health/live` 可访问后，使用服务器现有的证书工具为该子域名签发 HTTPS。若服务器使用 Certbot：
+不要创建新的 `collab.casebang.tech` 站点。先将 location 片段复制到 Nginx snippets：
 
 ```sh
-sudo certbot --nginx -d collab.casebang.tech
-curl -fsS https://collab.casebang.tech/health/ready
+sudo cp deploy/nginx/casebang.tech-collab.location.example /etc/nginx/snippets/casebang-collaboration.conf
 ```
 
-`nginx -t` 不通过时不要 reload；检查是否已经存在同名 `server_name`。
+然后只在现有 `casebang.tech` 的 HTTPS `server` 块内加入下面一行；不要放到 `/AI/` 的 location 内，也不要放到 `server` 块之外：
+
+```nginx
+include /etc/nginx/snippets/casebang-collaboration.conf;
+```
+
+验证并重新加载：
+
+```sh
+sudo nginx -t && sudo systemctl reload nginx
+curl -fsS https://casebang.tech/collab/health/live
+curl -fsS https://casebang.tech/collab/health/ready
+```
+
+复用 `casebang.tech` 现有证书，不再为 `collab.casebang.tech` 申请证书。`nginx -t` 不通过时不要 reload。
 
 ## 5. 启用钉钉 Stream
 
@@ -80,7 +84,7 @@ curl -fsS https://collab.casebang.tech/health/ready
 ```sh
 docker compose -f compose.collaboration.yml up -d --build api
 docker compose -f compose.collaboration.yml logs --tail=100 api
-curl -fsS https://collab.casebang.tech/health/ready
+curl -fsS https://casebang.tech/collab/health/ready
 ```
 
 Stream 是服务端主动连接钉钉，不需要配置公网 HTTP 回调地址。服务端只在事件成功落库后确认消费；落库失败会请求稍后重试。当前只验证连接与安全收件，尚未开放账号登录、任务交接和在线总表写入。

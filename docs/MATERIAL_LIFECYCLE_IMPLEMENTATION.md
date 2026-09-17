@@ -37,7 +37,7 @@
 - `src/renderer/src/features/lifecycle/MaterialLifecyclePage.tsx`：本机工作簿、物料预检、69码来源和接入准备。
 - `collaboration-server/src/`：中央服务配置、迁移、私有存储、健康检查与钉钉 Stream 收件。
 - `collaboration-server/migrations/`：由中央服务在启动时按校验和、事务和互斥锁执行，不由桌面客户端运行。
-- `compose.collaboration.yml` 与 `deploy/`：腾讯云独立子域名部署配置；数据库不暴露公网，API 仅绑定服务器本机。
+- `compose.collaboration.yml` 与 `deploy/`：腾讯云同域名独立路径部署配置；外部入口为 `https://casebang.tech/collab/`，不改变 `/AI/`；数据库不暴露公网，API 仅绑定服务器本机。
 - `tests/lifecycle.test.ts`：机型、银框、冲突、导入缺项、SQLite 持久化及交接守卫测试。
 
 ## 下一批实施顺序

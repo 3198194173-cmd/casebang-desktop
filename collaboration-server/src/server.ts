@@ -30,7 +30,7 @@ export function buildServer(config: ServerConfig, readiness: Readiness): Fastify
   })
   app.get('/api/v1/system/capabilities', async () => ({
     accountLogin: config.dingtalk.enabled,
-    taskHandoff: false,
+    taskHandoff: config.dingtalk.enabled,
     formalNumberAllocation: false,
     dingtalkStream: readiness.stream.enabled ? (readiness.stream.connected ? 'connected' : 'connecting') : 'disabled',
     onlineMasterWrite: false,

@@ -9,6 +9,7 @@ import { SettingsRepository } from '@main/infrastructure/settings-repository'
 import { registerIpcHandlers, unregisterIpcHandlers } from '@main/ipc/register-ipc-handlers'
 import { createMainWindow } from '@main/windows/create-main-window'
 import { CollaborationAuthService } from '@main/modules/collaboration/collaboration-auth-service'
+import { CollaborationService } from '@main/modules/collaboration/collaboration-service'
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -39,7 +40,8 @@ if (!hasSingleInstanceLock) {
       connectors: new ConnectorRegistry(settings),
       excel: new ExcelTemplateEngine(settings),
       ai: new VisionAiService(settings),
-      account: new CollaborationAuthService(settings)
+      account: new CollaborationAuthService(settings),
+      collaboration: new CollaborationService(settings)
     })
 
     createMainWindow()

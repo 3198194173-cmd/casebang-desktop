@@ -8,10 +8,12 @@ import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview } from 
 import { patternVariantKey, previewMaterialCodes } from '../../../shared/material-coding'
 import { readLifecycleWorkbook } from './workbook-reader'
 import type { LifecycleRepository } from './lifecycle-repository'
+import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 
 export class LifecycleService {
   private repository: Promise<LifecycleRepository> | null = null
   private busy = false
+  constructor(private readonly settings: SettingsRepository) {}
   private root(): string { return join(app.getPath('userData'), 'material-lifecycle') }
   private repo(): Promise<LifecycleRepository> {
     if (!this.repository) this.repository = (async () => {
@@ -25,6 +27,15 @@ export class LifecycleService {
   async list(): Promise<LifecycleDraftSummary[]> { return (await this.repo()).list() }
   async get(input: unknown): Promise<LifecycleDraft> { return (await this.repo()).get(z.string().uuid().parse(input)) }
   async preview(input: unknown): Promise<LifecycleRowPreview[]> { return previewMaterialCodes(await this.get(input)) }
+  async submissionSnapshot(id: string, expectedVersion: number): Promise<{ draft: LifecycleDraft; path: string }> {
+    const draft = await this.get(id)
+    if (draft.version !== expectedVersion) throw new Error('草稿已更新，请重新打开后再提交。')
+    const path = join(this.root(), 'workbooks', `${draft.id}.xlsx`)
+    const info = await stat(path)
+    if (!info.isFile() || info.size > 64 * 1024 * 1024) throw new Error('任务工作簿不存在或超过 64 MB。')
+    if (await hashFile(path) !== draft.sourceHash) throw new Error('任务工作簿快照校验失败，请重新导入。')
+    return { draft, path }
+  }
   async save(input: unknown): Promise<LifecycleDraft> {
     const value = z.object({ id: z.string().uuid(), expectedVersion: z.number().int().positive(), barcodeSource: z.enum(['internal_monthly', 'platform']).nullable(),
       patternVariants: z.record(z.string().max(1000), z.string().regex(/^[A-Z0-9]{2}$/)).refine(values => Object.keys(values).length <= 2000) }).strict().parse(input)
@@ -54,7 +65,8 @@ export class LifecycleService {
       const hash = await hashFile(snapshot)
       if (hash !== before || await hashFile(source) !== before) throw new Error('Excel 正在保存或文件已变化，请保存完成后重试')
       const parsed = await readLifecycleWorkbook(snapshot)
-      const draft = repo.insert({ id, title: basename(source), source: 'manual', sourcePath: source, sourceHash: hash, createdAt: new Date().toISOString(), version: 1,
+      const owner = await this.settings.getCollaborationSession()
+      const draft = repo.insert({ id, title: basename(source), source: 'manual', sourcePath: source, sourceHash: hash, createdAt: new Date().toISOString(), ownerUserId: owner?.user.id ?? null, version: 1,
         rows: parsed.rows, warnings: parsed.warnings, barcodeSource: null, patternVariants: {} })
       if (draft.id !== id) await unlink(snapshot)
       snapshot = null

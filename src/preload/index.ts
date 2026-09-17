@@ -29,6 +29,11 @@ const api: CasebangDesktopApi = {
     login: () => ipcRenderer.invoke(IPC_CHANNELS.accountLogin),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.accountLogout)
   },
+  collaboration: {
+    members: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationMembers),
+    workItems: (box) => ipcRenderer.invoke(IPC_CHANNELS.collaborationWorkItems, box),
+    submitLifecycle: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationSubmitLifecycle, input)
+  },
   baseFiles: {
     select: (kind) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesSelect, kind),
     preview: (input) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesPreview, input),

@@ -34,6 +34,7 @@ import { assertTrustedSender } from '@main/security/trusted-sender'
 import { logger } from '@main/infrastructure/logger'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 import type { CollaborationAuthService } from '@main/modules/collaboration/collaboration-auth-service'
+import type { CollaborationService } from '@main/modules/collaboration/collaboration-service'
 
 interface IpcDependencies {
   settings: SettingsRepository
@@ -44,10 +45,11 @@ interface IpcDependencies {
   excel: ExcelTemplateEngine
   ai: VisionAiService
   account: CollaborationAuthService
+  collaboration: CollaborationService
 }
 
 export function registerIpcHandlers(dependencies: IpcDependencies): void {
-  const lifecycle = new LifecycleService()
+  const lifecycle = new LifecycleService(dependencies.settings)
   ipcMain.handle(IPC_CHANNELS.lifecycleList, event => { assertTrustedSender(event.senderFrame); return lifecycle.list() })
   ipcMain.handle(IPC_CHANNELS.lifecycleImport, event => { assertTrustedSender(event.senderFrame); return lifecycle.importWorkbook() })
   ipcMain.handle(IPC_CHANNELS.lifecycleGet, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.get(input) })
@@ -102,6 +104,21 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.accountLogout, async (event) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.account.logout()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationMembers, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.members()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationWorkItems, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.workItems(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationSubmitLifecycle, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.submitLifecycle(input, lifecycle)
   })
 
   ipcMain.handle(IPC_CHANNELS.baseFilesSelect, async (event, input: unknown) => {

@@ -38,6 +38,8 @@ export interface LifecycleDraft {
   sourcePath: string
   sourceHash: string
   createdAt: string
+  /** Account that imported this local snapshot. Legacy/offline drafts may not have an owner yet. */
+  ownerUserId?: string | null
   version: number
   rows: LifecycleRow[]
   warnings: string[]

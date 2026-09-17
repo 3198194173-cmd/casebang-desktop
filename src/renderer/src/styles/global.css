@@ -48,6 +48,32 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .topbar-section { color: #70868e; font-size: 9px; font-weight: 800; letter-spacing: 1px; }
 .eyebrow { color: var(--green); font-size: 10px; letter-spacing: 1.6px; font-weight: 800; }
 .topbar-badge { padding: 8px 12px; border: 1px solid #cddcdf; border-radius: 999px; color: #5f747d; font-size: 11px; background: rgba(255,255,255,.7); }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.global-account { display: flex; align-items: center; gap: 9px; min-width: 162px; padding: 6px 10px 6px 7px; border: 1px solid #d4dfdc; border-radius: 12px; color: #263936; background: rgba(255,255,255,.86); text-align: left; }
+.global-account > span { display: grid; place-items: center; width: 31px; height: 31px; flex: 0 0 31px; border-radius: 9px; color: white; background: #737b79; font-size: 13px; font-weight: 800; }
+.global-account.signed-in > span { background: #25735d; }
+.global-account strong, .global-account small { display: block; white-space: nowrap; }
+.global-account strong { font-size: 11px; }
+.global-account small { margin-top: 1px; color: #7a8885; font-size: 8px; }
+.collaboration-page { display: grid; gap: 16px; }
+.collaboration-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px 26px; border: 1px solid #d8e2df; border-radius: 14px; background: white; }
+.collaboration-hero h2 { margin: 5px 0 6px; font-size: 24px; }
+.collaboration-hero p, .collaboration-login p, .collaboration-empty p { margin: 0; color: #71817e; font-size: 11px; }
+.collaboration-login, .collaboration-account-strip { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 20px; border: 1px solid #d8e2df; border-radius: 12px; background: #f8fbfa; }
+.collaboration-account-strip { justify-content: flex-start; }
+.collaboration-account-strip > span:last-child { color: #758480; font-size: 10px; }
+.collaboration-tabs { display: flex; align-items: center; gap: 8px; padding: 7px; border: 1px solid #dde5e3; border-radius: 11px; background: white; }
+.collaboration-tabs button { min-height: 36px; padding: 0 13px; border: 0; border-radius: 8px; color: #62726e; background: transparent; font-size: 11px; font-weight: 750; }
+.collaboration-tabs button[aria-pressed="true"] { color: white; background: #245f51; }
+.collaboration-tabs button:last-child { margin-left: auto; }
+.collaboration-list { display: grid; gap: 9px; }
+.collaboration-list article { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 15px 17px; border: 1px solid #dfe6e4; border-radius: 11px; background: white; }
+.collaboration-list article strong { font-size: 13px; }
+.collaboration-list article p { margin: 4px 0 0; color: #74827f; font-size: 10px; }
+.collaboration-list article > span { color: #758480; font-size: 9px; }
+.collaboration-state { padding: 6px 8px; border-radius: 7px; color: #28634f; background: #e6f3ee; text-align: center; font-size: 9px; font-weight: 800; }
+.collaboration-empty { padding: 42px; border: 1px dashed #d3dfdc; border-radius: 13px; background: #fafcfb; text-align: center; }
+.collaboration-empty p { margin-top: 7px; }
 .page-content { padding: 30px 38px 48px; max-width: 1500px; margin: 0 auto; }
 .page-content.new-task-page { width: 100%; max-width: none; padding: 14px 16px 32px; }
 .stack-xl { display: grid; gap: 22px; }

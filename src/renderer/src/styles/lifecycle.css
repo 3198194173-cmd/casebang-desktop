@@ -40,3 +40,17 @@
 .lc-barcode small { display:block; padding:8px 0 0 26px; color:#607680; }
 .lc-warnings { padding:12px; background:#fffbef; border-radius:8px; }
 @media(max-width:1100px) { .lc-layout { grid-template-columns:1fr; } .lc-drafts { max-height:230px; overflow:auto; } .lc-intro { align-items:flex-start; flex-wrap:wrap; } }
+.lc-handoff { display: grid; gap: 18px; padding: 22px; }
+.lc-handoff h3 { margin: 5px 0 7px; font-size: 20px; }
+.lc-handoff p { margin: 0; color: #71817e; font-size: 12px; line-height: 1.7; }
+.lc-handoff-empty { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 18px; border: 1px dashed #d2dfdc; border-radius: 12px; background: #f8fbfa; }
+.lc-handoff-empty span { color: #71817e; font-size: 11px; }
+.lc-handoff-form { display: grid; grid-template-columns: minmax(260px, 1fr) auto; gap: 14px; align-items: end; padding: 18px; border: 1px solid #cfe0da; border-radius: 12px; background: #f2f9f6; }
+.lc-handoff-form label { display: grid; gap: 7px; color: #34564e; font-size: 11px; font-weight: 750; }
+.lc-handoff-form select { min-height: 42px; padding: 0 11px; border: 1px solid #cadbd6; border-radius: 8px; background: white; }
+.lc-sent-items { display: grid; gap: 8px; }
+.lc-sent-items h4 { margin: 0 0 3px; }
+.lc-sent-items article { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid #e0e6e4; border-radius: 10px; background: white; }
+.lc-sent-items strong, .lc-sent-items span { display: block; }
+.lc-sent-items span { margin-top: 3px; color: #74827f; font-size: 10px; }
+.lc-sent-items mark { padding: 5px 8px; border-radius: 999px; color: #316858; background: #e4f3ed; font-size: 9px; font-weight: 800; }

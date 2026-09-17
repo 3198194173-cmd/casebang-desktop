@@ -151,6 +151,25 @@ export interface CollaborationAccountState {
   message: string
 }
 
+export interface CollaborationMember {
+  id: string
+  displayName: string
+  avatarUrl: string | null
+  lastLoginAt: string
+}
+
+export interface CollaborationWorkItem {
+  id: string
+  title: string
+  state: string
+  sourceWorkflow: import('./lifecycle-contracts').LifecycleSource
+  version: number
+  revision: number
+  createdAt: string
+  origin: { id: string; displayName: string }
+  assignee: { id: string; displayName: string }
+}
+
 export interface SaveAiSettingsInput {
   provider: AiProvider
   model: string
@@ -236,6 +255,11 @@ export interface CasebangDesktopApi {
     get(): Promise<CollaborationAccountState>
     login(): Promise<CollaborationAccountState>
     logout(): Promise<CollaborationAccountState>
+  }
+  collaboration: {
+    members(): Promise<CollaborationMember[]>
+    workItems(box: 'inbox' | 'sent'): Promise<CollaborationWorkItem[]>
+    submitLifecycle(input: { draftId: string; expectedVersion: number; assigneeId: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

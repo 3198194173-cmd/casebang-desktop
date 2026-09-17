@@ -1,6 +1,7 @@
-import { access, mkdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 export class PrivateStorage {
   constructor(readonly root: string) {}
@@ -10,6 +11,18 @@ export class PrivateStorage {
     await this.check()
   }
   async check(): Promise<void> { await access(this.root, constants.R_OK | constants.W_OK) }
+  async writeObject(key: string, content: Buffer): Promise<void> {
+    const target = this.resolveObject(key)
+    const temporary = `${target}.${randomUUID()}.tmp`
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+    try {
+      await writeFile(temporary, content, { mode: 0o600, flag: 'wx' })
+      await rename(temporary, target)
+    } finally {
+      await rm(temporary, { force: true })
+    }
+  }
+  async removeObject(key: string): Promise<void> { await rm(this.resolveObject(key), { force: true }) }
   resolveObject(key: string): string {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9/_.-]{0,220}$/.test(key)) throw new Error('非法存储对象键')
     if (key.split('/').some((segment) => !segment || segment === '.' || segment === '..')) {

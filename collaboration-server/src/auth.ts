@@ -17,7 +17,7 @@ interface AttemptRow {
   delivered_at: Date | null
 }
 
-interface SessionUserRow {
+export interface SessionUserRow {
   id: string
   display_name: string
   avatar_url: string | null
@@ -232,7 +232,7 @@ async function failAttempt(pool: pg.Pool, attemptId: string, errorCode: string):
   )
 }
 
-async function authenticatedUser(request: FastifyRequest, reply: FastifyReply, pool: pg.Pool): Promise<SessionUserRow | null> {
+export async function authenticatedUser(request: FastifyRequest, reply: FastifyReply, pool: pg.Pool): Promise<SessionUserRow | null> {
   const token = bearerToken(request)
   if (!token) {
     await reply.code(401).send({ error: 'unauthorized' })

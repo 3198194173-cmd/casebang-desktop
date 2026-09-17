@@ -22,8 +22,7 @@ export function App(): React.JSX.Element {
   const visibleGroups = NAV_GROUPS.filter((group) => {
     if (group.id === 'overview' || group.id === 'system') return true
     if (!businessRole) return false
-    if (group.id === 'workflows' || group.id === 'resources') return businessRole === 'upstream'
-    return group.id === 'collaboration'
+    return true
   })
   const internalPage = page === 'material-lifecycle'
     ? { group: '任务中心', label: '导入旧表测试' }
@@ -44,7 +43,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const visible = visibleGroups.some(group => group.items.some(item => item.id === page))
-    const allowedInternal = page === 'material-lifecycle' && businessRole === 'upstream'
+    const allowedInternal = page === 'material-lifecycle' && Boolean(businessRole)
     if (!visible && !allowedInternal) setPage('dashboard')
   }, [businessRole, page])
 
@@ -99,7 +98,7 @@ export function App(): React.JSX.Element {
           <div className="topbar-actions">
             <button className={`global-account ${account?.status ?? 'loading'}`} disabled={accountBusy} onClick={() => setPage('settings')}>
               <span>{account?.user?.displayName.slice(0, 1) ?? '钉'}</span>
-              <div><strong>{account?.user?.displayName ?? (accountBusy ? '等待登录确认…' : '登录钉钉')}</strong><small>{account?.status === 'signed-in' ? businessRole === 'upstream' ? '上游建表' : '下游建档' : account?.status === 'offline' ? '离线保留' : '选择业务身份'}</small></div>
+              <div><strong>{account?.user?.displayName ?? (accountBusy ? '等待登录确认…' : '登录钉钉')}</strong><small>{account?.status === 'signed-in' ? `默认进入${businessRole === 'upstream' ? '上游' : '下游'}` : account?.status === 'offline' ? '离线保留' : '选择默认工作区'}</small></div>
             </button>
             <div className="topbar-badge">Windows 桌面版</div>
           </div>
@@ -107,9 +106,9 @@ export function App(): React.JSX.Element {
         {(error || accountError) && <div className="alert error">{error ?? accountError}</div>}
         <section className={`page-content ${page === 'new-task' ? 'new-task-page' : ''}`}>
           {(page === 'existing-products' || page === 'new-task' || page === 'supplement') && <DraftStatus />}
-          {snapshot && businessRole === 'upstream' && <><div hidden={page !== 'existing-products'}><NewTaskPage existingSeries snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'new-task'}><NewTaskPage snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'supplement'}><SupplementPage active={page === 'supplement'} onOpenBaseFiles={() => setPage('base-files')} /></div></>}
+          {snapshot && businessRole && <><div hidden={page !== 'existing-products'}><NewTaskPage existingSeries snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'new-task'}><NewTaskPage snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'supplement'}><SupplementPage active={page === 'supplement'} onOpenBaseFiles={() => setPage('base-files')} /></div></>}
           {renderPage()}
-          {snapshot && businessRole === 'upstream' && <div hidden={page !== 'material-lifecycle'}><MaterialLifecyclePage enabled={page === 'material-lifecycle'} /></div>}
+          {snapshot && businessRole && <div hidden={page !== 'material-lifecycle'}><MaterialLifecyclePage enabled={page === 'material-lifecycle'} /></div>}
           {businessRole && <div hidden={page !== 'collaboration-tasks'}><CollaborationTasksPage enabled={page === 'collaboration-tasks'} onOpenLifecycle={() => setPage('material-lifecycle')} /></div>}
         </section>
       </main>

@@ -150,7 +150,7 @@ function serverError(code?: string, status?: number): string {
     state_conflict: '任务状态已经变化，请刷新任务后重试。',
     idempotency_conflict: '任务操作标识冲突，请刷新后重新操作。',
     work_item_not_found: '没有找到该协同任务。',
-    business_role_forbidden: '当前账号的业务身份不能执行此操作。'
+    business_role_forbidden: '当前账号不能执行此操作。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`
 }

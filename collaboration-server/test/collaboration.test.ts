@@ -21,7 +21,7 @@ describe('collaboration identity boundaries', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ members: [{ id: '10000000-0000-4000-8000-000000000002', displayName: '处理人', avatarUrl: null, lastLoginAt: '2026-09-17T00:00:00.000Z' }] })
     expect(query.mock.calls[1]?.[1]).toEqual(['20000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001'])
-    expect(String(query.mock.calls[1]?.[0])).toContain("business_role='downstream'")
+    expect(String(query.mock.calls[1]?.[0])).not.toContain('business_role=')
     await app.close()
   })
 
@@ -35,18 +35,20 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
-  it('does not allow a downstream account to query an upstream sent box', async () => {
-    const query = vi.fn().mockResolvedValueOnce(queryResult([{
-      id: '10000000-0000-4000-8000-000000000002', display_name: '处理人', avatar_url: null,
-      organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'downstream'
-    }]))
+  it('uses the selected workspace as a default without blocking the other task box', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([{
+        id: '10000000-0000-4000-8000-000000000002', display_name: '处理人', avatar_url: null,
+        organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'downstream'
+      }]))
+      .mockResolvedValueOnce(queryResult([]))
     const app = Fastify()
     registerCollaborationRoutes(app, { query } as unknown as pg.Pool, {} as PrivateStorage)
 
     const response = await app.inject({ method: 'GET', url: '/api/v1/collaboration/work-items?box=sent', headers: { authorization: `Bearer ${'x'.repeat(40)}` } })
-    expect(response.statusCode).toBe(403)
-    expect(response.json()).toEqual({ error: 'business_role_forbidden' })
-    expect(query).toHaveBeenCalledOnce()
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ items: [] })
+    expect(query).toHaveBeenCalledTimes(2)
     await app.close()
   })
 

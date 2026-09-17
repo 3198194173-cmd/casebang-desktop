@@ -76,21 +76,6 @@ describe('desktop DingTalk account login', () => {
     expect(openExternal).not.toHaveBeenCalled()
   })
 
-  it('reports a bound-role conflict immediately instead of treating it as a network failure', async () => {
-    const fetcher = vi.fn()
-      .mockResolvedValueOnce(response({
-        attemptId: 'attempt-1',
-        pollToken: 'poll-1',
-        authorizationUrl: 'https://login.dingtalk.com/oauth2/auth?client_id=test',
-        expiresAt: new Date(Date.now() + 60_000).toISOString()
-      }))
-      .mockResolvedValueOnce(response({ status: 'failed', errorCode: 'business_role_mismatch' }, 400))
-    const service = new CollaborationAuthService(store(), fetcher, async () => undefined, async () => undefined)
-
-    await expect(service.login('downstream')).rejects.toThrow('已经绑定另一种业务身份')
-    expect(fetcher).toHaveBeenCalledTimes(2)
-  })
-
   it('keeps the verified user available offline and clears local login even if logout cannot reach the server', async () => {
     const session: CollaborationSession = {
       sessionToken: 'session-1',

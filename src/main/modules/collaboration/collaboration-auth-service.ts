@@ -66,7 +66,7 @@ export class CollaborationAuthService {
       if (!body.user) throw new Error('账号资料缺失')
       if (!body.user.businessRole) {
         await this.settings.clearCollaborationSession()
-        return { ...signedOut(), message: '账号尚未绑定业务身份，请重新登录并选择上游或下游。' }
+        return { ...signedOut(), message: '本次登录尚未选择默认工作区，请重新登录。' }
       }
       const refreshed = { ...session, user: body.user }
       await this.settings.setCollaborationSession(refreshed)
@@ -173,8 +173,7 @@ function loginFailureMessage(result: LoginStatusResponse): string {
     authorization_denied: '已取消钉钉授权。',
     authorization_code_missing: '钉钉没有返回授权码，请重新登录。',
     not_enterprise_member: '该钉钉账号不属于当前企业或不在应用可见范围内。',
-    business_role_mismatch: '该钉钉账号已经绑定另一种业务身份，不能切换登录。',
-    business_role_required: '请选择上游建表或下游建档业务。',
+    business_role_required: '请选择默认进入上游建表或下游建档工作区。',
     consumed: '本次登录已经被领取，请重新发起。',
     expired: '本次登录已经过期，请重新发起。'
   }
@@ -191,5 +190,5 @@ function signedIn(user: CollaborationUser): CollaborationAccountState {
 
 function parseBusinessRole(value: unknown): BusinessRole {
   if (value === 'upstream' || value === 'downstream') return value
-  throw new Error('请选择上游建表或下游建档业务。')
+  throw new Error('请选择默认进入上游建表或下游建档工作区。')
 }

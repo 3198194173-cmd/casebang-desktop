@@ -36,11 +36,9 @@ export function SettingsPage(): React.JSX.Element {
   }, [])
 
   const login = async (): Promise<void> => {
-    const roleName = loginRole === 'upstream' ? '上游建表' : '下游建档'
-    if (!window.confirm(`确认将这个钉钉账号绑定为“${roleName}”吗？\n\n首次绑定后不能直接切换为另一种业务身份。`)) return
     setError(null); setMessage('已打开钉钉登录页面，正在等待确认…')
     try {
-      await loginAccount(loginRole); setMessage('钉钉账号与业务身份登录成功，整个软件均已生效。')
+      await loginAccount(loginRole); setMessage('钉钉账号登录成功，已进入所选默认工作区。')
     } catch (reason) {
       setMessage(null); setError(accountError(reason, '钉钉登录失败'))
     }
@@ -112,10 +110,10 @@ export function SettingsPage(): React.JSX.Element {
           <span className="eyebrow">ACCOUNT ACCESS</span>
           <h3>账号与组织登录</h3>
           {account?.user
-            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>{account.user.businessRole === 'upstream' ? '上游建表' : '下游建档'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 业务身份首次绑定后不能在登录时随意切换。</p></>
-            : <><p>{account?.message ?? '正在读取钉钉账号状态…'} 登录前请选择该账号负责的业务。</p><div className="business-role-picker">
-              <label className={loginRole === 'upstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} /><span><strong>上游建表</strong><small>建表、提交、复核、合并</small></span></label>
-              <label className={loginRole === 'downstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} /><span><strong>下游建档</strong><small>接收、编码、核图、回传</small></span></label>
+            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>默认进入{account.user.businessRole === 'upstream' ? '上游建表' : '下游建档'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 上游与下游功能保持分区，但不会限制参与人查看和编辑同一建档项目。</p></>
+            : <><p>{account?.message ?? '正在读取钉钉账号状态…'} 登录前选择默认进入的工作区，两个工作区登录后都可以使用。</p><div className="business-role-picker">
+              <label className={loginRole === 'upstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} /><span><strong>先进入上游建表</strong><small>建表、提交、复核、合并</small></span></label>
+              <label className={loginRole === 'downstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} /><span><strong>先进入下游建档</strong><small>接收、编码、核图、回传</small></span></label>
             </div></>}
         </div>
         <div className="account-panel-actions">

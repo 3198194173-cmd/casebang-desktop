@@ -15,8 +15,6 @@ export function CollaborationTasksPage({ enabled, onOpenLifecycle }: { enabled: 
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const beginLogin = async (): Promise<void> => {
-    const roleName = loginRole === 'upstream' ? '上游建表' : '下游建档'
-    if (!window.confirm(`确认将这个钉钉账号绑定为“${roleName}”吗？\n\n首次绑定后不能直接切换为另一种业务身份。`)) return
     await login(loginRole)
   }
   const load = async (nextBox = box): Promise<void> => {
@@ -66,10 +64,10 @@ export function CollaborationTasksPage({ enabled, onOpenLifecycle }: { enabled: 
   }
 
   return <div className="collaboration-page">
-    <header className="collaboration-hero"><div><span className="eyebrow">{account?.user?.businessRole === 'upstream' ? '任务交接' : '下游处理'}</span><h2>建档任务</h2><p>{account?.user?.businessRole === 'upstream' ? '查看已提交任务、退回原因与后续复核状态。' : '统一查看接收、处理和回传；正常任务应由三个上游建表流程提交。'}</p></div>{account?.user?.businessRole === 'upstream' && <button className="secondary-button" onClick={onOpenLifecycle}>导入旧表测试</button>}</header>
-    {account?.status !== 'signed-in' ? <section className="collaboration-login role-login"><div><strong>选择业务身份后登录</strong><p>不同钉钉账号分别绑定上游建表或下游建档，服务器会同时校验权限。</p><div className="inline-role-picker"><label><input type="radio" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} />上游建表</label><label><input type="radio" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} />下游建档</label></div></div><button className="primary-button" disabled={accountBusy} onClick={() => void beginLogin()}>{accountBusy ? '等待确认…' : '钉钉登录'}</button></section>
-      : <><section className="collaboration-account-strip"><span className="status-dot" /><strong>{account.user?.displayName}</strong><span>{account.user?.businessRole === 'upstream' ? '上游建表账号' : '下游建档账号'} · 权限已验证</span></section>
-        <nav className="collaboration-tabs">{account.user?.businessRole === 'downstream' ? <button aria-pressed="true" onClick={() => switchBox('inbox')}>待我处理</button> : <button aria-pressed="true" onClick={() => switchBox('sent')}>我发出的</button>}<button disabled={busy} onClick={() => void load()}>{busy ? '刷新中…' : '刷新'}</button></nav>
+    <header className="collaboration-hero"><div><span className="eyebrow">任务协作</span><h2>建档任务</h2><p>参与人都可以查看和编辑项目；任务阶段只用于整理工作，不作为编辑权限墙。</p></div>{account?.status === 'signed-in' && <button className="secondary-button" onClick={onOpenLifecycle}>导入旧表测试</button>}</header>
+    {account?.status !== 'signed-in' ? <section className="collaboration-login role-login"><div><strong>选择默认工作区后登录</strong><p>选择只影响登录后的默认入口，不会限制上游、下游或中央工作簿的使用。</p><div className="inline-role-picker"><label><input type="radio" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} />先进入上游</label><label><input type="radio" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} />先进入下游</label></div></div><button className="primary-button" disabled={accountBusy} onClick={() => void beginLogin()}>{accountBusy ? '等待确认…' : '钉钉登录'}</button></section>
+      : <><section className="collaboration-account-strip"><span className="status-dot" /><strong>{account.user?.displayName}</strong><span>项目参与账号 · 可查看自己发出和收到的任务</span></section>
+        <nav className="collaboration-tabs"><button aria-pressed={box === 'inbox'} onClick={() => switchBox('inbox')}>待我处理</button><button aria-pressed={box === 'sent'} onClick={() => switchBox('sent')}>我发出的</button><button disabled={busy} onClick={() => void load()}>{busy ? '刷新中…' : '刷新'}</button></nav>
         {error && <div className="alert error">{error}</div>}
         {message && <div className="alert success">{message}</div>}
         <section className="collaboration-list">{!busy && !items.length ? <div className="collaboration-empty"><strong>{box === 'inbox' ? '暂无待处理任务' : '还没有发出任务'}</strong><p>{box === 'inbox' ? '另一企业账号提交给你的建档任务会显示在这里。' : '请先从新系列建表、系列补产品或产品补机型完成生成与质检。'}</p></div> : items.map(item => <article key={item.id} className="collaboration-task-card">

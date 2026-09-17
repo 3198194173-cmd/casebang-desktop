@@ -120,15 +120,6 @@ export function registerAuthRoutes(
         )
         const actualOrganizationId = organization.rows[0]?.id
         if (!actualOrganizationId) throw new Error('organization_upsert_failed')
-        const existingUser = await client.query<{ business_role: 'upstream' | 'downstream' | null }>(
-          `SELECT business_role FROM app_users
-           WHERE organization_id=$1 AND dingtalk_user_id=$2`,
-          [actualOrganizationId, identity.userId]
-        )
-        const existingRole = existingUser.rows[0]?.business_role
-        if (existingRole && existingRole !== attempt.requested_business_role) {
-          throw new Error('business_role_mismatch')
-        }
         const newUserId = randomUUID()
         const user = await client.query<{ id: string }>(
           `INSERT INTO app_users
@@ -139,7 +130,7 @@ export function registerAuthRoutes(
              dingtalk_open_id=EXCLUDED.dingtalk_open_id,
              display_name=EXCLUDED.display_name,
              avatar_url=EXCLUDED.avatar_url,
-             business_role=COALESCE(app_users.business_role,EXCLUDED.business_role),
+             business_role=EXCLUDED.business_role,
              active=true,
              last_login_at=now()
            RETURNING id`,
@@ -162,7 +153,7 @@ export function registerAuthRoutes(
       }
       return reply.header('cache-control', 'no-store').type('text/html').send(callbackPage(true, `已确认钉钉账号：${escapeHtml(identity.displayName)}。`))
     } catch (error) {
-      const errorCode = error instanceof DingTalkOAuthError ? error.code : error instanceof Error && error.message === 'business_role_mismatch' ? 'business_role_mismatch' : 'login_processing_failed'
+      const errorCode = error instanceof DingTalkOAuthError ? error.code : 'login_processing_failed'
       await failAttempt(pool, attempt.id, errorCode)
       request.log.warn({ errorCode }, '钉钉登录失败')
       return reply.code(400).header('cache-control', 'no-store').type('text/html').send(callbackPage(false, '无法确认企业账号，请检查应用权限后从桌面版重试。'))

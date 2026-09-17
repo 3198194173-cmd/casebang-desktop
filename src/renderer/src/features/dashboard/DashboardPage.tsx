@@ -12,13 +12,13 @@ export function DashboardPage({ snapshot, onNavigate, businessRole }: Props): Re
   const configuredConnectors = snapshot.connectors.filter((connector) => connector.configured).length
 
   if (!businessRole) return <div className="stack-xl">
-    <section className="flow-center-heading"><div><h2>登录并选择业务身份</h2><p>上游账号负责建表与复核；下游账号负责编码、核图和回传。</p></div><button className="primary-button" onClick={() => onNavigate('settings')}>前往登录</button></section>
-    <section className="role-explanation"><article><strong>上游建表</strong><span>新系列建表、系列补产品、产品补机型、提交与最终复核</span></article><article><strong>下游建档</strong><span>接收任务、编码处理、图档核对、上传修订并返回复核</span></article></section>
+    <section className="flow-center-heading"><div><h2>登录并选择默认工作区</h2><p>上游和下游功能分区展示，但参与人都能进入项目并协同编辑。</p></div><button className="primary-button" onClick={() => onNavigate('settings')}>前往登录</button></section>
+    <section className="role-explanation"><article><strong>上游建表工作区</strong><span>新系列建表、系列补产品、产品补机型、提交与最终复核</span></article><article><strong>下游建档工作区</strong><span>接收任务、编码处理、图档核对、上传修订并返回复核</span></article></section>
   </div>
 
   if (businessRole === 'downstream') return <div className="stack-xl">
-    <section className="flow-center-heading"><div><h2>下游建档工作台</h2><p>只显示分配给当前账号的建档任务，不开放上游建表入口。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看待处理任务</button></section>
-    <article className="downstream-entry"><div><small>当前业务身份 · 下游建档</small><h3>建档任务</h3><p>接收任务后软件会自动打开工作副本；编码、核图和新修订回传将继续在这里接入。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>进入任务中心</button></article>
+    <section className="flow-center-heading"><div><h2>下游建档工作台</h2><p>这是当前默认入口；左侧仍可进入上游建表和资料功能。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看待处理任务</button></section>
+    <article className="downstream-entry"><div><small>默认工作区 · 下游建档</small><h3>建档任务</h3><p>参与人共同维护中央工作簿，编辑自动形成版本，再进入审核与合并。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>进入任务中心</button></article>
   </div>
 
   return (

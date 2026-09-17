@@ -18,6 +18,8 @@ export const IPC_CHANNELS = {
   collaborationMembers: 'collaboration:members',
   collaborationWorkItems: 'collaboration:work-items',
   collaborationSubmitLifecycle: 'collaboration:submit-lifecycle',
+  collaborationAct: 'collaboration:act',
+  collaborationDownloadWorkbook: 'collaboration:download-workbook',
   baseFilesSelect: 'base-files:select',
   baseFilesPreview: 'base-files:preview',
   baseFilesHistory: 'base-files:history',

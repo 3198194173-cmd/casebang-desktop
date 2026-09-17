@@ -16,6 +16,13 @@ const metadataSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   requestKey: z.string().uuid()
 }).strict()
+const actionSchema = z.object({
+  action: z.enum(['claim', 'return-source']),
+  expectedVersion: z.number().int().positive(),
+  revision: z.number().int().positive(),
+  requestKey: z.string().uuid(),
+  reason: z.string().trim().max(1_000).optional()
+}).strict()
 
 interface WorkItemRow {
   id: string
@@ -29,6 +36,9 @@ interface WorkItemRow {
   origin_name: string
   assignee_id: string
   assignee_name: string
+  last_action?: string | null
+  last_reason?: string | null
+  last_event_at?: Date | null
 }
 
 export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool, storage: PrivateStorage): void {
@@ -67,10 +77,17 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     const result = await pool.query<WorkItemRow>(
       `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
               w.origin_id,origin.display_name AS origin_name,
-              w.assignee_id,assignee.display_name AS assignee_name
+              w.assignee_id,assignee.display_name AS assignee_name,
+              latest.action AS last_action,latest.payload->>'reason' AS last_reason,
+              latest.created_at AS last_event_at
        FROM work_items w
        JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
        JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
+       LEFT JOIN LATERAL (
+         SELECT action,payload,created_at FROM work_item_events event
+         WHERE event.organization_id=w.organization_id AND event.work_item_id=w.id
+         ORDER BY event.version DESC LIMIT 1
+       ) latest ON true
        WHERE w.organization_id=$1 AND ${ownership}
        ORDER BY w.created_at DESC LIMIT 200`,
       [actor.organization_id, actor.id]
@@ -186,16 +203,120 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       .header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(row.title)}`)
       .send(createReadStream(storage.resolveObject(row.object_key)))
   })
+
+  app.post('/api/v1/collaboration/work-items/:id/actions', async (request, reply) => {
+    const actor = await authenticatedUser(request, reply, pool)
+    if (!actor) return
+    const params = request.params as { id?: string }
+    const id = z.string().uuid().safeParse(params.id)
+    const input = actionSchema.safeParse(request.body)
+    if (!id.success || !input.success) return reply.code(400).send({ error: 'invalid_action' })
+    if (input.data.action === 'return-source' && !input.data.reason?.trim()) {
+      return reply.code(400).send({ error: 'return_reason_required' })
+    }
+
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const requestHash = createHash('sha256').update(JSON.stringify(input.data)).digest('hex')
+      const duplicate = await client.query<{ work_item_id: string; request_hash: string }>(
+        `SELECT work_item_id,request_hash FROM work_item_events
+         WHERE organization_id=$1 AND request_key=$2 AND actor_id=$3`,
+        [actor.organization_id, input.data.requestKey, actor.id]
+      )
+      if (duplicate.rows[0]) {
+        if (duplicate.rows[0].work_item_id !== id.data || duplicate.rows[0].request_hash !== requestHash) {
+          await client.query('ROLLBACK')
+          return reply.code(409).send({ error: 'idempotency_conflict' })
+        }
+        await client.query('COMMIT')
+        const item = await loadWorkItem(pool, actor.organization_id, duplicate.rows[0].work_item_id)
+        return reply.header('cache-control', 'no-store').send({ item: publicWorkItem(item), duplicate: true })
+      }
+
+      const found = await client.query<WorkItemRow>(
+        `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
+                w.origin_id,origin.display_name AS origin_name,
+                w.assignee_id,assignee.display_name AS assignee_name
+         FROM work_items w
+         JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
+         JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
+         WHERE w.organization_id=$1 AND w.id=$2 FOR UPDATE OF w`,
+        [actor.organization_id, id.data]
+      )
+      const item = found.rows[0]
+      if (!item) {
+        await client.query('ROLLBACK')
+        return reply.code(404).send({ error: 'work_item_not_found' })
+      }
+      if (item.assignee_id !== actor.id) {
+        await client.query('ROLLBACK')
+        return reply.code(403).send({ error: 'forbidden_action' })
+      }
+      if (item.version !== input.data.expectedVersion || item.revision !== input.data.revision) {
+        await client.query('ROLLBACK')
+        return reply.code(409).send({ error: 'version_conflict' })
+      }
+      const expectedState = input.data.action === 'claim' ? 'PENDING_PROCESSING' : 'PROCESSING'
+      const nextState = input.data.action === 'claim' ? 'PROCESSING' : 'NEEDS_SOURCE_FIX'
+      if (item.state !== expectedState) {
+        await client.query('ROLLBACK')
+        return reply.code(409).send({ error: 'state_conflict' })
+      }
+
+      const nextVersion = item.version + 1
+      const eventId = randomUUID()
+      const payload = input.data.action === 'return-source'
+        ? { reason: input.data.reason?.trim(), revision: item.revision }
+        : { revision: item.revision }
+      await client.query(
+        `UPDATE work_items SET state=$3,version=$4
+         WHERE organization_id=$1 AND id=$2`,
+        [actor.organization_id, item.id, nextState, nextVersion]
+      )
+      await client.query(
+        `INSERT INTO work_item_events
+          (id,organization_id,work_item_id,actor_id,request_key,request_hash,version,action,payload)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [eventId, actor.organization_id, item.id, actor.id, input.data.requestKey,
+          requestHash,
+          nextVersion, input.data.action, payload]
+      )
+      if (input.data.action === 'return-source') {
+        await client.query(
+          `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
+           VALUES($1,$2,$3,$4,$5)`,
+          [randomUUID(), actor.organization_id, eventId, item.origin_id,
+            { type: 'work-item-returned', workItemId: item.id, title: item.title, reason: input.data.reason?.trim() }]
+        )
+      }
+      await client.query('COMMIT')
+      const updated = await loadWorkItem(pool, actor.organization_id, item.id)
+      return reply.header('cache-control', 'no-store').send({ item: publicWorkItem(updated), duplicate: false })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
+  })
 }
 
 async function loadWorkItem(pool: pg.Pool, organizationId: string, id: string): Promise<WorkItemRow> {
   const result = await pool.query<WorkItemRow>(
     `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
             w.origin_id,origin.display_name AS origin_name,
-            w.assignee_id,assignee.display_name AS assignee_name
+            w.assignee_id,assignee.display_name AS assignee_name,
+            latest.action AS last_action,latest.payload->>'reason' AS last_reason,
+            latest.created_at AS last_event_at
      FROM work_items w
      JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
      JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
+     LEFT JOIN LATERAL (
+       SELECT action,payload,created_at FROM work_item_events event
+       WHERE event.organization_id=w.organization_id AND event.work_item_id=w.id
+       ORDER BY event.version DESC LIMIT 1
+     ) latest ON true
      WHERE w.organization_id=$1 AND w.id=$2`,
     [organizationId, id]
   )
@@ -212,6 +333,9 @@ function publicWorkItem(row: WorkItemRow): object {
     version: row.version,
     revision: row.revision,
     createdAt: row.created_at.toISOString(),
+    lastAction: row.last_action ?? null,
+    lastReason: row.last_reason ?? null,
+    lastEventAt: row.last_event_at?.toISOString() ?? null,
     origin: { id: row.origin_id, displayName: row.origin_name },
     assignee: { id: row.assignee_id, displayName: row.assignee_name }
   }

@@ -121,6 +121,16 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.submitLifecycle(input, lifecycle)
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationAct, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.act(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationDownloadWorkbook, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.downloadWorkbook(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.baseFilesSelect, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     const kind = baseFileKindSchema.parse(input)

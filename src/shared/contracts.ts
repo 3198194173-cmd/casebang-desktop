@@ -166,9 +166,14 @@ export interface CollaborationWorkItem {
   version: number
   revision: number
   createdAt: string
+  lastAction: string | null
+  lastReason: string | null
+  lastEventAt: string | null
   origin: { id: string; displayName: string }
   assignee: { id: string; displayName: string }
 }
+
+export type CollaborationWorkAction = 'claim' | 'return-source'
 
 export interface SaveAiSettingsInput {
   provider: AiProvider
@@ -260,6 +265,8 @@ export interface CasebangDesktopApi {
     members(): Promise<CollaborationMember[]>
     workItems(box: 'inbox' | 'sent'): Promise<CollaborationWorkItem[]>
     submitLifecycle(input: { draftId: string; expectedVersion: number; assigneeId: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
+    act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
+    downloadWorkbook(input: { workItemId: string; title: string }): Promise<{ canceled: boolean; path: string | null }>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

@@ -4,6 +4,7 @@ import { runMigrations } from './migrations.js'
 import { buildServer } from './server.js'
 import { PrivateStorage } from './storage.js'
 import { DingTalkStreamBridge } from './stream-bridge.js'
+import { registerAuthRoutes } from './auth.js'
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
     storage: () => storage.check(),
     stream
   })
+  registerAuthRoutes(app, config, pool)
   const close = async (signal: string): Promise<void> => {
     app.log.info({ signal }, '正在停止中央协同服务')
     stream.stop()

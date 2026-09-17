@@ -42,7 +42,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const loginAccount = async (): Promise<void> => {
     setAccountBusy(true); setError(''); setMessage('已打开钉钉登录页面，正在等待确认…')
     try { const value = await desktopApi.account.login(); setAccount(value); setMessage(`已登录：${value.user?.displayName ?? '钉钉账号'}`) }
-    catch (reason) { setError(reason instanceof Error ? reason.message : '钉钉登录失败'); setMessage('') }
+    catch (reason) { setError(accountError(reason, '钉钉登录失败')); setMessage('') }
     finally { setAccountBusy(false) }
   }
   return <div className="lifecycle-page">
@@ -78,4 +78,9 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
       </>}
     </section></div>
   </div>
+}
+
+function accountError(reason: unknown, fallback: string): string {
+  if (!(reason instanceof Error)) return fallback
+  return reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
 }

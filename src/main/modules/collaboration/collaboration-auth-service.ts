@@ -1,4 +1,4 @@
-import { shell } from 'electron'
+import { net, shell } from 'electron'
 import type { CollaborationAccountState, CollaborationUser } from '@shared/contracts'
 import type { CollaborationSession, SettingsRepository } from '@main/infrastructure/settings-repository'
 
@@ -33,13 +33,14 @@ interface SessionStore {
 
 type OpenExternal = (url: string) => Promise<void>
 type Delay = (milliseconds: number) => Promise<void>
+type Fetcher = (input: string, init?: RequestInit) => Promise<Response>
 
 export class CollaborationAuthService {
   private activeLogin: Promise<CollaborationAccountState> | null = null
 
   constructor(
     private readonly settings: SessionStore | SettingsRepository,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: Fetcher = (input, init) => net.fetch(input, init),
     private readonly openExternal: OpenExternal = (url) => shell.openExternal(url),
     private readonly delay: Delay = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds))
   ) {}
@@ -102,11 +103,16 @@ export class CollaborationAuthService {
   private async performLogin(): Promise<CollaborationAccountState> {
     const application = await this.settings.getApplicationSettings()
     if (!application.allowNetworkFeatures) throw new Error('联网功能已关闭，请先在系统设置中开启。')
-    const startResponse = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/start`, {
-      method: 'POST',
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(12_000)
-    })
+    let startResponse: Response
+    try {
+      startResponse = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/start`, {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(12_000)
+      })
+    } catch {
+      throw new Error('无法连接协同服务，请检查网络后重试。')
+    }
     if (!startResponse.ok) throw new Error(`协同服务暂时无法发起登录（HTTP ${startResponse.status}）`)
     const start = await startResponse.json() as LoginStartResponse
     if (!isLoginStart(start)) throw new Error('协同服务返回的登录信息不完整')

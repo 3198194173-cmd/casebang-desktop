@@ -46,7 +46,7 @@ export function SettingsPage(): React.JSX.Element {
       const value = await desktopApi.account.login()
       setAccount(value); setMessage('钉钉账号登录成功。')
     } catch (reason) {
-      setMessage(null); setError(reason instanceof Error ? reason.message : '钉钉登录失败')
+      setMessage(null); setError(accountError(reason, '钉钉登录失败'))
     } finally { setAccountBusy(false) }
   }
 
@@ -55,7 +55,7 @@ export function SettingsPage(): React.JSX.Element {
     try {
       setAccount(await desktopApi.account.logout()); setMessage('已退出钉钉账号。')
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '退出登录失败')
+      setError(accountError(reason, '退出登录失败'))
     } finally { setAccountBusy(false) }
   }
 
@@ -128,4 +128,9 @@ export function SettingsPage(): React.JSX.Element {
       </section>
     </div>
   )
+}
+
+function accountError(reason: unknown, fallback: string): string {
+  if (!(reason instanceof Error)) return fallback
+  return reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
 }

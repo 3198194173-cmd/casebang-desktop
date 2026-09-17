@@ -17,10 +17,11 @@ const metadataSchema = z.object({
   requestKey: z.string().uuid()
 }).strict()
 const actionSchema = z.object({
-  action: z.enum(['claim', 'return-source']),
+  action: z.enum(['claim', 'return-source', 'update-stage']),
   expectedVersion: z.number().int().positive(),
   revision: z.number().int().positive(),
   requestKey: z.string().uuid(),
+  state: z.enum(['PENDING_PROCESSING', 'PROCESSING', 'PENDING_ORIGIN_REVIEW', 'NEEDS_SOURCE_FIX', 'READY_TO_MERGE', 'COMPLETED']).optional(),
   reason: z.string().trim().max(1_000).optional()
 }).strict()
 
@@ -71,9 +72,6 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
   app.get('/api/v1/collaboration/work-items', async (request, reply) => {
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
-    const query = request.query as { box?: string }
-    const box = query.box === 'sent' ? 'sent' : 'inbox'
-    const ownership = box === 'sent' ? 'w.origin_id=$2' : 'w.assignee_id=$2'
     const result = await pool.query<WorkItemRow>(
       `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
               w.origin_id,origin.display_name AS origin_name,
@@ -88,7 +86,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
          WHERE event.organization_id=w.organization_id AND event.work_item_id=w.id
          ORDER BY event.version DESC LIMIT 1
        ) latest ON true
-       WHERE w.organization_id=$1 AND ${ownership}
+       WHERE w.organization_id=$1 AND (w.origin_id=$2 OR w.assignee_id=$2)
        ORDER BY w.created_at DESC LIMIT 200`,
       [actor.organization_id, actor.id]
     )
@@ -214,6 +212,9 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     if (input.data.action === 'return-source' && !input.data.reason?.trim()) {
       return reply.code(400).send({ error: 'return_reason_required' })
     }
+    if (input.data.action === 'update-stage' && !input.data.state) {
+      return reply.code(400).send({ error: 'stage_required' })
+    }
 
     const client = await pool.connect()
     try {
@@ -249,7 +250,8 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
         await client.query('ROLLBACK')
         return reply.code(404).send({ error: 'work_item_not_found' })
       }
-      if (item.assignee_id !== actor.id) {
+      const isParticipant = item.origin_id === actor.id || item.assignee_id === actor.id
+      if ((input.data.action === 'update-stage' && !isParticipant) || (input.data.action !== 'update-stage' && item.assignee_id !== actor.id)) {
         await client.query('ROLLBACK')
         return reply.code(403).send({ error: 'forbidden_action' })
       }
@@ -257,9 +259,9 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
         await client.query('ROLLBACK')
         return reply.code(409).send({ error: 'version_conflict' })
       }
-      const expectedState = input.data.action === 'claim' ? 'PENDING_PROCESSING' : 'PROCESSING'
-      const nextState = input.data.action === 'claim' ? 'PROCESSING' : 'NEEDS_SOURCE_FIX'
-      if (item.state !== expectedState) {
+      const expectedState = input.data.action === 'claim' ? 'PENDING_PROCESSING' : input.data.action === 'return-source' ? 'PROCESSING' : null
+      const nextState = input.data.action === 'claim' ? 'PROCESSING' : input.data.action === 'return-source' ? 'NEEDS_SOURCE_FIX' : input.data.state!
+      if ((expectedState && item.state !== expectedState) || (!expectedState && item.state === nextState)) {
         await client.query('ROLLBACK')
         return reply.code(409).send({ error: 'state_conflict' })
       }
@@ -267,8 +269,8 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       const nextVersion = item.version + 1
       const eventId = randomUUID()
       const payload = input.data.action === 'return-source'
-        ? { reason: input.data.reason?.trim(), revision: item.revision }
-        : { revision: item.revision }
+        ? { reason: input.data.reason?.trim(), revision: item.revision, state: nextState }
+        : { revision: item.revision, state: nextState }
       await client.query(
         `UPDATE work_items SET state=$3,version=$4
          WHERE organization_id=$1 AND id=$2`,
@@ -282,12 +284,17 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
           requestHash,
           nextVersion, input.data.action, payload]
       )
-      if (input.data.action === 'return-source') {
+      if (input.data.action === 'return-source' || input.data.action === 'update-stage') {
+        const destinationUserId = input.data.action === 'return-source'
+          ? item.origin_id
+          : actor.id === item.origin_id ? item.assignee_id : item.origin_id
         await client.query(
           `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
            VALUES($1,$2,$3,$4,$5)`,
-          [randomUUID(), actor.organization_id, eventId, item.origin_id,
-            { type: 'work-item-returned', workItemId: item.id, title: item.title, reason: input.data.reason?.trim() }]
+          [randomUUID(), actor.organization_id, eventId, destinationUserId,
+            input.data.action === 'return-source'
+              ? { type: 'work-item-returned', workItemId: item.id, title: item.title, reason: input.data.reason?.trim() }
+              : { type: 'work-item-stage-updated', workItemId: item.id, title: item.title, state: nextState }]
         )
       }
       await client.query('COMMIT')

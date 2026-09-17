@@ -16,9 +16,10 @@ const submitSchema = z.object({
 }).strict()
 const actionSchema = z.object({
   workItemId: z.string().uuid(),
-  action: z.enum(['claim', 'return-source']),
+  action: z.enum(['claim', 'return-source', 'update-stage']),
   expectedVersion: z.number().int().positive(),
   revision: z.number().int().positive(),
+  state: z.enum(['PENDING_PROCESSING', 'PROCESSING', 'PENDING_ORIGIN_REVIEW', 'NEEDS_SOURCE_FIX', 'READY_TO_MERGE', 'COMPLETED']).optional(),
   reason: z.string().trim().max(1_000).optional()
 }).strict()
 const openSchema = z.object({
@@ -40,9 +41,8 @@ export class CollaborationService {
     return body.members ?? []
   }
 
-  async workItems(input: unknown): Promise<CollaborationWorkItem[]> {
-    const box = z.enum(['inbox', 'sent']).parse(input)
-    const response = await this.request(`/api/v1/collaboration/work-items?box=${box}`)
+  async workItems(): Promise<CollaborationWorkItem[]> {
+    const response = await this.request('/api/v1/collaboration/work-items')
     const body = await response.json() as WorkItemsResponse
     return body.items ?? []
   }
@@ -84,6 +84,7 @@ export class CollaborationService {
         action: value.action satisfies CollaborationWorkAction,
         expectedVersion: value.expectedVersion,
         revision: value.revision,
+        ...(value.state ? { state: value.state } : {}),
         requestKey,
         ...(value.reason ? { reason: value.reason } : {})
       })
@@ -144,12 +145,13 @@ function serverError(code?: string, status?: number): string {
     workbook_hash_mismatch: '上传后的工作簿校验不一致，请重试。',
     workbook_required: '没有读取到需要交接的工作簿。',
     invalid_action: '任务操作参数不正确，请刷新后重试。',
+    stage_required: '请选择要保存的工作簿阶段。',
     return_reason_required: '退回任务必须填写原因。',
     forbidden_action: '当前账号不是这个任务的处理人。',
     version_conflict: '任务版本已经更新，请刷新任务后重试。',
     state_conflict: '任务状态已经变化，请刷新任务后重试。',
     idempotency_conflict: '任务操作标识冲突，请刷新后重新操作。',
-    work_item_not_found: '没有找到该协同任务。',
+    work_item_not_found: '没有找到该工作簿记录。',
     business_role_forbidden: '当前账号不能执行此操作。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`

@@ -38,7 +38,7 @@ export function SettingsPage(): React.JSX.Element {
   const login = async (): Promise<void> => {
     setError(null); setMessage('已打开钉钉登录页面，正在等待确认…')
     try {
-      await loginAccount(loginRole); setMessage('钉钉账号登录成功，已进入所选默认工作区。')
+      await loginAccount(loginRole); setMessage('钉钉账号登录成功，已显示所选业务端功能。')
     } catch (reason) {
       setMessage(null); setError(accountError(reason, '钉钉登录失败'))
     }
@@ -110,10 +110,10 @@ export function SettingsPage(): React.JSX.Element {
           <span className="eyebrow">ACCOUNT ACCESS</span>
           <h3>账号与组织登录</h3>
           {account?.user
-            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>默认进入{account.user.businessRole === 'upstream' ? '上游建表' : '下游建档'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 上游与下游功能保持分区，但不会限制参与人查看和编辑同一建档项目。</p></>
-            : <><p>{account?.message ?? '正在读取钉钉账号状态…'} 登录前选择默认进入的工作区，两个工作区登录后都可以使用。</p><div className="business-role-picker">
-              <label className={loginRole === 'upstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} /><span><strong>先进入上游建表</strong><small>建表、提交、复核、合并</small></span></label>
-              <label className={loginRole === 'downstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} /><span><strong>先进入下游建档</strong><small>接收、编码、核图、回传</small></span></label>
+            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>{account.user.businessRole === 'upstream' ? '上游建表' : '下游加工'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 上下游工具不混用，但双方共同查看工作簿记录。</p></>
+            : <><p>{account?.message ?? '正在读取钉钉账号状态…'} 登录前请选择该账号使用的业务端。</p><div className="business-role-picker">
+              <label className={loginRole === 'upstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} /><span><strong>上游建表</strong><small>建表、提交、复核、合并</small></span></label>
+              <label className={loginRole === 'downstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} /><span><strong>下游加工</strong><small>物料码、69 码和图档核对</small></span></label>
             </div></>}
         </div>
         <div className="account-panel-actions">

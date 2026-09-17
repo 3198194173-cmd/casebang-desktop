@@ -66,8 +66,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .collaboration-tabs button { min-height: 36px; padding: 0 13px; border: 0; border-radius: 8px; color: #62726e; background: transparent; font-size: 11px; font-weight: 750; }
 .collaboration-tabs button[aria-pressed="true"] { color: white; background: #245f51; }
 .collaboration-tabs button:last-child { margin-left: auto; }
+.collaboration-stage-editor { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(260px, 1fr) auto; gap: 12px; align-items: end; padding-top: 12px; border-top: 1px solid #e4ebe9; }
+.collaboration-stage-editor label { display: grid; gap: 6px; color: #4f625d; font-size: 11px; font-weight: 750; }
+.collaboration-stage-editor select { min-height: 40px; padding: 0 11px; border: 1px solid #ccd9d5; border-radius: 8px; background: white; }
+.collaboration-online-note { grid-column: 1 / -1; color: #7b8985; line-height: 1.6; }
 .collaboration-list { display: grid; gap: 9px; }
-.collaboration-list article { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 15px 17px; border: 1px solid #dfe6e4; border-radius: 11px; background: white; }
+.collaboration-list article { display: grid; grid-template-columns: 138px minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 15px 17px; border: 1px solid #dfe6e4; border-radius: 11px; background: white; }
 .collaboration-list article strong { font-size: 13px; }
 .collaboration-list article p { margin: 4px 0 0; color: #74827f; font-size: 10px; }
 .collaboration-list article > span { color: #758480; font-size: 9px; }

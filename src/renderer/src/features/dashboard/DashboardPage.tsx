@@ -12,13 +12,13 @@ export function DashboardPage({ snapshot, onNavigate, businessRole }: Props): Re
   const configuredConnectors = snapshot.connectors.filter((connector) => connector.configured).length
 
   if (!businessRole) return <div className="stack-xl">
-    <section className="flow-center-heading"><div><h2>登录并选择默认工作区</h2><p>上游和下游功能分区展示，但参与人都能进入项目并协同编辑。</p></div><button className="primary-button" onClick={() => onNavigate('settings')}>前往登录</button></section>
-    <section className="role-explanation"><article><strong>上游建表工作区</strong><span>新系列建表、系列补产品、产品补机型、提交与最终复核</span></article><article><strong>下游建档工作区</strong><span>接收任务、编码处理、图档核对、上传修订并返回复核</span></article></section>
+    <section className="flow-center-heading"><div><h2>登录并选择业务端</h2><p>上游和下游使用不同的工具，但共同查看同一份工作簿记录和当前阶段。</p></div><button className="primary-button" onClick={() => onNavigate('settings')}>前往登录</button></section>
+    <section className="role-explanation"><article><strong>上游建表</strong><span>新系列建表、系列补产品、产品补机型和最终审核合并</span></article><article><strong>下游加工</strong><span>物料码、69 码和图档核对；不显示上游建表工具</span></article></section>
   </div>
 
   if (businessRole === 'downstream') return <div className="stack-xl">
-    <section className="flow-center-heading"><div><h2>下游建档工作台</h2><p>这是当前默认入口；左侧仍可进入上游建表和资料功能。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看待处理任务</button></section>
-    <article className="downstream-entry"><div><small>默认工作区 · 下游建档</small><h3>建档任务</h3><p>参与人共同维护中央工作簿，编辑自动形成版本，再进入审核与合并。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>进入任务中心</button></article>
+    <section className="flow-center-heading"><div><h2>下游加工工作台</h2><p>只显示新建表的编码与图档核对工具，不显示上游建表功能。</p></div><button className="primary-button" onClick={() => onNavigate('material-lifecycle')}>开始加工</button></section>
+    <article className="downstream-entry"><div><small>共享记录</small><h3>工作簿进度</h3><p>双方查看同一条记录，只在阶段变化时更新并通知对方。</p></div><button className="secondary-button" onClick={() => onNavigate('collaboration-tasks')}>查看记录</button></article>
   </div>
 
   return (
@@ -26,9 +26,9 @@ export function DashboardPage({ snapshot, onNavigate, businessRole }: Props): Re
       <section className="flow-center-heading">
         <div>
           <h2>从建表到建档，一条主流程</h2>
-          <p>先选择一种建表入口，质检通过后提交建档任务；三种入口不会依次执行。</p>
+          <p>三种建表入口任选一种；生成的新建表进入共享记录，不再发送或下载副本。</p>
         </div>
-        <button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看建档任务</button>
+        <button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看工作簿记录</button>
       </section>
 
       <section className="business-flow-map" aria-label="CASEBANG 主业务流程">
@@ -53,10 +53,10 @@ export function DashboardPage({ snapshot, onNavigate, businessRole }: Props): Re
             <footer><button onClick={() => onNavigate('supplement')}>开始</button></footer>
           </article>
         </div>
-        <div className="flow-merge"><span>任一建表流程完成并通过质检</span><strong>提交</strong></div>
+        <div className="flow-merge"><span>任一建表流程完成并通过质检</span><strong>建立共享记录</strong></div>
         <article className="downstream-entry">
-          <div><small>第二阶段 · 下游处理</small><h3>建档任务</h3><p>另一账号接收文件，完成物料码、69码和图档核对，再交回建表人复核。</p></div>
-          <button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>进入任务中心</button>
+          <div><small>第二阶段 · 下游加工</small><h3>新建表加工</h3><p>下游在同一工作簿上完成物料码、69 码和图档核对，然后更新阶段等待上游复核。</p></div>
+          <button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看共享记录</button>
         </article>
       </section>
 

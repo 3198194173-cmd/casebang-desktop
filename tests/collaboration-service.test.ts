@@ -40,8 +40,20 @@ describe('desktop collaboration service', () => {
   it('clears a rejected global login session', async () => {
     vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'session_expired' }), { status: 401 }))
     const value = settings()
-    await expect(new CollaborationService(value).workItems('inbox')).rejects.toThrow('登录已失效')
+    await expect(new CollaborationService(value).workItems()).rejects.toThrow('登录已失效')
     expect(value.clearCollaborationSession).toHaveBeenCalledOnce()
+  })
+
+  it('updates the shared workbook stage without an inbox or outbox parameter', async () => {
+    const item = { id: '30000000-0000-4000-8000-000000000001', title: '测试工作簿', state: 'PENDING_ORIGIN_REVIEW', sourceWorkflow: 'manual', version: 3, revision: 1, createdAt: '2026-09-17T00:00:00.000Z', origin: { id: 'user-1', displayName: '建表人' }, assignee: { id: 'user-2', displayName: '处理人' } }
+    vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ item, duplicate: false }), { status: 200 }))
+    const result = await new CollaborationService(settings()).act({
+      workItemId: item.id, action: 'update-stage', state: 'PENDING_ORIGIN_REVIEW', expectedVersion: 2, revision: 1
+    })
+
+    expect(result.item.state).toBe('PENDING_ORIGIN_REVIEW')
+    const request = vi.mocked(net.fetch).mock.calls[0]
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual(expect.objectContaining({ action: 'update-stage', state: 'PENDING_ORIGIN_REVIEW' }))
   })
 
   it('submits an assignee action with optimistic task version fields', async () => {

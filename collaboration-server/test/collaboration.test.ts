@@ -35,7 +35,7 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
-  it('uses the selected workspace as a default without blocking the other task box', async () => {
+  it('lists one shared workbook record for either project participant', async () => {
     const query = vi.fn()
       .mockResolvedValueOnce(queryResult([{
         id: '10000000-0000-4000-8000-000000000002', display_name: '处理人', avatar_url: null,
@@ -45,10 +45,11 @@ describe('collaboration identity boundaries', () => {
     const app = Fastify()
     registerCollaborationRoutes(app, { query } as unknown as pg.Pool, {} as PrivateStorage)
 
-    const response = await app.inject({ method: 'GET', url: '/api/v1/collaboration/work-items?box=sent', headers: { authorization: `Bearer ${'x'.repeat(40)}` } })
+    const response = await app.inject({ method: 'GET', url: '/api/v1/collaboration/work-items', headers: { authorization: `Bearer ${'x'.repeat(40)}` } })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ items: [] })
     expect(query).toHaveBeenCalledTimes(2)
+    expect(String(query.mock.calls[1]?.[0])).toContain('(w.origin_id=$2 OR w.assignee_id=$2)')
     await app.close()
   })
 
@@ -125,6 +126,45 @@ describe('collaboration identity boundaries', () => {
     expect(response.json().item).toEqual(expect.objectContaining({ id: workItem.id, state: 'PROCESSING', version: 2, lastAction: 'claim' }))
     expect(clientQuery.mock.calls.some(call => String(call[0]).includes('UPDATE work_items SET state'))).toBe(true)
     expect(client.release).toHaveBeenCalledOnce()
+    await app.close()
+  })
+
+  it('lets either participant update the shared stage and queues one notification for the other participant', async () => {
+    const workItem = {
+      id: '30000000-0000-4000-8000-000000000001', title: '共享工作簿',
+      state: 'PROCESSING', source_workflow: 'manual', version: 2, revision: 1,
+      created_at: new Date('2026-09-17T00:00:00Z'),
+      origin_id: '10000000-0000-4000-8000-000000000001', origin_name: '建表人',
+      assignee_id: '10000000-0000-4000-8000-000000000002', assignee_name: '加工人'
+    }
+    const updated = { ...workItem, state: 'PENDING_ORIGIN_REVIEW', version: 3, last_action: 'update-stage', last_reason: null, last_event_at: new Date('2026-09-17T00:01:00Z') }
+    const clientQuery = vi.fn()
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([workItem]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+    const client = { query: clientQuery, release: vi.fn() }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([{ id: workItem.origin_id, display_name: '建表人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
+      .mockResolvedValueOnce(queryResult([updated]))
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query, connect: vi.fn(async () => client) } as unknown as pg.Pool, {} as PrivateStorage)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/collaboration/work-items/${workItem.id}/actions`,
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/json' },
+      payload: { action: 'update-stage', state: 'PENDING_ORIGIN_REVIEW', expectedVersion: 2, revision: 1, requestKey: '40000000-0000-4000-8000-000000000002' }
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().item).toEqual(expect.objectContaining({ state: 'PENDING_ORIGIN_REVIEW', version: 3 }))
+    const outboxCall = clientQuery.mock.calls.find(call => String(call[0]).includes('INSERT INTO outbox_events'))
+    expect(outboxCall?.[1]?.[3]).toBe(workItem.assignee_id)
+    expect(outboxCall?.[1]?.[4]).toEqual(expect.objectContaining({ type: 'work-item-stage-updated', state: 'PENDING_ORIGIN_REVIEW' }))
     await app.close()
   })
 })

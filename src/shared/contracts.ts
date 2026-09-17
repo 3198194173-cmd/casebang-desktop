@@ -176,7 +176,7 @@ export interface CollaborationWorkItem {
   assignee: { id: string; displayName: string }
 }
 
-export type CollaborationWorkAction = 'claim' | 'return-source'
+export type CollaborationWorkAction = 'claim' | 'return-source' | 'update-stage'
 
 export interface SaveAiSettingsInput {
   provider: AiProvider
@@ -266,9 +266,9 @@ export interface CasebangDesktopApi {
   }
   collaboration: {
     members(): Promise<CollaborationMember[]>
-    workItems(box: 'inbox' | 'sent'): Promise<CollaborationWorkItem[]>
+    workItems(): Promise<CollaborationWorkItem[]>
     submitLifecycle(input: { draftId: string; expectedVersion: number; assigneeId: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
-    act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
+    act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; state?: string; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     openWorkbook(input: { workItemId: string; title: string; revision: number }): Promise<{ path: string }>
   }
   baseFiles: {

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import type { CollaborationAccountState } from '@shared/contracts'
+import type { BusinessRole, CollaborationAccountState } from '@shared/contracts'
 import { desktopApi } from './desktop-api'
 
 interface AccountContextValue {
@@ -7,7 +7,7 @@ interface AccountContextValue {
   busy: boolean
   error: string | null
   refresh(): Promise<void>
-  login(): Promise<CollaborationAccountState>
+  login(businessRole: BusinessRole): Promise<CollaborationAccountState>
   logout(): Promise<CollaborationAccountState>
 }
 
@@ -24,9 +24,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }): Re
   }
   useEffect(() => { void refresh() }, [])
 
-  const login = async (): Promise<CollaborationAccountState> => {
+  const login = async (businessRole: BusinessRole): Promise<CollaborationAccountState> => {
     setBusy(true); setError(null)
-    try { const value = await desktopApi.account.login(); setAccount(value); return value }
+    try { const value = await desktopApi.account.login(businessRole); setAccount(value); return value }
     catch (reason) { const message = accountError(reason, '钉钉登录失败'); setError(message); throw new Error(message) }
     finally { setBusy(false) }
   }

@@ -49,12 +49,13 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
   app.get('/api/v1/collaboration/members', async (request, reply) => {
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
+    if (actor.business_role !== 'upstream') return reply.code(403).send({ error: 'business_role_forbidden' })
     const result = await pool.query<{
       id: string; display_name: string; avatar_url: string | null; last_login_at: Date
     }>(
       `SELECT id,display_name,avatar_url,last_login_at
        FROM app_users
-       WHERE organization_id=$1 AND active=true AND id<>$2
+       WHERE organization_id=$1 AND active=true AND id<>$2 AND business_role='downstream'
        ORDER BY last_login_at DESC,display_name`,
       [actor.organization_id, actor.id]
     )
@@ -73,6 +74,9 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     if (!actor) return
     const query = request.query as { box?: string }
     const box = query.box === 'sent' ? 'sent' : 'inbox'
+    if (!actor.business_role || (actor.business_role === 'upstream' && box !== 'sent') || (actor.business_role === 'downstream' && box !== 'inbox')) {
+      return reply.code(403).send({ error: 'business_role_forbidden' })
+    }
     const ownership = box === 'sent' ? 'w.origin_id=$2' : 'w.assignee_id=$2'
     const result = await pool.query<WorkItemRow>(
       `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
@@ -98,6 +102,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
   app.post('/api/v1/collaboration/work-items', async (request, reply) => {
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
+    if (actor.business_role !== 'upstream') return reply.code(403).send({ error: 'business_role_forbidden' })
     if (!Buffer.isBuffer(request.body) || request.body.length === 0) return reply.code(400).send({ error: 'workbook_required' })
     const metadataHeader = request.headers['x-casebang-metadata']
     if (typeof metadataHeader !== 'string') return reply.code(400).send({ error: 'metadata_required' })
@@ -111,7 +116,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     if (actualHash !== metadata.sha256) return reply.code(409).send({ error: 'workbook_hash_mismatch' })
 
     const assignee = await pool.query<{ id: string }>(
-      `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND active=true`,
+      `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND active=true AND business_role='downstream'`,
       [actor.organization_id, metadata.assigneeId]
     )
     if (!assignee.rowCount || metadata.assigneeId === actor.id) return reply.code(400).send({ error: 'invalid_assignee' })
@@ -207,6 +212,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
   app.post('/api/v1/collaboration/work-items/:id/actions', async (request, reply) => {
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
+    if (actor.business_role !== 'downstream') return reply.code(403).send({ error: 'business_role_forbidden' })
     const params = request.params as { id?: string }
     const id = z.string().uuid().safeParse(params.id)
     const input = actionSchema.safeParse(request.body)

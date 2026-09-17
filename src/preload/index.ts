@@ -26,7 +26,7 @@ const api: CasebangDesktopApi = {
   },
   account: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.accountGet),
-    login: () => ipcRenderer.invoke(IPC_CHANNELS.accountLogin),
+    login: (businessRole) => ipcRenderer.invoke(IPC_CHANNELS.accountLogin, businessRole),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.accountLogout)
   },
   collaboration: {
@@ -34,7 +34,7 @@ const api: CasebangDesktopApi = {
     workItems: (box) => ipcRenderer.invoke(IPC_CHANNELS.collaborationWorkItems, box),
     submitLifecycle: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationSubmitLifecycle, input),
     act: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationAct, input),
-    downloadWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationDownloadWorkbook, input)
+    openWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenWorkbook, input)
   },
   baseFiles: {
     select: (kind) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesSelect, kind),

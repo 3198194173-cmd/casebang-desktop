@@ -137,12 +137,15 @@ export interface ApplicationSettings {
   allowNetworkFeatures: boolean
 }
 
+export type BusinessRole = 'upstream' | 'downstream'
+
 export interface CollaborationUser {
   id: string
   displayName: string
   avatarUrl: string | null
   organizationId: string
   corpId: string
+  businessRole: BusinessRole | null
 }
 
 export interface CollaborationAccountState {
@@ -258,7 +261,7 @@ export interface CasebangDesktopApi {
   }
   account: {
     get(): Promise<CollaborationAccountState>
-    login(): Promise<CollaborationAccountState>
+    login(businessRole: BusinessRole): Promise<CollaborationAccountState>
     logout(): Promise<CollaborationAccountState>
   }
   collaboration: {
@@ -266,7 +269,7 @@ export interface CasebangDesktopApi {
     workItems(box: 'inbox' | 'sent'): Promise<CollaborationWorkItem[]>
     submitLifecycle(input: { draftId: string; expectedVersion: number; assigneeId: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
-    downloadWorkbook(input: { workItemId: string; title: string }): Promise<{ canceled: boolean; path: string | null }>
+    openWorkbook(input: { workItemId: string; title: string; revision: number }): Promise<{ path: string }>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

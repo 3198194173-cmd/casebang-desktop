@@ -1,6 +1,6 @@
-import { dialog, net } from 'electron'
+import { app, net, shell } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem } from '@shared/contracts'
@@ -21,9 +21,10 @@ const actionSchema = z.object({
   revision: z.number().int().positive(),
   reason: z.string().trim().max(1_000).optional()
 }).strict()
-const downloadSchema = z.object({
+const openSchema = z.object({
   workItemId: z.string().uuid(),
-  title: z.string().trim().min(1).max(240)
+  title: z.string().trim().min(1).max(240),
+  revision: z.number().int().positive()
 }).strict()
 
 interface MembersResponse { members?: CollaborationMember[] }
@@ -92,24 +93,23 @@ export class CollaborationService {
     return { item: body.item, duplicate: body.duplicate ?? false }
   }
 
-  async downloadWorkbook(input: unknown): Promise<{ canceled: boolean; path: string | null }> {
-    const value = downloadSchema.parse(input)
+  async openWorkbook(input: unknown): Promise<{ path: string }> {
+    const value = openSchema.parse(input)
     const safeTitle = value.title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
-    const result = await dialog.showSaveDialog({
-      title: '保存交接工作簿',
-      defaultPath: safeTitle.toLowerCase().endsWith('.xlsx') ? safeTitle : `${safeTitle}.xlsx`,
-      filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
-    })
-    if (result.canceled || !result.filePath) return { canceled: true, path: null }
-    const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/workbook`)
-    const bytes = Buffer.from(await response.arrayBuffer())
-    if (!bytes.length) throw new Error('服务端返回的工作簿为空。')
-    const destination = path.resolve(result.filePath)
-    await writeFile(destination, bytes, { flag: 'wx' }).catch(async error => {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      await writeFile(destination, bytes)
-    })
-    return { canceled: false, path: destination }
+    const directory = path.join(app.getPath('userData'), 'collaboration-workbooks', value.workItemId)
+    const fileName = safeTitle.toLowerCase().endsWith('.xlsx') ? safeTitle : `${safeTitle}.xlsx`
+    const destination = path.join(directory, `revision-${value.revision}-${fileName}`)
+    await mkdir(directory, { recursive: true })
+    const exists = await access(destination).then(() => true).catch(() => false)
+    if (!exists) {
+      const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/workbook`)
+      const bytes = Buffer.from(await response.arrayBuffer())
+      if (!bytes.length) throw new Error('服务端返回的工作簿为空。')
+      await writeFile(destination, bytes, { flag: 'wx' })
+    }
+    const openError = await shell.openPath(destination)
+    if (openError) throw new Error(`无法打开工作簿：${openError}`)
+    return { path: destination }
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
@@ -149,7 +149,8 @@ function serverError(code?: string, status?: number): string {
     version_conflict: '任务版本已经更新，请刷新任务后重试。',
     state_conflict: '任务状态已经变化，请刷新任务后重试。',
     idempotency_conflict: '任务操作标识冲突，请刷新后重新操作。',
-    work_item_not_found: '没有找到该协同任务。'
+    work_item_not_found: '没有找到该协同任务。',
+    business_role_forbidden: '当前账号的业务身份不能执行此操作。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`
 }

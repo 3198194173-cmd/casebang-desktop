@@ -17,7 +17,17 @@ export function App(): React.JSX.Element {
   const [page, setPage] = useState<PageId>('dashboard')
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const { account, busy: accountBusy, error: accountError, login } = useAccount()
+  const { account, busy: accountBusy, error: accountError } = useAccount()
+  const businessRole = account?.user?.businessRole ?? null
+  const visibleGroups = NAV_GROUPS.filter((group) => {
+    if (group.id === 'overview' || group.id === 'system') return true
+    if (!businessRole) return false
+    if (group.id === 'workflows' || group.id === 'resources') return businessRole === 'upstream'
+    return group.id === 'collaboration'
+  })
+  const internalPage = page === 'material-lifecycle'
+    ? { group: '任务中心', label: '导入旧表测试' }
+    : null
 
   const refresh = async (): Promise<void> => {
     try {
@@ -32,6 +42,12 @@ export function App(): React.JSX.Element {
     void refresh()
   }, [])
 
+  useEffect(() => {
+    const visible = visibleGroups.some(group => group.items.some(item => item.id === page))
+    const allowedInternal = page === 'material-lifecycle' && businessRole === 'upstream'
+    if (!visible && !allowedInternal) setPage('dashboard')
+  }, [businessRole, page])
+
   const renderPage = (): React.JSX.Element => {
     if (!snapshot) return <div className="loading-card">正在初始化应用…</div>
     if (page === 'existing-products' || page === 'supplement' || page === 'new-task' || page === 'material-lifecycle' || page === 'collaboration-tasks') return <></>
@@ -39,7 +55,7 @@ export function App(): React.JSX.Element {
 
     if (page === 'integrations') return <IntegrationsPage connectors={snapshot.connectors} />
     if (page === 'settings') return <SettingsPage />
-    return <DashboardPage snapshot={snapshot} onNavigate={setPage} />
+    return <DashboardPage snapshot={snapshot} onNavigate={setPage} businessRole={businessRole} />
   }
 
   return (
@@ -53,7 +69,7 @@ export function App(): React.JSX.Element {
           </div>
         </div>
         <nav className="navigation" aria-label="主导航">
-          {NAV_GROUPS.map((group) => (
+          {visibleGroups.map((group) => (
             <section className="nav-group" key={group.id}>
               <span className="nav-group-label">{group.label}</span>
               {group.items.map((item) => (
@@ -77,13 +93,13 @@ export function App(): React.JSX.Element {
       <main className="main-content">
         <header className="topbar">
           <div>
-            <span className="topbar-section">{NAV_GROUPS.find((group) => group.items.some((item) => item.id === page))?.label}</span>
-            <h1>{NAV_ITEMS.find((item) => item.id === page)?.label}</h1>
+            <span className="topbar-section">{internalPage?.group ?? NAV_GROUPS.find((group) => group.items.some((item) => item.id === page))?.label}</span>
+            <h1>{internalPage?.label ?? NAV_ITEMS.find((item) => item.id === page)?.label}</h1>
           </div>
           <div className="topbar-actions">
-            <button className={`global-account ${account?.status ?? 'loading'}`} disabled={accountBusy} onClick={() => account?.user ? setPage('settings') : void login()}>
+            <button className={`global-account ${account?.status ?? 'loading'}`} disabled={accountBusy} onClick={() => setPage('settings')}>
               <span>{account?.user?.displayName.slice(0, 1) ?? '钉'}</span>
-              <div><strong>{account?.user?.displayName ?? (accountBusy ? '等待登录确认…' : '登录钉钉')}</strong><small>{account?.status === 'signed-in' ? '企业账号已验证' : account?.status === 'offline' ? '离线保留' : '全软件账号入口'}</small></div>
+              <div><strong>{account?.user?.displayName ?? (accountBusy ? '等待登录确认…' : '登录钉钉')}</strong><small>{account?.status === 'signed-in' ? businessRole === 'upstream' ? '上游建表' : '下游建档' : account?.status === 'offline' ? '离线保留' : '选择业务身份'}</small></div>
             </button>
             <div className="topbar-badge">Windows 桌面版</div>
           </div>
@@ -91,10 +107,10 @@ export function App(): React.JSX.Element {
         {(error || accountError) && <div className="alert error">{error ?? accountError}</div>}
         <section className={`page-content ${page === 'new-task' ? 'new-task-page' : ''}`}>
           {(page === 'existing-products' || page === 'new-task' || page === 'supplement') && <DraftStatus />}
-          {snapshot && <><div hidden={page !== 'existing-products'}><NewTaskPage existingSeries snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'new-task'}><NewTaskPage snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'supplement'}><SupplementPage active={page === 'supplement'} onOpenBaseFiles={() => setPage('base-files')} /></div></>}
+          {snapshot && businessRole === 'upstream' && <><div hidden={page !== 'existing-products'}><NewTaskPage existingSeries snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'new-task'}><NewTaskPage snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'supplement'}><SupplementPage active={page === 'supplement'} onOpenBaseFiles={() => setPage('base-files')} /></div></>}
           {renderPage()}
-          {snapshot && <div hidden={page !== 'material-lifecycle'}><MaterialLifecyclePage enabled={page === 'material-lifecycle'} /></div>}
-          <div hidden={page !== 'collaboration-tasks'}><CollaborationTasksPage enabled={page === 'collaboration-tasks'} onOpenLifecycle={() => setPage('material-lifecycle')} /></div>
+          {snapshot && businessRole === 'upstream' && <div hidden={page !== 'material-lifecycle'}><MaterialLifecyclePage enabled={page === 'material-lifecycle'} /></div>}
+          {businessRole && <div hidden={page !== 'collaboration-tasks'}><CollaborationTasksPage enabled={page === 'collaboration-tasks'} onOpenLifecycle={() => setPage('material-lifecycle')} /></div>}
         </section>
       </main>
     </div>

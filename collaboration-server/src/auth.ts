@@ -15,6 +15,7 @@ interface AttemptRow {
   error_code: string | null
   expires_at: Date
   delivered_at: Date | null
+  requested_business_role: 'upstream' | 'downstream' | null
 }
 
 export interface SessionUserRow {
@@ -23,6 +24,7 @@ export interface SessionUserRow {
   avatar_url: string | null
   organization_id: string
   corp_id: string
+  business_role: 'upstream' | 'downstream' | null
 }
 
 function hash(value: string): string {
@@ -58,16 +60,20 @@ export function registerAuthRoutes(
     )
   })
 
-  app.post('/api/v1/auth/dingtalk/start', async (_request, reply) => {
+  app.post('/api/v1/auth/dingtalk/start', async (request, reply) => {
+    const body = request.body as { businessRole?: string } | undefined
+    if (body?.businessRole !== 'upstream' && body?.businessRole !== 'downstream') {
+      return reply.code(400).send({ error: 'business_role_required' })
+    }
     await pool.query("DELETE FROM auth_attempts WHERE expires_at < now() - interval '1 day'")
     const attemptId = randomUUID()
     const state = randomToken()
     const pollToken = randomToken()
     const expiresAt = new Date(Date.now() + ATTEMPT_TTL_MS)
     await pool.query(
-      `INSERT INTO auth_attempts(id,state_hash,poll_token_hash,expires_at)
-       VALUES($1,$2,$3,$4)`,
-      [attemptId, hash(state), hash(pollToken), expiresAt]
+      `INSERT INTO auth_attempts(id,state_hash,poll_token_hash,expires_at,requested_business_role)
+       VALUES($1,$2,$3,$4,$5)`,
+      [attemptId, hash(state), hash(pollToken), expiresAt, body.businessRole]
     )
     return reply.code(201).header('cache-control', 'no-store').send({
       attemptId,
@@ -82,13 +88,17 @@ export function registerAuthRoutes(
     if (!query.state) return reply.code(400).type('text/html').send(callbackPage(false, '登录状态参数缺失，请从桌面版重新发起登录。'))
     const stateHash = hash(query.state)
     const found = await pool.query<AttemptRow>(
-      `SELECT id,status,organization_id,user_id,error_code,expires_at,delivered_at
+      `SELECT id,status,organization_id,user_id,error_code,expires_at,delivered_at,requested_business_role
        FROM auth_attempts WHERE state_hash=$1`,
       [stateHash]
     )
     const attempt = found.rows[0]
     if (!attempt || attempt.status !== 'pending' || attempt.expires_at.getTime() <= Date.now()) {
       return reply.code(400).type('text/html').send(callbackPage(false, '本次登录已失效或已处理，请返回桌面版重新登录。'))
+    }
+    if (!attempt.requested_business_role) {
+      await failAttempt(pool, attempt.id, 'business_role_required')
+      return reply.code(400).type('text/html').send(callbackPage(false, '本次登录未选择业务身份，请从桌面版重新登录。'))
     }
     const authCode = query.authCode ?? query.code
     if (query.error || !authCode) {
@@ -110,20 +120,30 @@ export function registerAuthRoutes(
         )
         const actualOrganizationId = organization.rows[0]?.id
         if (!actualOrganizationId) throw new Error('organization_upsert_failed')
+        const existingUser = await client.query<{ business_role: 'upstream' | 'downstream' | null }>(
+          `SELECT business_role FROM app_users
+           WHERE organization_id=$1 AND dingtalk_user_id=$2`,
+          [actualOrganizationId, identity.userId]
+        )
+        const existingRole = existingUser.rows[0]?.business_role
+        if (existingRole && existingRole !== attempt.requested_business_role) {
+          throw new Error('business_role_mismatch')
+        }
         const newUserId = randomUUID()
         const user = await client.query<{ id: string }>(
           `INSERT INTO app_users
-             (id,organization_id,dingtalk_user_id,dingtalk_union_id,dingtalk_open_id,display_name,avatar_url)
-           VALUES($1,$2,$3,$4,$5,$6,$7)
+             (id,organization_id,dingtalk_user_id,dingtalk_union_id,dingtalk_open_id,display_name,avatar_url,business_role)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8)
            ON CONFLICT(organization_id,dingtalk_user_id) DO UPDATE SET
              dingtalk_union_id=EXCLUDED.dingtalk_union_id,
              dingtalk_open_id=EXCLUDED.dingtalk_open_id,
              display_name=EXCLUDED.display_name,
              avatar_url=EXCLUDED.avatar_url,
+             business_role=COALESCE(app_users.business_role,EXCLUDED.business_role),
              active=true,
              last_login_at=now()
            RETURNING id`,
-          [newUserId, actualOrganizationId, identity.userId, identity.unionId, identity.openId, identity.displayName, identity.avatarUrl]
+          [newUserId, actualOrganizationId, identity.userId, identity.unionId, identity.openId, identity.displayName, identity.avatarUrl, attempt.requested_business_role]
         )
         const actualUserId = user.rows[0]?.id
         if (!actualUserId) throw new Error('user_upsert_failed')
@@ -142,7 +162,7 @@ export function registerAuthRoutes(
       }
       return reply.header('cache-control', 'no-store').type('text/html').send(callbackPage(true, `已确认钉钉账号：${escapeHtml(identity.displayName)}。`))
     } catch (error) {
-      const errorCode = error instanceof DingTalkOAuthError ? error.code : 'login_processing_failed'
+      const errorCode = error instanceof DingTalkOAuthError ? error.code : error instanceof Error && error.message === 'business_role_mismatch' ? 'business_role_mismatch' : 'login_processing_failed'
       await failAttempt(pool, attempt.id, errorCode)
       request.log.warn({ errorCode }, '钉钉登录失败')
       return reply.code(400).header('cache-control', 'no-store').type('text/html').send(callbackPage(false, '无法确认企业账号，请检查应用权限后从桌面版重试。'))
@@ -156,7 +176,7 @@ export function registerAuthRoutes(
     try {
       await client.query('BEGIN')
       const result = await client.query<AttemptRow>(
-        `SELECT id,status,organization_id,user_id,error_code,expires_at,delivered_at
+        `SELECT id,status,organization_id,user_id,error_code,expires_at,delivered_at,requested_business_role
          FROM auth_attempts WHERE id=$1 AND poll_token_hash=$2 FOR UPDATE`,
         [body.attemptId, hash(body.pollToken)]
       )
@@ -190,7 +210,7 @@ export function registerAuthRoutes(
       )
       await client.query('UPDATE auth_attempts SET delivered_at=now() WHERE id=$1', [attempt.id])
       const user = await client.query<SessionUserRow>(
-        `SELECT u.id,u.display_name,u.avatar_url,u.organization_id,o.corp_id
+        `SELECT u.id,u.display_name,u.avatar_url,u.organization_id,o.corp_id,u.business_role
          FROM app_users u JOIN organizations o ON o.id=u.organization_id
          WHERE u.organization_id=$1 AND u.id=$2`,
         [attempt.organization_id, attempt.user_id]
@@ -244,7 +264,7 @@ export async function authenticatedUser(request: FastifyRequest, reply: FastifyR
      WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now()
        AND u.organization_id=s.organization_id AND u.id=s.user_id AND u.active=true
        AND o.id=s.organization_id
-     RETURNING u.id,u.display_name,u.avatar_url,u.organization_id,o.corp_id`,
+     RETURNING u.id,u.display_name,u.avatar_url,u.organization_id,o.corp_id,u.business_role`,
     [hash(token)]
   )
   const user = result.rows[0]
@@ -262,7 +282,8 @@ function publicUser(user: SessionUserRow | undefined): object | null {
     displayName: user.display_name,
     avatarUrl: user.avatar_url,
     organizationId: user.organization_id,
-    corpId: user.corp_id
+    corpId: user.corp_id,
+    businessRole: user.business_role
   }
 }
 

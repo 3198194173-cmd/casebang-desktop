@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({ net: { fetch: vi.fn() } }))
+vi.mock('electron', () => ({
+  app: { getPath: vi.fn(() => 'C:\\CasebangTest') },
+  net: { fetch: vi.fn() },
+  shell: { openPath: vi.fn(async () => '') }
+}))
 
 import { net } from 'electron'
 import { CollaborationService } from '../src/main/modules/collaboration/collaboration-service'
@@ -9,7 +13,7 @@ import type { SettingsRepository } from '../src/main/infrastructure/settings-rep
 const session = {
   sessionToken: 'session-token-for-tests',
   expiresAt: new Date(Date.now() + 60_000).toISOString(),
-  user: { id: 'user-1', displayName: '卓志', avatarUrl: null, organizationId: 'org-1', corpId: 'corp-1' }
+  user: { id: 'user-1', displayName: '卓志', avatarUrl: null, organizationId: 'org-1', corpId: 'corp-1', businessRole: 'upstream' as const }
 }
 
 function settings() {

@@ -96,9 +96,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.account.get()
   })
 
-  ipcMain.handle(IPC_CHANNELS.accountLogin, async (event) => {
+  ipcMain.handle(IPC_CHANNELS.accountLogin, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
-    return dependencies.account.login()
+    return dependencies.account.login(input)
   })
 
   ipcMain.handle(IPC_CHANNELS.accountLogout, async (event) => {
@@ -126,9 +126,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.act(input)
   })
 
-  ipcMain.handle(IPC_CHANNELS.collaborationDownloadWorkbook, async (event, input: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.collaborationOpenWorkbook, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
-    return dependencies.collaboration.downloadWorkbook(input)
+    return dependencies.collaboration.openWorkbook(input)
   })
 
   ipcMain.handle(IPC_CHANNELS.baseFilesSelect, async (event, input: unknown) => {

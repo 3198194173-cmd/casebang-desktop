@@ -19,7 +19,7 @@ export const IPC_CHANNELS = {
   collaborationWorkItems: 'collaboration:work-items',
   collaborationSubmitLifecycle: 'collaboration:submit-lifecycle',
   collaborationAct: 'collaboration:act',
-  collaborationDownloadWorkbook: 'collaboration:download-workbook',
+  collaborationOpenWorkbook: 'collaboration:open-workbook',
   baseFilesSelect: 'base-files:select',
   baseFilesPreview: 'base-files:preview',
   baseFilesHistory: 'base-files:history',

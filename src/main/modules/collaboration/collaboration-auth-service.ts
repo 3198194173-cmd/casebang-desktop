@@ -1,5 +1,5 @@
 import { net, shell } from 'electron'
-import type { CollaborationAccountState, CollaborationUser } from '@shared/contracts'
+import type { BusinessRole, CollaborationAccountState, CollaborationUser } from '@shared/contracts'
 import type { CollaborationSession, SettingsRepository } from '@main/infrastructure/settings-repository'
 
 const SERVICE_ORIGIN = 'https://casebang.tech/collab'
@@ -64,6 +64,10 @@ export class CollaborationAuthService {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json() as AccountResponse
       if (!body.user) throw new Error('账号资料缺失')
+      if (!body.user.businessRole) {
+        await this.settings.clearCollaborationSession()
+        return { ...signedOut(), message: '账号尚未绑定业务身份，请重新登录并选择上游或下游。' }
+      }
       const refreshed = { ...session, user: body.user }
       await this.settings.setCollaborationSession(refreshed)
       return signedIn(body.user)
@@ -76,9 +80,10 @@ export class CollaborationAuthService {
     }
   }
 
-  login(): Promise<CollaborationAccountState> {
+  login(input: unknown): Promise<CollaborationAccountState> {
+    const businessRole = parseBusinessRole(input)
     if (this.activeLogin) return this.activeLogin
-    this.activeLogin = this.performLogin().finally(() => { this.activeLogin = null })
+    this.activeLogin = this.performLogin(businessRole).finally(() => { this.activeLogin = null })
     return this.activeLogin
   }
 
@@ -100,14 +105,15 @@ export class CollaborationAuthService {
     return signedOut()
   }
 
-  private async performLogin(): Promise<CollaborationAccountState> {
+  private async performLogin(businessRole: BusinessRole): Promise<CollaborationAccountState> {
     const application = await this.settings.getApplicationSettings()
     if (!application.allowNetworkFeatures) throw new Error('联网功能已关闭，请先在系统设置中开启。')
     let startResponse: Response
     try {
       startResponse = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/start`, {
         method: 'POST',
-        headers: { accept: 'application/json' },
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ businessRole }),
         signal: AbortSignal.timeout(12_000)
       })
     } catch {
@@ -122,30 +128,31 @@ export class CollaborationAuthService {
     let consecutiveNetworkFailures = 0
     while (Date.now() < expiresAt) {
       await this.delay(POLL_INTERVAL_MS)
+      let response: Response
       try {
-        const response = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/status`, {
+        response = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/status`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify({ attemptId: start.attemptId, pollToken: start.pollToken }),
           signal: AbortSignal.timeout(12_000)
         })
-        consecutiveNetworkFailures = 0
-        const result = await response.json().catch(() => ({ status: 'failed', errorCode: `http_${response.status}` })) as LoginStatusResponse
-        if (result.status === 'pending') continue
-        if (result.status === 'succeeded' && result.sessionToken && result.expiresAt && result.user) {
-          await this.settings.setCollaborationSession({
-            sessionToken: result.sessionToken,
-            expiresAt: result.expiresAt,
-            user: result.user
-          })
-          return signedIn(result.user)
-        }
-        throw new Error(loginFailureMessage(result))
-      } catch (error) {
-        if (error instanceof Error && error.message.startsWith('钉钉')) throw error
+      } catch {
         consecutiveNetworkFailures += 1
         if (consecutiveNetworkFailures >= 3) throw new Error('无法连接协同服务，请检查网络后重试。')
+        continue
       }
+      consecutiveNetworkFailures = 0
+      const result = await response.json().catch(() => ({ status: 'failed', errorCode: `http_${response.status}` })) as LoginStatusResponse
+      if (result.status === 'pending') continue
+      if (result.status === 'succeeded' && result.sessionToken && result.expiresAt && result.user) {
+        await this.settings.setCollaborationSession({
+          sessionToken: result.sessionToken,
+          expiresAt: result.expiresAt,
+          user: result.user
+        })
+        return signedIn(result.user)
+      }
+      throw new Error(loginFailureMessage(result))
     }
     throw new Error('钉钉登录等待超时，请重新发起。')
   }
@@ -166,6 +173,8 @@ function loginFailureMessage(result: LoginStatusResponse): string {
     authorization_denied: '已取消钉钉授权。',
     authorization_code_missing: '钉钉没有返回授权码，请重新登录。',
     not_enterprise_member: '该钉钉账号不属于当前企业或不在应用可见范围内。',
+    business_role_mismatch: '该钉钉账号已经绑定另一种业务身份，不能切换登录。',
+    business_role_required: '请选择上游建表或下游建档业务。',
     consumed: '本次登录已经被领取，请重新发起。',
     expired: '本次登录已经过期，请重新发起。'
   }
@@ -178,4 +187,9 @@ function signedOut(): CollaborationAccountState {
 
 function signedIn(user: CollaborationUser): CollaborationAccountState {
   return { status: 'signed-in', user, message: '钉钉账号已连接。' }
+}
+
+function parseBusinessRole(value: unknown): BusinessRole {
+  if (value === 'upstream' || value === 'downstream') return value
+  throw new Error('请选择上游建表或下游建档业务。')
 }

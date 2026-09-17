@@ -1,43 +1,62 @@
-import type { AppSnapshot } from '@shared/contracts'
+import type { AppSnapshot, BusinessRole } from '@shared/contracts'
 import type { PageId } from '../../app/navigation'
 
 interface Props {
   snapshot: AppSnapshot
   onNavigate(page: PageId): void
+  businessRole: BusinessRole | null
 }
 
-export function DashboardPage({ snapshot, onNavigate }: Props): React.JSX.Element {
+export function DashboardPage({ snapshot, onNavigate, businessRole }: Props): React.JSX.Element {
   const readyFiles = Object.values(snapshot.baseFiles).filter((file) => file.status === 'ready').length
   const configuredConnectors = snapshot.connectors.filter((connector) => connector.configured).length
+
+  if (!businessRole) return <div className="stack-xl">
+    <section className="flow-center-heading"><div><h2>登录并选择业务身份</h2><p>上游账号负责建表与复核；下游账号负责编码、核图和回传。</p></div><button className="primary-button" onClick={() => onNavigate('settings')}>前往登录</button></section>
+    <section className="role-explanation"><article><strong>上游建表</strong><span>新系列建表、系列补产品、产品补机型、提交与最终复核</span></article><article><strong>下游建档</strong><span>接收任务、编码处理、图档核对、上传修订并返回复核</span></article></section>
+  </div>
+
+  if (businessRole === 'downstream') return <div className="stack-xl">
+    <section className="flow-center-heading"><div><h2>下游建档工作台</h2><p>只显示分配给当前账号的建档任务，不开放上游建表入口。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看待处理任务</button></section>
+    <article className="downstream-entry"><div><small>当前业务身份 · 下游建档</small><h3>建档任务</h3><p>接收任务后软件会自动打开工作副本；编码、核图和新修订回传将继续在这里接入。</p></div><button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>进入任务中心</button></article>
+  </div>
 
   return (
     <div className="stack-xl">
       <section className="flow-center-heading">
         <div>
-          <h2>选择业务流程</h2>
-          <p>不同岗位使用各自的流程，功能可以持续扩展。</p>
+          <h2>从建表到建档，一条主流程</h2>
+          <p>先选择一种建表入口，质检通过后提交建档任务；三种入口不会依次执行。</p>
         </div>
-        <button className="primary-button" onClick={() => onNavigate('new-task')}>开始表格编码</button>
+        <button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>查看建档任务</button>
       </section>
 
-      <section className="workflow-catalog">
-        <article className="workflow-entry active">
-          <header><span className="workflow-entry-icon">⊞</span><mark>已启用</mark></header>
-          <h3>原有系列补充新产品编码</h3>
-          <p>选择已有系列、比对历史图案并复用命名，为新增产品分配新编码。</p>
-          <footer><button onClick={() => onNavigate('existing-products')}>进入流程</button></footer>
-        </article>
-        <article className="workflow-entry active">
-          <header><span className="workflow-entry-icon">▦</span><mark>已启用</mark></header>
-          <h3>表格编码与命名</h3>
-          <p>裁图、命名、编码、质检和 Excel 导出。</p>
-          <footer><span>产品与运营</span><button onClick={() => onNavigate('new-task')}>进入流程</button></footer>
-        </article>
-        <article className="workflow-entry active">
-          <header><span className="workflow-entry-icon">＋</span></header>
-          <h3>原有产品补充新机型</h3>
-          <p>导入总物料表与补齐表，替换机型并导出已匹配物料。</p>
-          <footer><button onClick={() => onNavigate('supplement')}>进入流程</button></footer>
+      <section className="business-flow-map" aria-label="CASEBANG 主业务流程">
+        <header><strong>第一阶段 · 上游建表</strong><span>任选一种入口</span></header>
+        <div className="workflow-catalog upstream">
+          <article className="workflow-entry active">
+            <header><span className="workflow-entry-icon">▦</span><mark>入口 A</mark></header>
+            <h3>新系列建表</h3>
+            <p>裁图、命名、产品编码、质检并生成新建表。</p>
+            <footer><button onClick={() => onNavigate('new-task')}>开始</button></footer>
+          </article>
+          <article className="workflow-entry active">
+            <header><span className="workflow-entry-icon">⊞</span><mark>入口 B</mark></header>
+            <h3>系列补产品</h3>
+            <p>复用已有系列与图案信息，为新增产品生成记录。</p>
+            <footer><button onClick={() => onNavigate('existing-products')}>开始</button></footer>
+          </article>
+          <article className="workflow-entry active">
+            <header><span className="workflow-entry-icon">＋</span><mark>入口 C</mark></header>
+            <h3>产品补机型</h3>
+            <p>从总物料表匹配原产品，为目标机型生成新增记录。</p>
+            <footer><button onClick={() => onNavigate('supplement')}>开始</button></footer>
+          </article>
+        </div>
+        <div className="flow-merge"><span>任一建表流程完成并通过质检</span><strong>提交</strong></div>
+        <article className="downstream-entry">
+          <div><small>第二阶段 · 下游处理</small><h3>建档任务</h3><p>另一账号接收文件，完成物料码、69码和图档核对，再交回建表人复核。</p></div>
+          <button className="primary-button" onClick={() => onNavigate('collaboration-tasks')}>进入任务中心</button>
         </article>
       </section>
 

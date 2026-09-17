@@ -6,7 +6,7 @@ describe('database migration files', () => {
   it('are ordered, transaction-runner compatible, and contain the central ledger safeguards', async () => {
     const root = resolve(import.meta.dirname, '../migrations')
     const names = (await readdir(root)).filter(name => name.endsWith('.sql')).sort()
-    expect(names).toEqual(['001_foundation.sql', '002_stream_events.sql', '003_dingtalk_auth.sql'])
+    expect(names).toEqual(['001_foundation.sql', '002_stream_events.sql', '003_dingtalk_auth.sql', '004_business_roles.sql'])
     const sql = (await Promise.all(names.map(name => readFile(resolve(root, name), 'utf8')))).join('\n')
     expect(sql).not.toMatch(/^\s*(BEGIN|COMMIT)\s*;/m)
     expect(sql).toContain('UNIQUE(organization_id,kind,code)')
@@ -16,5 +16,7 @@ describe('database migration files', () => {
     expect(sql).toContain('CREATE TABLE auth_attempts')
     expect(sql).toContain('CREATE TABLE user_sessions')
     expect(sql).toContain('token_hash text NOT NULL UNIQUE')
+    expect(sql).toContain("CHECK(business_role IN ('upstream','downstream'))")
+    expect(sql).toContain("CHECK(requested_business_role IN ('upstream','downstream'))")
   })
 })

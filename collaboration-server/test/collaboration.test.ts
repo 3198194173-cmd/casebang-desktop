@@ -11,7 +11,7 @@ function queryResult<T>(rows: T[]): pg.QueryResult<T> {
 describe('collaboration identity boundaries', () => {
   it('lists only members returned for the authenticated organization and excludes the actor in SQL', async () => {
     const query = vi.fn()
-      .mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp' }]))
+      .mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
       .mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000002', display_name: '处理人', avatar_url: null, last_login_at: new Date('2026-09-17T00:00:00Z') }]))
     const pool = { query } as unknown as pg.Pool
     const app = Fastify()
@@ -21,6 +21,7 @@ describe('collaboration identity boundaries', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ members: [{ id: '10000000-0000-4000-8000-000000000002', displayName: '处理人', avatarUrl: null, lastLoginAt: '2026-09-17T00:00:00.000Z' }] })
     expect(query.mock.calls[1]?.[1]).toEqual(['20000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001'])
+    expect(String(query.mock.calls[1]?.[0])).toContain("business_role='downstream'")
     await app.close()
   })
 
@@ -34,8 +35,23 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
+  it('does not allow a downstream account to query an upstream sent box', async () => {
+    const query = vi.fn().mockResolvedValueOnce(queryResult([{
+      id: '10000000-0000-4000-8000-000000000002', display_name: '处理人', avatar_url: null,
+      organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'downstream'
+    }]))
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, {} as PrivateStorage)
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/collaboration/work-items?box=sent', headers: { authorization: `Bearer ${'x'.repeat(40)}` } })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'business_role_forbidden' })
+    expect(query).toHaveBeenCalledOnce()
+    await app.close()
+  })
+
   it('accepts the workbook media type but requires bounded metadata before storage', async () => {
-    const query = vi.fn().mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp' }]))
+    const query = vi.fn().mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
     const pool = { query } as unknown as pg.Pool
     const storage = { writeObject: vi.fn() } as unknown as PrivateStorage
     const app = Fastify()
@@ -53,7 +69,7 @@ describe('collaboration identity boundaries', () => {
   })
 
   it('requires a concrete reason before an assignee can return a task', async () => {
-    const query = vi.fn().mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '处理人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp' }]))
+    const query = vi.fn().mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '处理人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'downstream' }]))
     const pool = { query } as unknown as pg.Pool
     const app = Fastify()
     registerCollaborationRoutes(app, pool, {} as PrivateStorage)
@@ -91,7 +107,7 @@ describe('collaboration identity boundaries', () => {
       .mockResolvedValueOnce(queryResult([]))
     const client = { query: clientQuery, release: vi.fn() }
     const query = vi.fn()
-      .mockResolvedValueOnce(queryResult([{ id: workItem.assignee_id, display_name: '处理人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp' }]))
+      .mockResolvedValueOnce(queryResult([{ id: workItem.assignee_id, display_name: '处理人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'downstream' }]))
       .mockResolvedValueOnce(queryResult([updated]))
     const pool = { query, connect: vi.fn(async () => client) } as unknown as pg.Pool
     const app = Fastify()

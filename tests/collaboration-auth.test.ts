@@ -11,7 +11,8 @@ const USER: CollaborationUser = {
   displayName: '卓志',
   avatarUrl: null,
   organizationId: 'org-1',
-  corpId: 'ding-company'
+  corpId: 'ding-company',
+  businessRole: 'upstream'
 }
 
 function response(body: unknown, status = 200): Response {
@@ -52,7 +53,11 @@ describe('desktop DingTalk account login', () => {
     const openExternal = vi.fn(async () => undefined)
     const service = new CollaborationAuthService(state, fetcher, openExternal, async () => undefined)
 
-    await expect(service.login()).resolves.toMatchObject({ status: 'signed-in', user: USER })
+    await expect(service.login('upstream')).resolves.toMatchObject({ status: 'signed-in', user: USER })
+    expect(fetcher).toHaveBeenNthCalledWith(1, expect.stringContaining('/auth/dingtalk/start'), expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ businessRole: 'upstream' })
+    }))
     expect(openExternal).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/login\.dingtalk\.com\//))
     expect(state.current()).toMatchObject({ sessionToken: 'session-1', user: USER })
   })
@@ -67,8 +72,23 @@ describe('desktop DingTalk account login', () => {
     const openExternal = vi.fn(async () => undefined)
     const service = new CollaborationAuthService(store(), fetcher, openExternal, async () => undefined)
 
-    await expect(service.login()).rejects.toThrow('登录信息不完整')
+    await expect(service.login('upstream')).rejects.toThrow('登录信息不完整')
     expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  it('reports a bound-role conflict immediately instead of treating it as a network failure', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(response({
+        attemptId: 'attempt-1',
+        pollToken: 'poll-1',
+        authorizationUrl: 'https://login.dingtalk.com/oauth2/auth?client_id=test',
+        expiresAt: new Date(Date.now() + 60_000).toISOString()
+      }))
+      .mockResolvedValueOnce(response({ status: 'failed', errorCode: 'business_role_mismatch' }, 400))
+    const service = new CollaborationAuthService(store(), fetcher, async () => undefined, async () => undefined)
+
+    await expect(service.login('downstream')).rejects.toThrow('已经绑定另一种业务身份')
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
   it('keeps the verified user available offline and clears local login even if logout cannot reach the server', async () => {

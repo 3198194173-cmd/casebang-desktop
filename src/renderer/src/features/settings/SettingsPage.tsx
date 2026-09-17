@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ApplicationSettings } from '@shared/contracts'
+import type { ApplicationSettings, BusinessRole } from '@shared/contracts'
 import { desktopApi } from '../../app/desktop-api'
 import { useAccount } from '../../app/account-context'
 
@@ -25,6 +25,7 @@ export function SettingsPage(): React.JSX.Element {
   const [savingKey, setSavingKey] = useState<keyof ApplicationSettings | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loginRole, setLoginRole] = useState<BusinessRole>('upstream')
   const { account, busy: accountBusy, login: loginAccount, logout: logoutAccount } = useAccount()
 
   useEffect(() => {
@@ -35,9 +36,11 @@ export function SettingsPage(): React.JSX.Element {
   }, [])
 
   const login = async (): Promise<void> => {
+    const roleName = loginRole === 'upstream' ? '上游建表' : '下游建档'
+    if (!window.confirm(`确认将这个钉钉账号绑定为“${roleName}”吗？\n\n首次绑定后不能直接切换为另一种业务身份。`)) return
     setError(null); setMessage('已打开钉钉登录页面，正在等待确认…')
     try {
-      await loginAccount(); setMessage('钉钉账号登录成功，整个软件均已生效。')
+      await loginAccount(loginRole); setMessage('钉钉账号与业务身份登录成功，整个软件均已生效。')
     } catch (reason) {
       setMessage(null); setError(accountError(reason, '钉钉登录失败'))
     }
@@ -109,14 +112,17 @@ export function SettingsPage(): React.JSX.Element {
           <span className="eyebrow">ACCOUNT ACCESS</span>
           <h3>账号与组织登录</h3>
           {account?.user
-            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>CASEBANG 企业账号 · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message}</p></>
-            : <p>{account?.message ?? '正在读取钉钉账号状态…'} 登录后可参与跨电脑任务交接；应用密钥不会保存到本机。</p>}
+            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>{account.user.businessRole === 'upstream' ? '上游建表' : '下游建档'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 业务身份首次绑定后不能在登录时随意切换。</p></>
+            : <><p>{account?.message ?? '正在读取钉钉账号状态…'} 登录前请选择该账号负责的业务。</p><div className="business-role-picker">
+              <label className={loginRole === 'upstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} /><span><strong>上游建表</strong><small>建表、提交、复核、合并</small></span></label>
+              <label className={loginRole === 'downstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} /><span><strong>下游建档</strong><small>接收、编码、核图、回传</small></span></label>
+            </div></>}
         </div>
         <div className="account-panel-actions">
           <span className={account?.status === 'signed-in' ? 'status-label ready' : 'status-label'}>{account?.status === 'signed-in' ? '已登录' : account?.status === 'offline' ? '离线' : '未登录'}</span>
           {account?.user
             ? <button className="secondary-button" disabled={accountBusy} onClick={() => void logout()}>{accountBusy ? '处理中…' : '退出登录'}</button>
-            : <button className="primary-button" disabled={accountBusy || loading || !settings.allowNetworkFeatures} onClick={() => void login()}>{accountBusy ? '等待钉钉确认…' : '钉钉登录'}</button>}
+            : <button className="primary-button" disabled={accountBusy || loading || !settings.allowNetworkFeatures} onClick={() => void login()}>{accountBusy ? '等待钉钉确认…' : `以${loginRole === 'upstream' ? '上游' : '下游'}身份登录`}</button>}
         </div>
       </section>
     </div>

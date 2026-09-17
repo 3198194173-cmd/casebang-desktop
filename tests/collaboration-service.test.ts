@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => 'C:\\CasebangTest') },
@@ -54,6 +57,25 @@ describe('desktop collaboration service', () => {
     expect(result.item.state).toBe('PENDING_ORIGIN_REVIEW')
     const request = vi.mocked(net.fetch).mock.calls[0]
     expect(JSON.parse(String(request?.[1]?.body))).toEqual(expect.objectContaining({ action: 'update-stage', state: 'PENDING_ORIGIN_REVIEW' }))
+  })
+
+  it('publishes an exported workbook without asking the user to choose a recipient', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'casebang-publish-'))
+    const workbookPath = join(directory, '新建产品表.xlsx')
+    await writeFile(workbookPath, Buffer.from('xlsx-test'))
+    const item = { id: '30000000-0000-4000-8000-000000000001', title: '新建产品表.xlsx', state: 'PENDING_PROCESSING', sourceWorkflow: 'new-series', version: 1, revision: 1, createdAt: '2026-09-17T00:00:00.000Z', origin: { id: 'user-1', displayName: '建表人' }, assignee: { id: 'user-2', displayName: '加工人' } }
+    vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ item, duplicate: false }), { status: 201 }))
+    try {
+      const result = await new CollaborationService(settings()).publishWorkbook({ path: workbookPath, title: '新建产品表.xlsx', sourceWorkflow: 'new-series' })
+      expect(result.item.state).toBe('PENDING_PROCESSING')
+      const request = vi.mocked(net.fetch).mock.calls[0]
+      const headers = request?.[1]?.headers as Record<string, string>
+      const metadata = JSON.parse(Buffer.from(headers['x-casebang-metadata']!, 'base64url').toString('utf8'))
+      expect(metadata).toEqual(expect.objectContaining({ sourceWorkflow: 'new-series', title: '新建产品表.xlsx' }))
+      expect(metadata).not.toHaveProperty('assigneeId')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('submits an assignee action with optimistic task version fields', async () => {

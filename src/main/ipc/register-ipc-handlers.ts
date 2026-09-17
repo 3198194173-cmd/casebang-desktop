@@ -116,6 +116,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.workItems()
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationPublishWorkbook, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.publishWorkbook(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.collaborationSubmitLifecycle, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.submitLifecycle(input, lifecycle)

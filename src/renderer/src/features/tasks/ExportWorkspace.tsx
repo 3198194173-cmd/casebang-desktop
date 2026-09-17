@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { GenerationWorkspaceData } from '@shared/generation-contracts'
 import type { AppSnapshot } from '@shared/contracts'
 import type { ImageAnalysisResult } from '@shared/image-contracts'
+import type { LifecycleSource } from '@shared/lifecycle-contracts'
 import { desktopApi } from '../../app/desktop-api'
 
 type WorkbookId = GenerationWorkspaceData['workbooks'][number]['id']
@@ -12,14 +13,15 @@ interface Props {
   templateName: string
   baseFiles: AppSnapshot['baseFiles']
   analysis: ImageAnalysisResult
+  sourceWorkflow: Extract<LifecycleSource, 'new-series' | 'new-products'>
   onDataChanged(): Promise<void>
 }
 
 const DEFAULT_EXPORT_IDS: WorkbookId[] = ['generated-product']
 const DEFAULT_BASE_IDS: BaseWorkbookId[] = ['barcode-reference', 'domestic-naming']
 
-export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, onDataChanged }: Props): React.JSX.Element {
-  const [busyMode, setBusyMode] = useState<'export' | 'overwrite' | null>(null)
+export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, sourceWorkflow, onDataChanged }: Props): React.JSX.Element {
+  const [busyMode, setBusyMode] = useState<'export' | 'overwrite' | 'publish' | null>(null)
   const operationPending = useRef(false)
   const [result, setResult] = useState<string | null>(null)
   const [processedFiles, setProcessedFiles] = useState<string[]>([])
@@ -27,6 +29,8 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
   const [exportIds, setExportIds] = useState<WorkbookId[]>(DEFAULT_EXPORT_IDS)
   const [baseUpdateIds, setBaseUpdateIds] = useState<BaseWorkbookId[]>(() => workspace.workbooks.some((item) => item.id === 'product-image-mapping') ? [...DEFAULT_BASE_IDS, 'product-image-mapping'] : DEFAULT_BASE_IDS)
   const [requireQualityCheck, setRequireQualityCheck] = useState(true)
+  const [sharedFile, setSharedFile] = useState<{ path: string; fileName: string } | null>(null)
+  const [publishedRecord, setPublishedRecord] = useState<{ id: string; revision: number } | null>(null)
   const ready = !requireQualityCheck || workspace.checks.every((check) => check.passed)
 
   useEffect(() => {
@@ -52,6 +56,7 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
       setError(null)
       setResult(null)
       setProcessedFiles([])
+      if (mode === 'export') { setSharedFile(null); setPublishedRecord(null) }
       // Paint the busy indicator before preparing the IPC payload.
       await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
       const namingFormula = baseFiles.namingFormula.path
@@ -102,6 +107,8 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
       }
       setResult(`文件导出完成：${response.outputPath ?? ''}`)
       setProcessedFiles(exported.map((item) => item.fileName))
+      const generated = exported.find(item => item.label === '新建产品表')
+      if (generated) { setSharedFile({ path: generated.path, fileName: generated.fileName }); setPublishedRecord(null) }
     } catch (reason) {
       setError(reason instanceof Error
         ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
@@ -117,6 +124,22 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
   }
   const toggleBaseUpdate = (id: BaseWorkbookId): void => {
     setBaseUpdateIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
+  }
+
+  const publishWorkbook = async (): Promise<void> => {
+    if (!sharedFile || operationPending.current) return
+    try {
+      operationPending.current = true
+      setBusyMode('publish'); setError(null); setResult(null)
+      const response = await desktopApi.collaboration.publishWorkbook({ path: sharedFile.path, title: sharedFile.fileName, sourceWorkflow })
+      setPublishedRecord({ id: response.item.id, revision: response.item.revision })
+      setResult(response.duplicate ? '该工作簿已在共享流程中，未重复建立记录。' : '已导入共享工作簿，阶段为“已建表，待下游加工”。')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '') : '导入共享工作簿失败')
+    } finally {
+      operationPending.current = false
+      setBusyMode(null)
+    }
   }
 
   return <div className="export-workspace">
@@ -136,6 +159,12 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
       <button className="primary-button" disabled={!ready || busyMode !== null || exportIds.length === 0} onClick={() => void runOperation('export')}>
         {busyMode === 'export' ? '正在导出…' : '导出所选文件'}
       </button>
+    </section>
+
+    <section className="export-card shared-workbook-export">
+      <div className="export-file-icon update">共享</div>
+      <div><span className="eyebrow">进入流程</span><h4>导入共享工作簿</h4><p>将已质检的新建表保存到中央服务，双方共用一条工作簿记录。</p><div className="base-update-operation-name"><span>当前文件</span><strong>{sharedFile?.fileName ?? '请先在上方导出新建产品表'}</strong></div>{publishedRecord && <small>共享记录 {publishedRecord.id.slice(0, 8)} · 修订 {publishedRecord.revision}</small>}</div>
+      <button className="primary-button" disabled={!ready || !sharedFile || busyMode !== null || Boolean(publishedRecord)} onClick={() => void publishWorkbook()}>{busyMode === 'publish' ? '正在导入…' : publishedRecord ? '已进入共享流程' : '导入共享工作簿'}</button>
     </section>
 
     <section className="export-card base-update-export">
@@ -167,6 +196,5 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
 
     {result && <div className="alert success">{result}{processedFiles.length > 0 ? `（${processedFiles.join('、')}）` : ''}</div>}
     {error && <div className="alert warning">{error}</div>}
-    <section className="export-card disabled-export"><div className="export-file-icon muted">SEND</div><div><h4>钉钉 / 微信发送</h4><p>按当前要求暂不启用发送。</p></div><button className="secondary-button" disabled>暂未启用</button></section>
   </div>
 }

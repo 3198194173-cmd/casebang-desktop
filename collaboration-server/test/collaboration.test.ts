@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import Fastify from 'fastify'
 import { describe, expect, it, vi } from 'vitest'
 import type pg from 'pg'
@@ -68,6 +69,71 @@ describe('collaboration identity boundaries', () => {
     expect(response.statusCode).toBe(400)
     expect(response.json()).toEqual({ error: 'metadata_required' })
     expect(storage.writeObject).not.toHaveBeenCalled()
+    await app.close()
+  })
+
+  it('requires one previously logged-in downstream account when an upstream workbook enters the shared flow', async () => {
+    const workbook = Buffer.from('workbook')
+    const metadata = {
+      sourceWorkflow: 'new-series', sourceId: 'source-1', title: '新建产品表.xlsx',
+      sha256: createHash('sha256').update(workbook).digest('hex'), requestKey: '40000000-0000-4000-8000-000000000001'
+    }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '建表人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, { writeObject: vi.fn() } as unknown as PrivateStorage)
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/collaboration/work-items',
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'x-casebang-metadata': Buffer.from(JSON.stringify(metadata)).toString('base64url') },
+      payload: workbook
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({ error: 'downstream_member_required' })
+    await app.close()
+  })
+
+  it('stores the exported workbook and automatically links the downstream account', async () => {
+    const workbook = Buffer.from('generated workbook')
+    const originId = '10000000-0000-4000-8000-000000000001'
+    const assigneeId = '10000000-0000-4000-8000-000000000002'
+    const metadata = {
+      sourceWorkflow: 'new-products', sourceId: 'source-2', title: '系列补产品.xlsx',
+      sha256: createHash('sha256').update(workbook).digest('hex'), requestKey: '40000000-0000-4000-8000-000000000002'
+    }
+    const stored = {
+      id: '30000000-0000-4000-8000-000000000001', title: metadata.title,
+      state: 'PENDING_PROCESSING', source_workflow: metadata.sourceWorkflow, version: 1, revision: 1,
+      created_at: new Date('2026-09-17T00:00:00Z'), origin_id: originId, origin_name: '建表人',
+      assignee_id: assigneeId, assignee_name: '加工人'
+    }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([{ id: originId, display_name: '建表人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([{ id: assigneeId }]))
+      .mockResolvedValueOnce(queryResult([stored]))
+    const clientQuery = vi.fn().mockResolvedValue(queryResult([]))
+    const client = { query: clientQuery, release: vi.fn() }
+    const storage = { writeObject: vi.fn() }
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query, connect: vi.fn(async () => client) } as unknown as pg.Pool, storage as unknown as PrivateStorage)
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/collaboration/work-items',
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'x-casebang-metadata': Buffer.from(JSON.stringify(metadata)).toString('base64url') },
+      payload: workbook
+    })
+
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toEqual({ item: expect.objectContaining({ title: metadata.title, state: 'PENDING_PROCESSING', revision: 1 }), duplicate: false })
+    expect(storage.writeObject).toHaveBeenCalledWith(expect.stringMatching(/revision-1\.xlsx$/), workbook)
+    const insertWorkItem = clientQuery.mock.calls.find(call => String(call[0]).includes('INSERT INTO work_items'))
+    expect(insertWorkItem?.[1]?.[3]).toBe(assigneeId)
+    const outbox = clientQuery.mock.calls.find(call => String(call[0]).includes('INSERT INTO outbox_events'))
+    expect(outbox?.[1]?.[4]).toEqual(expect.objectContaining({ type: 'workbook-published', state: 'PENDING_PROCESSING' }))
     await app.close()
   })
 

@@ -32,6 +32,7 @@ const api: CasebangDesktopApi = {
   collaboration: {
     members: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationMembers),
     workItems: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationWorkItems),
+    publishWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationPublishWorkbook, input),
     submitLifecycle: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationSubmitLifecycle, input),
     act: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationAct, input),
     openWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenWorkbook, input)

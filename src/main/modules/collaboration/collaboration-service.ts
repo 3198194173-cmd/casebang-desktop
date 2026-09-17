@@ -1,6 +1,6 @@
 import { app, net, shell } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem } from '@shared/contracts'
@@ -9,6 +9,12 @@ import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service
 
 const SERVICE_ORIGIN = 'https://casebang.tech/collab'
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
+const publishSchema = z.object({
+  path: z.string().trim().min(1),
+  title: z.string().trim().min(1).max(240),
+  sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models'])
+}).strict()
 const submitSchema = z.object({
   draftId: z.string().uuid(),
   expectedVersion: z.number().int().positive(),
@@ -45,6 +51,31 @@ export class CollaborationService {
     const response = await this.request('/api/v1/collaboration/work-items')
     const body = await response.json() as WorkItemsResponse
     return body.items ?? []
+  }
+
+  async publishWorkbook(input: unknown): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
+    const value = publishSchema.parse(input)
+    if (!value.path.toLowerCase().endsWith('.xlsx')) throw new Error('共享工作簿必须是 .xlsx 文件。')
+    const details = await stat(value.path)
+    if (!details.isFile() || details.size === 0) throw new Error('要导入的工作簿不存在或内容为空。')
+    if (details.size > MAX_WORKBOOK_SIZE) throw new Error('工作簿超过 64 MB，尚不能导入共享流程。')
+    const bytes = await readFile(value.path)
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    const metadata = Buffer.from(JSON.stringify({
+      sourceWorkflow: value.sourceWorkflow,
+      sourceId: sha256,
+      title: value.title.toLowerCase().endsWith('.xlsx') ? value.title : `${value.title}.xlsx`,
+      sha256,
+      requestKey: randomUUID()
+    })).toString('base64url')
+    const response = await this.request('/api/v1/collaboration/work-items', {
+      method: 'POST',
+      headers: { 'content-type': XLSX_CONTENT_TYPE, 'x-casebang-metadata': metadata },
+      body: bytes
+    })
+    const body = await response.json() as SubmitResponse
+    if (!body.item) throw new Error(serverError(body.error))
+    return { item: body.item, duplicate: body.duplicate ?? false }
   }
 
   async submitLifecycle(input: unknown, lifecycle: LifecycleService): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
@@ -141,6 +172,7 @@ export class CollaborationService {
 function serverError(code?: string, status?: number): string {
   const messages: Record<string, string> = {
     invalid_assignee: '接收人无效，请刷新成员列表后重试。',
+    downstream_member_required: '尚未找到已登录的下游账号，请先让下游账号登录一次。',
     source_already_submitted: '该工作簿已经提交，不能改派给其他账号。',
     workbook_hash_mismatch: '上传后的工作簿校验不一致，请重试。',
     workbook_required: '没有读取到需要交接的工作簿。',

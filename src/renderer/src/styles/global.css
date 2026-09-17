@@ -916,6 +916,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .supplement-step-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #bd142b; background: #fff0f2; font-weight: 800; }
 .supplement-run-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e8eaeb; }
 .supplement-run-row small { margin-top: 3px; }
+.supplement-final-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.shared-workbook-export { border-color: #b9d9ce; background: #f2f9f6; }
 .supplement-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 18px; margin: 16px 0 24px; }
 .supplement-form-grid label { display: flex; flex-direction: column; gap: 9px; font-size: 13px; font-weight: 600; }
 .supplement-page input { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid #d5d7dc; border-radius: 8px; padding: 11px 12px; background: white; font: inherit; }

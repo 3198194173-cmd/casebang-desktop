@@ -268,7 +268,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
         ) : activeStep === 3 && imageAnalysis && generationWorkspace ? (
           <GenerationQualityWorkspace workspace={generationWorkspace} analysis={imageAnalysis} />
         ) : activeStep === 4 && generationWorkspace && imageAnalysis ? (
-          <ExportWorkspace workspace={generationWorkspace} templateName={form.templateName} baseFiles={snapshot.baseFiles} analysis={imageAnalysis} onDataChanged={onDataChanged} />
+          <ExportWorkspace workspace={generationWorkspace} templateName={form.templateName} baseFiles={snapshot.baseFiles} analysis={imageAnalysis} sourceWorkflow={existingSeries ? 'new-products' : 'new-series'} onDataChanged={onDataChanged} />
         ) : (
           <StepPlaceholder step={activeStep} />
         )}

@@ -17,6 +17,7 @@ export const IPC_CHANNELS = {
   accountLogout: 'account:logout',
   collaborationMembers: 'collaboration:members',
   collaborationWorkItems: 'collaboration:work-items',
+  collaborationPublishWorkbook: 'collaboration:publish-workbook',
   collaborationSubmitLifecycle: 'collaboration:submit-lifecycle',
   collaborationAct: 'collaboration:act',
   collaborationOpenWorkbook: 'collaboration:open-workbook',

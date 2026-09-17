@@ -267,6 +267,7 @@ export interface CasebangDesktopApi {
   collaboration: {
     members(): Promise<CollaborationMember[]>
     workItems(): Promise<CollaborationWorkItem[]>
+    publishWorkbook(input: { path: string; title: string; sourceWorkflow: import('./lifecycle-contracts').LifecycleSource }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     submitLifecycle(input: { draftId: string; expectedVersion: number; assigneeId: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; state?: string; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     openWorkbook(input: { workItemId: string; title: string; revision: number }): Promise<{ path: string }>

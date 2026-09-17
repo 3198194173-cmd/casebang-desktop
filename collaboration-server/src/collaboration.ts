@@ -9,7 +9,7 @@ import type { PrivateStorage } from './storage.js'
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
 const metadataSchema = z.object({
-  assigneeId: z.string().uuid(),
+  assigneeId: z.string().uuid().optional(),
   sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models', 'manual']),
   sourceId: z.string().min(1).max(200),
   title: z.string().trim().min(1).max(240),
@@ -108,12 +108,6 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     const actualHash = createHash('sha256').update(request.body).digest('hex')
     if (actualHash !== metadata.sha256) return reply.code(409).send({ error: 'workbook_hash_mismatch' })
 
-    const assignee = await pool.query<{ id: string }>(
-      `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND active=true`,
-      [actor.organization_id, metadata.assigneeId]
-    )
-    if (!assignee.rowCount || metadata.assigneeId === actor.id) return reply.code(400).send({ error: 'invalid_assignee' })
-
     const existing = await pool.query<WorkItemRow>(
       `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
               w.origin_id,origin.display_name AS origin_name,
@@ -126,7 +120,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       [actor.organization_id, metadata.sourceWorkflow, metadata.sourceId, metadata.sha256]
     )
     if (existing.rows[0]) {
-      if (existing.rows[0].origin_id !== actor.id || existing.rows[0].assignee_id !== metadata.assigneeId) {
+      if (existing.rows[0].origin_id !== actor.id || (metadata.assigneeId && existing.rows[0].assignee_id !== metadata.assigneeId)) {
         return reply.code(409).send({ error: 'source_already_submitted' })
       }
       return reply.header('cache-control', 'no-store').send({ item: publicWorkItem(existing.rows[0]), duplicate: true })
@@ -136,6 +130,24 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       [actor.organization_id, metadata.sourceWorkflow, metadata.sourceId]
     )
     if (occupiedSource.rowCount) return reply.code(409).send({ error: 'source_already_submitted' })
+
+    let assigneeId = metadata.assigneeId
+    if (assigneeId) {
+      const assignee = await pool.query<{ id: string }>(
+        `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND active=true`,
+        [actor.organization_id, assigneeId]
+      )
+      if (!assignee.rowCount || assigneeId === actor.id) return reply.code(400).send({ error: 'invalid_assignee' })
+    } else {
+      const downstream = await pool.query<{ id: string }>(
+        `SELECT id FROM app_users
+         WHERE organization_id=$1 AND id<>$2 AND active=true AND business_role='downstream'
+         ORDER BY last_login_at DESC LIMIT 1`,
+        [actor.organization_id, actor.id]
+      )
+      assigneeId = downstream.rows[0]?.id
+      if (!assigneeId) return reply.code(409).send({ error: 'downstream_member_required' })
+    }
 
     const workItemId = randomUUID()
     const eventId = randomUUID()
@@ -148,7 +160,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
         `INSERT INTO work_items
           (id,organization_id,origin_id,assignee_id,source_workflow,source_id,title,state)
          VALUES($1,$2,$3,$4,$5,$6,$7,'PENDING_PROCESSING')`,
-        [workItemId, actor.organization_id, actor.id, metadata.assigneeId, metadata.sourceWorkflow, metadata.sourceId, metadata.title]
+        [workItemId, actor.organization_id, actor.id, assigneeId, metadata.sourceWorkflow, metadata.sourceId, metadata.title]
       )
       await client.query(
         `INSERT INTO workbook_revisions
@@ -162,13 +174,13 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
          VALUES($1,$2,$3,$4,$5,$6,1,'submit',$7)`,
         [eventId, actor.organization_id, workItemId, actor.id, metadata.requestKey,
           createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
-          { assigneeId: metadata.assigneeId, revision: 1, sha256: metadata.sha256 }]
+          { assigneeId, revision: 1, sha256: metadata.sha256 }]
       )
       await client.query(
         `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
          VALUES($1,$2,$3,$4,$5)`,
-        [randomUUID(), actor.organization_id, eventId, metadata.assigneeId,
-          { type: 'work-item-assigned', workItemId, title: metadata.title }]
+        [randomUUID(), actor.organization_id, eventId, assigneeId,
+          { type: 'workbook-published', workItemId, title: metadata.title, state: 'PENDING_PROCESSING' }]
       )
       await client.query('COMMIT')
     } catch (error) {

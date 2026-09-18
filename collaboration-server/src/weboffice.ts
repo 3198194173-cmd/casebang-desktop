@@ -366,9 +366,26 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
 
 async function callbackSession(request: FastifyRequest, reply: FastifyReply, config: ServerConfig, pool: pg.Pool): Promise<WebOfficeSessionRow | null> {
   if (!config.wps.enabled) { await wpsFailure(reply, 503, 40001, 'WebOffice disabled'); return null }
-  if (!verifyWpsSignature(request, config)) { await wpsFailure(reply, 401, 40001, 'invalid signature'); return null }
+  const signatureFailure = wpsSignatureFailure(request, config)
+  if (signatureFailure) {
+    request.log.warn({
+      reason: signatureFailure,
+      wpsRequestId: request.headers['x-request-id'],
+      path: request.url
+    }, 'WPS callback rejected')
+    await wpsFailure(reply, 401, 40001, 'invalid signature')
+    return null
+  }
   const token = request.headers['x-weboffice-token']
-  if (typeof token !== 'string' || token.length < 32) { await wpsFailure(reply, 401, 40001, 'token required'); return null }
+  if (typeof token !== 'string' || token.length < 32) {
+    request.log.warn({
+      reason: typeof token === 'string' ? 'token_too_short' : 'token_missing',
+      wpsRequestId: request.headers['x-request-id'],
+      path: request.url
+    }, 'WPS callback rejected')
+    await wpsFailure(reply, 401, 40001, 'token required')
+    return null
+  }
   const result = await pool.query<WebOfficeSessionRow>(
     `UPDATE weboffice_sessions s SET last_seen_at=now()
      FROM app_users u
@@ -378,7 +395,15 @@ async function callbackSession(request: FastifyRequest, reply: FastifyReply, con
     [sha256(token)]
   )
   const session = result.rows[0]
-  if (!session) { await wpsFailure(reply, 401, 40001, 'token expired'); return null }
+  if (!session) {
+    request.log.warn({
+      reason: 'token_unknown_or_expired',
+      wpsRequestId: request.headers['x-request-id'],
+      path: request.url
+    }, 'WPS callback rejected')
+    await wpsFailure(reply, 401, 40001, 'token expired')
+    return null
+  }
   return session
 }
 
@@ -413,17 +438,22 @@ async function fileInfo(file: FileRow, storage: PrivateStorage): Promise<object>
   }
 }
 
-function verifyWpsSignature(request: FastifyRequest, config: ServerConfig): boolean {
+function wpsSignatureFailure(request: FastifyRequest, config: ServerConfig): string | null {
   const appId = request.headers['x-app-id']
   const date = request.headers.date
   const contentMd5 = request.headers['content-md5']
   const authorization = request.headers.authorization
-  if (appId !== config.wps.appId || typeof date !== 'string' || typeof contentMd5 !== 'string' || typeof authorization !== 'string') return false
+  if (typeof appId !== 'string') return 'app_id_missing'
+  if (appId !== config.wps.appId) return 'app_id_mismatch'
+  if (typeof date !== 'string') return 'date_missing'
+  if (typeof contentMd5 !== 'string') return 'content_md5_missing'
+  if (typeof authorization !== 'string') return 'authorization_missing'
   const timestamp = Date.parse(date)
-  if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 10 * 60 * 1000) return false
+  if (!Number.isFinite(timestamp)) return 'date_invalid'
+  if (Math.abs(Date.now() - timestamp) > 10 * 60 * 1000) return 'date_out_of_range'
   const contentType = request.method === 'GET' ? '' : (request.headers['content-type'] ?? '').split(';')[0]!
   const digest = createHash('sha1').update(`${config.wps.appSecret}${contentMd5}${contentType}${date}`).digest('hex')
-  return safeEqual(`WPS-2:${config.wps.appId}:${digest}`, authorization)
+  return safeEqual(`WPS-2:${config.wps.appId}:${digest}`, authorization) ? null : 'signature_mismatch'
 }
 
 function downloadSignature(secret: string, fileId: string, revision: number, expires: number): string {

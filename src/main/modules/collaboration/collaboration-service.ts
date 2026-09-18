@@ -9,9 +9,10 @@ import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service
 import { logger } from '@main/infrastructure/logger'
 import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
 
-const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const BINARY_CONTENT_TYPE = 'application/octet-stream'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
-const WORKBOOK_UPLOAD_TIMEOUT_MS = 15 * 60_000
+const CHUNK_UPLOAD_TIMEOUT_MS = 90_000
+const CHUNK_UPLOAD_ATTEMPTS = 3
 const publishSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1).max(240),
@@ -40,6 +41,25 @@ const openOnlineSchema = z.object({ workItemId: z.string().uuid() }).strict()
 interface MembersResponse { members?: CollaborationMember[] }
 interface WorkItemsResponse { items?: CollaborationWorkItem[] }
 interface SubmitResponse { item?: CollaborationWorkItem; duplicate?: boolean; error?: string }
+interface UploadPrepareResponse {
+  uploadId?: string
+  chunkSize?: number
+  totalChunks?: number
+  error?: string
+}
+const uploadPrepareResponseSchema = z.object({
+  uploadId: z.string().uuid(),
+  chunkSize: z.number().int().positive().max(1024 * 1024),
+  totalChunks: z.number().int().positive()
+})
+interface WorkbookUploadMetadata {
+  assigneeId?: string
+  sourceWorkflow: 'new-series' | 'new-products' | 'new-models' | 'manual'
+  sourceId: string
+  title: string
+  sha256: string
+  requestKey: string
+}
 interface WebOfficeSessionResponse { editorUrl?: string }
 interface RequestTiming { timeoutMs?: number; timeoutMessage?: string }
 
@@ -66,64 +86,34 @@ export class CollaborationService {
     if (details.size > MAX_WORKBOOK_SIZE) throw new Error('工作簿超过 64 MB，尚不能导入共享流程。')
     const bytes = await readFile(value.path)
     const sha256 = createHash('sha256').update(bytes).digest('hex')
-    const metadata = Buffer.from(JSON.stringify({
+    const metadata: WorkbookUploadMetadata = {
       sourceWorkflow: value.sourceWorkflow,
       sourceId: sha256,
       title: value.title.toLowerCase().endsWith('.xlsx') ? value.title : `${value.title}.xlsx`,
       sha256,
       requestKey: randomUUID()
-    })).toString('base64url')
-    logger.info('Uploading shared workbook', {
-      fileName: path.basename(value.path),
-      sizeBytes: details.size,
-      timeoutMs: WORKBOOK_UPLOAD_TIMEOUT_MS
-    })
-    const response = await this.request('/api/v1/collaboration/work-items', {
-      method: 'POST',
-      headers: { 'content-type': XLSX_CONTENT_TYPE, 'x-casebang-metadata': metadata },
-      body: bytes
-    }, {
-      timeoutMs: WORKBOOK_UPLOAD_TIMEOUT_MS,
-      timeoutMessage: '工作簿上传超过 15 分钟，请检查网络后重试。'
-    })
-    const body = await response.json() as SubmitResponse
-    if (!body.item) throw new Error(serverError(body.error))
-    logger.info('Shared workbook upload completed', {
-      workItemId: body.item.id,
-      sizeBytes: details.size,
-      duplicate: body.duplicate ?? false
-    })
-    return { item: body.item, duplicate: body.duplicate ?? false }
+    }
+    return this.uploadWorkbook(bytes, metadata, path.basename(value.path))
   }
 
   async submitLifecycle(input: unknown, lifecycle: LifecycleService): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
     const value = submitSchema.parse(input)
-    const { draft, path } = await lifecycle.submissionSnapshot(value.draftId, value.expectedVersion)
+    const { draft, path: workbookPath } = await lifecycle.submissionSnapshot(value.draftId, value.expectedVersion)
     const session = await this.settings.getCollaborationSession()
     if (!session) throw new Error('请先登录钉钉账号。')
     if (draft.ownerUserId && draft.ownerUserId !== session.user.id) throw new Error('该本地工作簿属于另一登录账号，当前账号不能提交。')
-    const bytes = await readFile(path)
+    const bytes = await readFile(workbookPath)
     const sha256 = createHash('sha256').update(bytes).digest('hex')
     if (sha256 !== draft.sourceHash) throw new Error('提交前工作簿校验失败，请重新导入。')
-    const metadata = Buffer.from(JSON.stringify({
+    const metadata: WorkbookUploadMetadata = {
       assigneeId: value.assigneeId,
       sourceWorkflow: draft.source,
       sourceId: draft.id,
       title: draft.title,
       sha256,
       requestKey: randomUUID()
-    })).toString('base64url')
-    const response = await this.request('/api/v1/collaboration/work-items', {
-      method: 'POST',
-      headers: { 'content-type': XLSX_CONTENT_TYPE, 'x-casebang-metadata': metadata },
-      body: bytes
-    }, {
-      timeoutMs: WORKBOOK_UPLOAD_TIMEOUT_MS,
-      timeoutMessage: '工作簿上传超过 15 分钟，请检查网络后重试。'
-    })
-    const body = await response.json() as SubmitResponse
-    if (!body.item) throw new Error(serverError(body.error))
-    return { item: body.item, duplicate: body.duplicate ?? false }
+    }
+    return this.uploadWorkbook(bytes, metadata, path.basename(workbookPath))
   }
 
   async act(input: unknown): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
@@ -174,6 +164,77 @@ export class CollaborationService {
     return { opened: true }
   }
 
+  private async uploadWorkbook(
+    bytes: Buffer,
+    metadata: WorkbookUploadMetadata,
+    fileName: string
+  ): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
+    logger.info('Preparing chunked shared workbook upload', { fileName, sizeBytes: bytes.length })
+    const preparedResponse = await this.request('/api/v1/collaboration/workbook-uploads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...metadata, size: bytes.length })
+    })
+    const preparedBody = await preparedResponse.json() as UploadPrepareResponse
+    const prepared = uploadPrepareResponseSchema.safeParse(preparedBody)
+    if (!prepared.success) throw new Error(serverError(preparedBody.error ?? 'invalid_upload_response'))
+    if (prepared.data.totalChunks !== Math.ceil(bytes.length / prepared.data.chunkSize)) {
+      throw new Error('协同服务返回的分块参数不正确，请更新服务器后重试。')
+    }
+
+    for (let index = 0; index < prepared.data.totalChunks; index += 1) {
+      const start = index * prepared.data.chunkSize
+      const chunk = bytes.subarray(start, Math.min(start + prepared.data.chunkSize, bytes.length))
+      await this.uploadChunk(prepared.data.uploadId, index, chunk)
+      logger.info('Shared workbook chunk uploaded', {
+        fileName,
+        chunk: index + 1,
+        totalChunks: prepared.data.totalChunks
+      })
+    }
+
+    const completedResponse = await this.request(
+      `/api/v1/collaboration/workbook-uploads/${prepared.data.uploadId}/complete`,
+      { method: 'POST' },
+      { timeoutMs: CHUNK_UPLOAD_TIMEOUT_MS, timeoutMessage: '服务器合并工作簿超时，请稍后重试。' }
+    )
+    const completed = await completedResponse.json() as SubmitResponse
+    if (!completed.item) throw new Error(serverError(completed.error))
+    logger.info('Shared workbook upload completed', {
+      workItemId: completed.item.id,
+      sizeBytes: bytes.length,
+      chunks: prepared.data.totalChunks,
+      duplicate: completed.duplicate ?? false
+    })
+    return { item: completed.item, duplicate: completed.duplicate ?? false }
+  }
+
+  private async uploadChunk(uploadId: string, index: number, chunk: Buffer): Promise<void> {
+    let lastError: unknown
+    for (let attempt = 1; attempt <= CHUNK_UPLOAD_ATTEMPTS; attempt += 1) {
+      try {
+        await this.request(
+          `/api/v1/collaboration/workbook-uploads/${uploadId}/chunks/${index}`,
+          { method: 'PUT', headers: { 'content-type': BINARY_CONTENT_TYPE }, body: Uint8Array.from(chunk).buffer },
+          { timeoutMs: CHUNK_UPLOAD_TIMEOUT_MS, timeoutMessage: `工作簿第 ${index + 1} 个分块上传超时。` }
+        )
+        return
+      } catch (error) {
+        lastError = error
+        logger.warn('Shared workbook chunk upload failed', {
+          uploadId,
+          chunk: index + 1,
+          attempt,
+          error: error instanceof Error ? error.message : String(error)
+        })
+        if (attempt < CHUNK_UPLOAD_ATTEMPTS) {
+          await new Promise<void>((resolve) => setTimeout(resolve, attempt * 500))
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('工作簿分块上传失败，请重试。')
+  }
+
   private async request(path: string, init: RequestInit = {}, timing: RequestTiming = {}): Promise<Response> {
     const session = await this.settings.getCollaborationSession()
     if (!session) throw new Error('请先登录钉钉账号。')
@@ -216,6 +277,11 @@ function serverError(code?: string, status?: number): string {
     source_already_submitted: '该工作簿已经提交，不能改派给其他账号。',
     workbook_hash_mismatch: '上传后的工作簿校验不一致，请重试。',
     workbook_required: '没有读取到需要交接的工作簿。',
+    invalid_upload_request: '工作簿上传参数不正确，请更新桌面端和服务器后重试。',
+    invalid_upload_chunk: '工作簿分块编号不正确，请重新建立共享工作簿。',
+    upload_not_found: '本次工作簿上传已过期，请重新建立共享工作簿。',
+    upload_incomplete: '工作簿尚未完整上传，请重试。',
+    upload_chunk_size_mismatch: '工作簿分块校验失败，请重新上传。',
     invalid_action: '任务操作参数不正确，请刷新后重试。',
     stage_required: '请选择要保存的工作簿阶段。',
     return_reason_required: '退回任务必须填写原因。',

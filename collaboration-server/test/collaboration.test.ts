@@ -137,6 +137,76 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
+  it('accepts a workbook in bounded chunks and finalizes the same verified submission', async () => {
+    const workbook = Buffer.from('chunked generated workbook')
+    const originId = '10000000-0000-4000-8000-000000000001'
+    const assigneeId = '10000000-0000-4000-8000-000000000002'
+    const organizationId = '20000000-0000-4000-8000-000000000001'
+    const actor = { id: originId, display_name: '建表人', avatar_url: null, organization_id: organizationId, corp_id: 'corp', business_role: 'upstream' }
+    const metadata = {
+      sourceWorkflow: 'new-series', sourceId: 'source-chunked', title: '分块工作簿.xlsx',
+      sha256: createHash('sha256').update(workbook).digest('hex'), requestKey: '40000000-0000-4000-8000-000000000003',
+      size: workbook.length
+    }
+    const stored = {
+      id: '30000000-0000-4000-8000-000000000003', title: metadata.title,
+      state: 'PENDING_PROCESSING', source_workflow: metadata.sourceWorkflow, version: 1, revision: 1,
+      created_at: new Date('2026-09-18T00:00:00Z'), origin_id: originId, origin_name: '建表人',
+      assignee_id: assigneeId, assignee_name: '加工人'
+    }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([actor]))
+      .mockResolvedValueOnce(queryResult([actor]))
+      .mockResolvedValueOnce(queryResult([actor]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([{ id: assigneeId }]))
+      .mockResolvedValueOnce(queryResult([stored]))
+    const clientQuery = vi.fn().mockResolvedValue(queryResult([]))
+    const objects = new Map<string, Buffer>()
+    const storage = {
+      writeObject: vi.fn(async (key: string, value: Buffer) => { objects.set(key, Buffer.from(value)) }),
+      readObject: vi.fn(async (key: string) => {
+        const value = objects.get(key)
+        if (!value) throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+        return Buffer.from(value)
+      }),
+      removeObject: vi.fn(async (key: string) => { objects.delete(key) }),
+      removeTree: vi.fn(async (prefix: string) => {
+        for (const key of objects.keys()) if (key === prefix || key.startsWith(`${prefix}/`)) objects.delete(key)
+      })
+    }
+    const app = Fastify()
+    registerCollaborationRoutes(app, {
+      query,
+      connect: vi.fn(async () => ({ query: clientQuery, release: vi.fn() }))
+    } as unknown as pg.Pool, storage as unknown as PrivateStorage)
+    const authorization = `Bearer ${'x'.repeat(40)}`
+
+    const prepared = await app.inject({
+      method: 'POST', url: '/api/v1/collaboration/workbook-uploads',
+      headers: { authorization, 'content-type': 'application/json' }, payload: metadata
+    })
+    expect(prepared.statusCode).toBe(201)
+    const upload = prepared.json() as { uploadId: string; totalChunks: number }
+    expect(upload.totalChunks).toBe(1)
+
+    const chunk = await app.inject({
+      method: 'PUT', url: `/api/v1/collaboration/workbook-uploads/${upload.uploadId}/chunks/0`,
+      headers: { authorization, 'content-type': 'application/octet-stream' }, payload: workbook
+    })
+    expect(chunk.statusCode).toBe(204)
+
+    const completed = await app.inject({
+      method: 'POST', url: `/api/v1/collaboration/workbook-uploads/${upload.uploadId}/complete`, headers: { authorization }
+    })
+    expect(completed.statusCode).toBe(201)
+    expect(completed.json()).toEqual({ item: expect.objectContaining({ id: stored.id, revision: 1 }), duplicate: false })
+    expect(storage.removeTree).toHaveBeenCalled()
+    expect(storage.writeObject).toHaveBeenCalledWith(expect.stringMatching(/revision-1\.xlsx$/), workbook)
+    await app.close()
+  })
+
   it('requires a concrete reason before an assignee can return a task', async () => {
     const query = vi.fn().mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '处理人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'downstream' }]))
     const pool = { query } as unknown as pg.Pool

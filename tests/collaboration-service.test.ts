@@ -62,19 +62,27 @@ describe('desktop collaboration service', () => {
   it('publishes an exported workbook without asking the user to choose a recipient', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'casebang-publish-'))
     const workbookPath = join(directory, '新建产品表.xlsx')
-    await writeFile(workbookPath, Buffer.from('xlsx-test'))
+    const workbook = Buffer.alloc(512 * 1024 + 11, 7)
+    await writeFile(workbookPath, workbook)
     const item = { id: '30000000-0000-4000-8000-000000000001', title: '新建产品表.xlsx', state: 'PENDING_PROCESSING', sourceWorkflow: 'new-series', version: 1, revision: 1, createdAt: '2026-09-17T00:00:00.000Z', origin: { id: 'user-1', displayName: '建表人' }, assignee: { id: 'user-2', displayName: '加工人' } }
-    vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ item, duplicate: false }), { status: 201 }))
+    vi.mocked(net.fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ uploadId: '40000000-0000-4000-8000-000000000001', chunkSize: 512 * 1024, totalChunks: 2 }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ item, duplicate: false }), { status: 201 }))
     const timeout = vi.spyOn(AbortSignal, 'timeout')
     try {
       const result = await new CollaborationService(settings()).publishWorkbook({ path: workbookPath, title: '新建产品表.xlsx', sourceWorkflow: 'new-series' })
       expect(result.item.state).toBe('PENDING_PROCESSING')
-      expect(timeout).toHaveBeenCalledWith(15 * 60_000)
-      const request = vi.mocked(net.fetch).mock.calls[0]
-      const headers = request?.[1]?.headers as Record<string, string>
-      const metadata = JSON.parse(Buffer.from(headers['x-casebang-metadata']!, 'base64url').toString('utf8'))
-      expect(metadata).toEqual(expect.objectContaining({ sourceWorkflow: 'new-series', title: '新建产品表.xlsx' }))
+      expect(timeout).toHaveBeenCalledWith(90_000)
+      expect(net.fetch).toHaveBeenCalledTimes(4)
+      const prepareRequest = vi.mocked(net.fetch).mock.calls[0]
+      const metadata = JSON.parse(String(prepareRequest?.[1]?.body))
+      expect(metadata).toEqual(expect.objectContaining({ sourceWorkflow: 'new-series', title: '新建产品表.xlsx', size: workbook.length }))
       expect(metadata).not.toHaveProperty('assigneeId')
+      expect(vi.mocked(net.fetch).mock.calls[1]?.[0]).toContain('/chunks/0')
+      expect(vi.mocked(net.fetch).mock.calls[2]?.[0]).toContain('/chunks/1')
+      expect(vi.mocked(net.fetch).mock.calls[3]?.[0]).toContain('/complete')
     } finally {
       timeout.mockRestore()
       await rm(directory, { recursive: true, force: true })

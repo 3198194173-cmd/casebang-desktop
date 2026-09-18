@@ -3,11 +3,14 @@ import { createReadStream } from 'node:fs'
 import type { FastifyInstance } from 'fastify'
 import type pg from 'pg'
 import { z } from 'zod'
-import { authenticatedUser } from './auth.js'
+import { authenticatedUser, type SessionUserRow } from './auth.js'
 import type { PrivateStorage } from './storage.js'
 
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const BINARY_CONTENT_TYPE = 'application/octet-stream'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
+const UPLOAD_CHUNK_SIZE = 512 * 1024
+const UPLOAD_TTL_MS = 30 * 60 * 1000
 const metadataSchema = z.object({
   assigneeId: z.string().uuid().optional(),
   sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models', 'manual']),
@@ -15,6 +18,19 @@ const metadataSchema = z.object({
   title: z.string().trim().min(1).max(240),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   requestKey: z.string().uuid()
+}).strict()
+const uploadPrepareSchema = metadataSchema.extend({
+  size: z.number().int().positive().max(MAX_WORKBOOK_SIZE)
+}).strict()
+const uploadManifestSchema = z.object({
+  uploadId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  userId: z.string().uuid(),
+  metadata: metadataSchema,
+  size: z.number().int().positive().max(MAX_WORKBOOK_SIZE),
+  chunkSize: z.number().int().positive().max(UPLOAD_CHUNK_SIZE),
+  totalChunks: z.number().int().positive(),
+  expiresAt: z.string().datetime()
 }).strict()
 const actionSchema = z.object({
   action: z.enum(['claim', 'return-source', 'update-stage']),
@@ -45,6 +61,9 @@ interface WorkItemRow {
 export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool, storage: PrivateStorage): void {
   if (!app.hasContentTypeParser(XLSX_CONTENT_TYPE)) {
     app.addContentTypeParser(XLSX_CONTENT_TYPE, { parseAs: 'buffer', bodyLimit: MAX_WORKBOOK_SIZE }, (_request, body, done) => done(null, body))
+  }
+  if (!app.hasContentTypeParser(BINARY_CONTENT_TYPE)) {
+    app.addContentTypeParser(BINARY_CONTENT_TYPE, { parseAs: 'buffer', bodyLimit: UPLOAD_CHUNK_SIZE }, (_request, body, done) => done(null, body))
   }
 
   app.get('/api/v1/collaboration/members', async (request, reply) => {
@@ -93,6 +112,80 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     return reply.header('cache-control', 'no-store').send({ items: result.rows.map(publicWorkItem) })
   })
 
+  app.post('/api/v1/collaboration/workbook-uploads', async (request, reply) => {
+    const actor = await authenticatedUser(request, reply, pool)
+    if (!actor) return
+    const input = uploadPrepareSchema.safeParse(request.body)
+    if (!input.success) return reply.code(400).send({ error: 'invalid_upload_request' })
+    const { size, ...metadata } = input.data
+    const uploadId = randomUUID()
+    const totalChunks = Math.ceil(size / UPLOAD_CHUNK_SIZE)
+    const manifest: z.infer<typeof uploadManifestSchema> = {
+      uploadId,
+      organizationId: actor.organization_id,
+      userId: actor.id,
+      metadata,
+      size,
+      chunkSize: UPLOAD_CHUNK_SIZE,
+      totalChunks,
+      expiresAt: new Date(Date.now() + UPLOAD_TTL_MS).toISOString()
+    }
+    await storage.writeObject(uploadManifestKey(actor, uploadId), Buffer.from(JSON.stringify(manifest)))
+    const cleanup = setTimeout(() => {
+      void storage.removeTree(uploadRoot(actor, uploadId)).catch(() => undefined)
+    }, UPLOAD_TTL_MS + 60_000)
+    cleanup.unref()
+    return reply.code(201).header('cache-control', 'no-store').send({ uploadId, chunkSize: UPLOAD_CHUNK_SIZE, totalChunks })
+  })
+
+  app.put('/api/v1/collaboration/workbook-uploads/:uploadId/chunks/:index', async (request, reply) => {
+    const actor = await authenticatedUser(request, reply, pool)
+    if (!actor) return
+    const params = request.params as { uploadId?: string; index?: string }
+    const uploadId = z.string().uuid().safeParse(params.uploadId)
+    const index = z.coerce.number().int().nonnegative().safeParse(params.index)
+    if (!uploadId.success || !index.success || !Buffer.isBuffer(request.body)) {
+      return reply.code(400).send({ error: 'invalid_upload_chunk' })
+    }
+    const manifest = await readUploadManifest(storage, actor, uploadId.data)
+    if (!manifest) return reply.code(404).send({ error: 'upload_not_found' })
+    if (index.data >= manifest.totalChunks) return reply.code(400).send({ error: 'invalid_upload_chunk' })
+    const expectedSize = index.data === manifest.totalChunks - 1
+      ? manifest.size - manifest.chunkSize * (manifest.totalChunks - 1)
+      : manifest.chunkSize
+    if (request.body.length !== expectedSize) return reply.code(409).send({ error: 'upload_chunk_size_mismatch' })
+    await storage.writeObject(uploadChunkKey(actor, uploadId.data, index.data), request.body)
+    return reply.code(204).send()
+  })
+
+  app.post('/api/v1/collaboration/workbook-uploads/:uploadId/complete', async (request, reply) => {
+    const actor = await authenticatedUser(request, reply, pool)
+    if (!actor) return
+    const params = request.params as { uploadId?: string }
+    const uploadId = z.string().uuid().safeParse(params.uploadId)
+    if (!uploadId.success) return reply.code(400).send({ error: 'invalid_upload_request' })
+    const manifest = await readUploadManifest(storage, actor, uploadId.data)
+    if (!manifest) return reply.code(404).send({ error: 'upload_not_found' })
+    const chunks: Buffer[] = []
+    for (let index = 0; index < manifest.totalChunks; index += 1) {
+      try {
+        const chunk = await storage.readObject(uploadChunkKey(actor, uploadId.data, index))
+        const expectedSize = index === manifest.totalChunks - 1
+          ? manifest.size - manifest.chunkSize * (manifest.totalChunks - 1)
+          : manifest.chunkSize
+        if (chunk.length !== expectedSize) return reply.code(409).send({ error: 'upload_chunk_size_mismatch' })
+        chunks.push(chunk)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return reply.code(409).send({ error: 'upload_incomplete' })
+        throw error
+      }
+    }
+    const workbook = Buffer.concat(chunks, manifest.size)
+    const result = await submitWorkbook(actor, manifest.metadata, workbook, pool, storage)
+    if (result.status < 400) await storage.removeTree(uploadRoot(actor, uploadId.data))
+    return reply.code(result.status).header('cache-control', 'no-store').send(result.body)
+  })
+
   app.post('/api/v1/collaboration/work-items', async (request, reply) => {
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
@@ -105,93 +198,8 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     } catch {
       return reply.code(400).send({ error: 'invalid_metadata' })
     }
-    const actualHash = createHash('sha256').update(request.body).digest('hex')
-    if (actualHash !== metadata.sha256) return reply.code(409).send({ error: 'workbook_hash_mismatch' })
-
-    const existing = await pool.query<WorkItemRow>(
-      `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
-              w.origin_id,origin.display_name AS origin_name,
-              w.assignee_id,assignee.display_name AS assignee_name
-       FROM work_items w
-       JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
-       JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
-       JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id AND r.revision=w.revision
-       WHERE w.organization_id=$1 AND w.source_workflow=$2 AND w.source_id=$3 AND r.sha256=$4`,
-      [actor.organization_id, metadata.sourceWorkflow, metadata.sourceId, metadata.sha256]
-    )
-    if (existing.rows[0]) {
-      if (existing.rows[0].origin_id !== actor.id || (metadata.assigneeId && existing.rows[0].assignee_id !== metadata.assigneeId)) {
-        return reply.code(409).send({ error: 'source_already_submitted' })
-      }
-      return reply.header('cache-control', 'no-store').send({ item: publicWorkItem(existing.rows[0]), duplicate: true })
-    }
-    const occupiedSource = await pool.query<{ id: string }>(
-      `SELECT id FROM work_items WHERE organization_id=$1 AND source_workflow=$2 AND source_id=$3`,
-      [actor.organization_id, metadata.sourceWorkflow, metadata.sourceId]
-    )
-    if (occupiedSource.rowCount) return reply.code(409).send({ error: 'source_already_submitted' })
-
-    let assigneeId = metadata.assigneeId
-    if (assigneeId) {
-      const assignee = await pool.query<{ id: string }>(
-        `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND active=true`,
-        [actor.organization_id, assigneeId]
-      )
-      if (!assignee.rowCount || assigneeId === actor.id) return reply.code(400).send({ error: 'invalid_assignee' })
-    } else {
-      const downstream = await pool.query<{ id: string }>(
-        `SELECT id FROM app_users
-         WHERE organization_id=$1 AND id<>$2 AND active=true AND business_role='downstream'
-         ORDER BY last_login_at DESC LIMIT 1`,
-        [actor.organization_id, actor.id]
-      )
-      assigneeId = downstream.rows[0]?.id
-      if (!assigneeId) return reply.code(409).send({ error: 'downstream_member_required' })
-    }
-
-    const workItemId = randomUUID()
-    const eventId = randomUUID()
-    const objectKey = `${actor.organization_id}/${workItemId}/revision-1.xlsx`
-    await storage.writeObject(objectKey, request.body)
-    const client = await pool.connect()
-    try {
-      await client.query('BEGIN')
-      await client.query(
-        `INSERT INTO work_items
-          (id,organization_id,origin_id,assignee_id,source_workflow,source_id,title,state)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'PENDING_PROCESSING')`,
-        [workItemId, actor.organization_id, actor.id, assigneeId, metadata.sourceWorkflow, metadata.sourceId, metadata.title]
-      )
-      await client.query(
-        `INSERT INTO workbook_revisions
-          (organization_id,work_item_id,revision,object_key,sha256,created_by)
-         VALUES($1,$2,1,$3,$4,$5)`,
-        [actor.organization_id, workItemId, objectKey, metadata.sha256, actor.id]
-      )
-      await client.query(
-        `INSERT INTO work_item_events
-          (id,organization_id,work_item_id,actor_id,request_key,request_hash,version,action,payload)
-         VALUES($1,$2,$3,$4,$5,$6,1,'submit',$7)`,
-        [eventId, actor.organization_id, workItemId, actor.id, metadata.requestKey,
-          createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
-          { assigneeId, revision: 1, sha256: metadata.sha256 }]
-      )
-      await client.query(
-        `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
-         VALUES($1,$2,$3,$4,$5)`,
-        [randomUUID(), actor.organization_id, eventId, assigneeId,
-          { type: 'workbook-published', workItemId, title: metadata.title, state: 'PENDING_PROCESSING' }]
-      )
-      await client.query('COMMIT')
-    } catch (error) {
-      await client.query('ROLLBACK')
-      await storage.removeObject(objectKey)
-      throw error
-    } finally {
-      client.release()
-    }
-    const created = await loadWorkItem(pool, actor.organization_id, workItemId)
-    return reply.code(201).header('cache-control', 'no-store').send({ item: publicWorkItem(created), duplicate: false })
+    const result = await submitWorkbook(actor, metadata, request.body, pool, storage)
+    return reply.code(result.status).header('cache-control', 'no-store').send(result.body)
   })
 
   app.get('/api/v1/collaboration/work-items/:id/workbook', async (request, reply) => {
@@ -319,6 +327,133 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       client.release()
     }
   })
+}
+
+function uploadRoot(actor: SessionUserRow, uploadId: string): string {
+  return `${actor.organization_id}/workbook-uploads/${actor.id}/${uploadId}`
+}
+
+function uploadManifestKey(actor: SessionUserRow, uploadId: string): string {
+  return `${uploadRoot(actor, uploadId)}/manifest.json`
+}
+
+function uploadChunkKey(actor: SessionUserRow, uploadId: string, index: number): string {
+  return `${uploadRoot(actor, uploadId)}/chunk-${index}.bin`
+}
+
+async function readUploadManifest(
+  storage: PrivateStorage,
+  actor: SessionUserRow,
+  uploadId: string
+): Promise<z.infer<typeof uploadManifestSchema> | null> {
+  try {
+    const manifest = uploadManifestSchema.parse(JSON.parse((await storage.readObject(uploadManifestKey(actor, uploadId))).toString('utf8')))
+    if (manifest.organizationId !== actor.organization_id || manifest.userId !== actor.id) return null
+    if (Date.parse(manifest.expiresAt) <= Date.now()) {
+      await storage.removeTree(uploadRoot(actor, uploadId))
+      return null
+    }
+    return manifest
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+async function submitWorkbook(
+  actor: SessionUserRow,
+  metadata: z.infer<typeof metadataSchema>,
+  workbook: Buffer,
+  pool: pg.Pool,
+  storage: PrivateStorage
+): Promise<{ status: number; body: object }> {
+  const actualHash = createHash('sha256').update(workbook).digest('hex')
+  if (actualHash !== metadata.sha256) return { status: 409, body: { error: 'workbook_hash_mismatch' } }
+
+  const existing = await pool.query<WorkItemRow>(
+    `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
+            w.origin_id,origin.display_name AS origin_name,
+            w.assignee_id,assignee.display_name AS assignee_name
+     FROM work_items w
+     JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
+     JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
+     JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id AND r.revision=w.revision
+     WHERE w.organization_id=$1 AND w.source_workflow=$2 AND w.source_id=$3 AND r.sha256=$4`,
+    [actor.organization_id, metadata.sourceWorkflow, metadata.sourceId, metadata.sha256]
+  )
+  if (existing.rows[0]) {
+    if (existing.rows[0].origin_id !== actor.id || (metadata.assigneeId && existing.rows[0].assignee_id !== metadata.assigneeId)) {
+      return { status: 409, body: { error: 'source_already_submitted' } }
+    }
+    return { status: 200, body: { item: publicWorkItem(existing.rows[0]), duplicate: true } }
+  }
+  const occupiedSource = await pool.query<{ id: string }>(
+    `SELECT id FROM work_items WHERE organization_id=$1 AND source_workflow=$2 AND source_id=$3`,
+    [actor.organization_id, metadata.sourceWorkflow, metadata.sourceId]
+  )
+  if (occupiedSource.rowCount) return { status: 409, body: { error: 'source_already_submitted' } }
+
+  let assigneeId = metadata.assigneeId
+  if (assigneeId) {
+    const assignee = await pool.query<{ id: string }>(
+      `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND active=true`,
+      [actor.organization_id, assigneeId]
+    )
+    if (!assignee.rowCount || assigneeId === actor.id) return { status: 400, body: { error: 'invalid_assignee' } }
+  } else {
+    const downstream = await pool.query<{ id: string }>(
+      `SELECT id FROM app_users
+       WHERE organization_id=$1 AND id<>$2 AND active=true AND business_role='downstream'
+       ORDER BY last_login_at DESC LIMIT 1`,
+      [actor.organization_id, actor.id]
+    )
+    assigneeId = downstream.rows[0]?.id
+    if (!assigneeId) return { status: 409, body: { error: 'downstream_member_required' } }
+  }
+
+  const workItemId = randomUUID()
+  const eventId = randomUUID()
+  const objectKey = `${actor.organization_id}/${workItemId}/revision-1.xlsx`
+  await storage.writeObject(objectKey, workbook)
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `INSERT INTO work_items
+        (id,organization_id,origin_id,assignee_id,source_workflow,source_id,title,state)
+       VALUES($1,$2,$3,$4,$5,$6,$7,'PENDING_PROCESSING')`,
+      [workItemId, actor.organization_id, actor.id, assigneeId, metadata.sourceWorkflow, metadata.sourceId, metadata.title]
+    )
+    await client.query(
+      `INSERT INTO workbook_revisions
+        (organization_id,work_item_id,revision,object_key,sha256,created_by)
+       VALUES($1,$2,1,$3,$4,$5)`,
+      [actor.organization_id, workItemId, objectKey, metadata.sha256, actor.id]
+    )
+    await client.query(
+      `INSERT INTO work_item_events
+        (id,organization_id,work_item_id,actor_id,request_key,request_hash,version,action,payload)
+       VALUES($1,$2,$3,$4,$5,$6,1,'submit',$7)`,
+      [eventId, actor.organization_id, workItemId, actor.id, metadata.requestKey,
+        createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
+        { assigneeId, revision: 1, sha256: metadata.sha256 }]
+    )
+    await client.query(
+      `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
+       VALUES($1,$2,$3,$4,$5)`,
+      [randomUUID(), actor.organization_id, eventId, assigneeId,
+        { type: 'workbook-published', workItemId, title: metadata.title, state: 'PENDING_PROCESSING' }]
+    )
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    await storage.removeObject(objectKey)
+    throw error
+  } finally {
+    client.release()
+  }
+  const created = await loadWorkItem(pool, actor.organization_id, workItemId)
+  return { status: 201, body: { item: publicWorkItem(created), duplicate: false } }
 }
 
 async function loadWorkItem(pool: pg.Pool, organizationId: string, id: string): Promise<WorkItemRow> {

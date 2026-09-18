@@ -53,6 +53,18 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
     }
   }
 
+  const openOnline = async (item: CollaborationWorkItem): Promise<void> => {
+    setActiveItemId(item.id); setError(''); setMessage('')
+    try {
+      await desktopApi.collaboration.openOnlineWorkbook({ workItemId: item.id })
+      setMessage('已在浏览器打开同一份 WPS 共享工作簿；双方修改将保存为中央修订。')
+    } catch (reason) {
+      setError(accountError(reason, 'WPS 在线工作簿打开失败'))
+    } finally {
+      setActiveItemId('')
+    }
+  }
+
   return <div className="collaboration-page">
     <header className="collaboration-hero"><div><span className="eyebrow">共享工作簿</span><h2>工作簿记录</h2><p>上下游同步查看工作簿修订和当前阶段。</p></div><button className="secondary-button" disabled={busy} onClick={() => void load()}>{busy ? '刷新中…' : '刷新记录'}</button></header>
     {account?.status === 'signed-in' && <section className="collaboration-account-strip"><span className="status-dot" /><strong>{account.user?.displayName}</strong><span>{account.user?.businessRole === 'upstream' ? '上游建表' : '下游加工'} · 中央记录已连接</span></section>}
@@ -66,8 +78,8 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
           <div className="collaboration-task-copy"><strong>{item.title}</strong><p>建表：{item.origin.displayName} · 加工：{item.assignee.displayName} · 工作簿修订 {item.revision}</p></div>
           <span>记录版本 {item.version}</span>
           {item.lastReason && <div className="collaboration-return-reason"><strong>阶段备注</strong><span>{item.lastReason}</span></div>}
-          <div className="collaboration-stage-editor"><label>当前进度<select value={selectedStage} onChange={event => setSelectedStages(current => ({ ...current, [item.id]: event.target.value }))}>{STAGES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="primary-button" disabled={activeItemId === item.id || selectedStage === item.state} onClick={() => void updateStage(item)}>{activeItemId === item.id ? '保存中…' : '保存阶段'}</button></div>
-          <small className="collaboration-online-note">WPS 在线工作簿接入后，此记录将直接打开中央文件，不再生成本机下载副本。</small>
+          <div className="collaboration-stage-editor"><button className="secondary-button" disabled={activeItemId === item.id} onClick={() => void openOnline(item)}>{activeItemId === item.id ? '正在打开…' : 'WPS 在线编辑'}</button><label>当前进度<select value={selectedStage} onChange={event => setSelectedStages(current => ({ ...current, [item.id]: event.target.value }))}>{STAGES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="primary-button" disabled={activeItemId === item.id || selectedStage === item.state} onClick={() => void updateStage(item)}>{activeItemId === item.id ? '保存中…' : '保存阶段'}</button></div>
+          <small className="collaboration-online-note">双方从这里打开同一个中央 file_id；WPS 保存后自动形成新的工作簿修订。</small>
         </article>
       })}
     </section>

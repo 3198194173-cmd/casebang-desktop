@@ -40,6 +40,25 @@ unset DINGTALK_SECRET_INPUT
 chmod 600 deploy/secrets/dingtalk_client_secret.txt
 ```
 
+WPS WebOffice AppID 可以放在标识配置中；AppSecret 只写服务器密钥文件：
+
+```sh
+read -rsp "WPS AppSecret: " CASEBANG_WPS_SECRET
+printf '\n'
+printf '%s' "$CASEBANG_WPS_SECRET" > deploy/secrets/wps_app_secret.txt
+unset CASEBANG_WPS_SECRET
+chmod 600 deploy/secrets/wps_app_secret.txt
+```
+
+`deploy/collaboration.env` 中填写：
+
+```dotenv
+WPS_WEBOFFICE_ENABLED=false
+WPS_APP_ID=SX20260918QZNBYG
+```
+
+首次部署先保持 `false`。即使尚未启用，Compose 也要求 `deploy/secrets/wps_app_secret.txt` 已存在。
+
 ## 3. 启动数据库与 API
 
 ```sh
@@ -89,7 +108,33 @@ curl -fsS https://casebang.tech/collab/health/ready
 
 Stream 是服务端主动连接钉钉，不需要配置公网 HTTP 回调地址。服务端只在事件成功落库后确认消费；落库失败会请求稍后重试。当前只验证连接与安全收件，尚未开放账号登录、任务交接和在线总表写入。
 
-## 6. 后续更新与回滚原则
+## 6. 启用 WPS WebOffice
+
+代码和迁移部署完成后，在 WPS WebOffice 控制台将回调网关设置为：
+
+```text
+https://casebang.tech/collab/weboffice
+```
+
+需要调试并开启的接口：文件信息、文件下载地址、文档用户权限、批量用户信息，以及三阶段保存的准备上传、获取上传地址、上传完成。历史版本、重命名、另存和打印目前保持关闭。
+
+然后把 `deploy/collaboration.env` 改为：
+
+```dotenv
+WPS_WEBOFFICE_ENABLED=true
+```
+
+重建 API：
+
+```sh
+docker compose -f compose.collaboration.yml up -d --build --force-recreate api
+docker compose -f compose.collaboration.yml logs --tail=150 api
+curl -fsS https://casebang.tech/collab/api/v1/system/capabilities
+```
+
+桌面端从“工作簿记录”点击“WPS 在线编辑”会签发四小时的用户凭证，并打开相同 `file_id`。凭证放在 URL Fragment 中，不进入 Nginx 请求日志；WPS 保存采用三阶段上传，每次完成后中央修订号递增。
+
+## 7. 后续更新与回滚原则
 
 ```sh
 cd /opt/casebang-desktop

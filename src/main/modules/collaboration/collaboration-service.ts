@@ -33,10 +33,12 @@ const openSchema = z.object({
   title: z.string().trim().min(1).max(240),
   revision: z.number().int().positive()
 }).strict()
+const openOnlineSchema = z.object({ workItemId: z.string().uuid() }).strict()
 
 interface MembersResponse { members?: CollaborationMember[] }
 interface WorkItemsResponse { items?: CollaborationWorkItem[] }
 interface SubmitResponse { item?: CollaborationWorkItem; duplicate?: boolean; error?: string }
+interface WebOfficeSessionResponse { editorUrl?: string }
 
 export class CollaborationService {
   constructor(private readonly settings: SettingsRepository) {}
@@ -144,6 +146,15 @@ export class CollaborationService {
     return { path: destination }
   }
 
+  async openOnlineWorkbook(input: unknown): Promise<{ opened: true }> {
+    const value = openOnlineSchema.parse(input)
+    const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/weboffice-session`, { method: 'POST' })
+    const body = await response.json() as WebOfficeSessionResponse
+    if (!body.editorUrl?.startsWith(`${SERVICE_ORIGIN}/weboffice/editor?`)) throw new Error('在线编辑地址校验失败。')
+    await shell.openExternal(body.editorUrl)
+    return { opened: true }
+  }
+
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
     const session = await this.settings.getCollaborationSession()
     if (!session) throw new Error('请先登录钉钉账号。')
@@ -184,7 +195,8 @@ function serverError(code?: string, status?: number): string {
     state_conflict: '任务状态已经变化，请刷新任务后重试。',
     idempotency_conflict: '任务操作标识冲突，请刷新后重新操作。',
     work_item_not_found: '没有找到该工作簿记录。',
-    business_role_forbidden: '当前账号不能执行此操作。'
+    business_role_forbidden: '当前账号不能执行此操作。',
+    weboffice_disabled: 'WPS 在线编辑尚未启用，请先完成服务端回调配置。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`
 }

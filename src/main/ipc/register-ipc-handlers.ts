@@ -136,6 +136,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.openWorkbook(input)
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationOpenOnlineWorkbook, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.openOnlineWorkbook(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.baseFilesSelect, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     const kind = baseFileKindSchema.parse(input)

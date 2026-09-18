@@ -6,7 +6,7 @@ describe('database migration files', () => {
   it('are ordered, transaction-runner compatible, and contain the central ledger safeguards', async () => {
     const root = resolve(import.meta.dirname, '../migrations')
     const names = (await readdir(root)).filter(name => name.endsWith('.sql')).sort()
-    expect(names).toEqual(['001_foundation.sql', '002_stream_events.sql', '003_dingtalk_auth.sql', '004_business_roles.sql'])
+    expect(names).toEqual(['001_foundation.sql', '002_stream_events.sql', '003_dingtalk_auth.sql', '004_business_roles.sql', '005_weboffice.sql'])
     const sql = (await Promise.all(names.map(name => readFile(resolve(root, name), 'utf8')))).join('\n')
     expect(sql).not.toMatch(/^\s*(BEGIN|COMMIT)\s*;/m)
     expect(sql).toContain('UNIQUE(organization_id,kind,code)')

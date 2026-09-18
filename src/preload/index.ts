@@ -35,7 +35,8 @@ const api: CasebangDesktopApi = {
     publishWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationPublishWorkbook, input),
     submitLifecycle: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationSubmitLifecycle, input),
     act: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationAct, input),
-    openWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenWorkbook, input)
+    openWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenWorkbook, input),
+    openOnlineWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenOnlineWorkbook, input)
   },
   baseFiles: {
     select: (kind) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesSelect, kind),

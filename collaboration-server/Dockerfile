@@ -24,6 +24,7 @@ RUN pnpm install --frozen-lockfile --prod --filter @casebang/collaboration-serve
 
 COPY --from=build --chown=node:node /app/collaboration-server/dist collaboration-server/dist
 COPY --chown=node:node collaboration-server/migrations collaboration-server/migrations
+COPY --chown=node:node collaboration-server/public collaboration-server/public
 
 USER node
 EXPOSE 3100

@@ -32,6 +32,18 @@ describe('central service configuration', () => {
   it('refuses an incomplete DingTalk Stream configuration', () => {
     expect(() => loadConfig({ PUBLIC_ORIGIN: 'http://localhost', DB_PASSWORD: 'x', DINGTALK_STREAM_ENABLED: 'true', DINGTALK_CLIENT_SECRET: 'y' })).toThrow('CorpId')
   })
+
+  it('loads WPS WebOffice identifiers only when its secret is configured', () => {
+    expect(() => loadConfig({
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab', DB_PASSWORD: 'x',
+      WPS_WEBOFFICE_ENABLED: 'true', WPS_APP_ID: 'SX20260918QZNBYG'
+    })).toThrow('WPS_APP_SECRET')
+    const value = loadConfig({
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab', DB_PASSWORD: 'x',
+      WPS_WEBOFFICE_ENABLED: 'true', WPS_APP_ID: 'SX20260918QZNBYG', WPS_APP_SECRET: 'test-wps-secret'
+    })
+    expect(value.wps).toEqual({ enabled: true, appId: 'SX20260918QZNBYG', appSecret: 'test-wps-secret' })
+  })
   it('preserves and normalizes the public reverse-proxy path prefix', () => {
     const value = loadConfig({
       NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab/',

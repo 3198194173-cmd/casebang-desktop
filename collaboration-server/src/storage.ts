@@ -1,4 +1,4 @@
-import { access, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -23,6 +23,7 @@ export class PrivateStorage {
     }
   }
   async removeObject(key: string): Promise<void> { await rm(this.resolveObject(key), { force: true }) }
+  async objectSize(key: string): Promise<number> { return (await stat(this.resolveObject(key))).size }
   resolveObject(key: string): string {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9/_.-]{0,220}$/.test(key)) throw new Error('非法存储对象键')
     if (key.split('/').some((segment) => !segment || segment === '.' || segment === '..')) {

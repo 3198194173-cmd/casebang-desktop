@@ -6,10 +6,10 @@ import { join } from 'node:path'
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => 'C:\\CasebangTest') },
   net: { fetch: vi.fn() },
-  shell: { openPath: vi.fn(async () => '') }
+  shell: { openPath: vi.fn(async () => ''), openExternal: vi.fn(async () => undefined) }
 }))
 
-import { net } from 'electron'
+import { net, shell } from 'electron'
 import { CollaborationService } from '../src/main/modules/collaboration/collaboration-service'
 import type { SettingsRepository } from '../src/main/infrastructure/settings-repository'
 
@@ -91,5 +91,14 @@ describe('desktop collaboration service', () => {
     expect(JSON.parse(String(request?.[1]?.body))).toEqual(expect.objectContaining({
       action: 'claim', expectedVersion: 1, revision: 1
     }))
+  })
+
+  it('opens only the verified CASEBANG WebOffice editor address', async () => {
+    const workItemId = '30000000-0000-4000-8000-000000000001'
+    const editorUrl = `https://casebang.tech/collab/weboffice/editor?fileId=f30000000000040008000000000000001#token=test`
+    vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ editorUrl }), { status: 201 }))
+    await new CollaborationService(settings()).openOnlineWorkbook({ workItemId })
+    expect(net.fetch).toHaveBeenCalledWith(expect.stringContaining(`/work-items/${workItemId}/weboffice-session`), expect.objectContaining({ method: 'POST' }))
+    expect(shell.openExternal).toHaveBeenCalledWith(editorUrl)
   })
 })

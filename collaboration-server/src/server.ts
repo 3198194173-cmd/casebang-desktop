@@ -33,7 +33,7 @@ export function buildServer(config: ServerConfig, readiness: Readiness): Fastify
     taskHandoff: config.dingtalk.enabled,
     formalNumberAllocation: false,
     dingtalkStream: readiness.stream.enabled ? (readiness.stream.connected ? 'connected' : 'connecting') : 'disabled',
-    onlineMasterWrite: false,
+    onlineMasterWrite: config.wps.enabled,
     message: '中央服务基础已启动；未完成的能力不会显示为可用。'
   }))
   return app

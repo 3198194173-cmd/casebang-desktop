@@ -9,6 +9,8 @@ describe('same-host reverse-proxy deployment', () => {
     const environment = await readFile(resolve(root, 'deploy/collaboration.env.example'), 'utf8')
 
     expect(environment).toContain('PUBLIC_ORIGIN=https://casebang.tech/collab')
+    expect(environment).toContain('WPS_APP_ID=SX20260918QZNBYG')
+    expect(environment).toContain('WPS_WEBOFFICE_ENABLED=false')
     expect(snippet).toContain('location /collab/')
     expect(snippet).toContain('proxy_pass http://127.0.0.1:3100/;')
     expect(snippet).toContain('X-Forwarded-Prefix /collab')

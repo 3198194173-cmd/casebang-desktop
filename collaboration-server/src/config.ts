@@ -23,7 +23,11 @@ const environmentSchema = z.object({
   DINGTALK_CLIENT_ID: z.string().optional(),
   DINGTALK_AGENT_ID: z.string().optional(),
   DINGTALK_CLIENT_SECRET: z.string().optional(),
-  DINGTALK_CLIENT_SECRET_FILE: z.string().optional()
+  DINGTALK_CLIENT_SECRET_FILE: z.string().optional(),
+  WPS_WEBOFFICE_ENABLED: booleanValue,
+  WPS_APP_ID: z.string().optional(),
+  WPS_APP_SECRET: z.string().optional(),
+  WPS_APP_SECRET_FILE: z.string().optional()
 }).passthrough()
 
 export interface ServerConfig {
@@ -35,6 +39,7 @@ export interface ServerConfig {
   migrationsRoot: string
   database: { host: string; port: number; name: string; user: string; password: string; ssl: boolean }
   dingtalk: { enabled: boolean; corpId: string; clientId: string; agentId: string; clientSecret: string }
+  wps: { enabled: boolean; appId: string; appSecret: string }
 }
 
 function secret(name: string, direct: string | undefined, file: string | undefined, production: boolean): string {
@@ -59,6 +64,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
   if (dingtalkRequired && !(value.DINGTALK_CORP_ID && value.DINGTALK_CLIENT_ID && value.DINGTALK_AGENT_ID)) {
     throw new Error('启用钉钉 Stream 时必须配置 CorpId、ClientId 和 AgentId')
   }
+  const wpsRequired = value.WPS_WEBOFFICE_ENABLED
+  const wpsAppSecret = wpsRequired
+    ? secret('WPS_APP_SECRET', value.WPS_APP_SECRET, value.WPS_APP_SECRET_FILE, production)
+    : ''
+  if (wpsRequired && !value.WPS_APP_ID) throw new Error('启用 WPS WebOffice 时必须配置 AppID')
   return {
     environment: value.NODE_ENV,
     host: value.HOST,
@@ -73,6 +83,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
       clientId: value.DINGTALK_CLIENT_ID ?? '',
       agentId: value.DINGTALK_AGENT_ID ?? '',
       clientSecret: dingtalkClientSecret
+    },
+    wps: {
+      enabled: wpsRequired,
+      appId: value.WPS_APP_ID ?? '',
+      appSecret: wpsAppSecret
     }
   }
 }

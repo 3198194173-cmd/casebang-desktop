@@ -6,6 +6,7 @@ import { PrivateStorage } from './storage.js'
 import { DingTalkStreamBridge } from './stream-bridge.js'
 import { registerAuthRoutes } from './auth.js'
 import { registerCollaborationRoutes } from './collaboration.js'
+import { registerWebOfficeRoutes } from './weboffice.js'
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
   })
   registerAuthRoutes(app, config, pool)
   registerCollaborationRoutes(app, pool, storage)
+  registerWebOfficeRoutes(app, config, pool, storage)
   const close = async (signal: string): Promise<void> => {
     app.log.info({ signal }, '正在停止中央协同服务')
     stream.stop()

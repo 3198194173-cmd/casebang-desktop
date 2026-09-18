@@ -40,9 +40,11 @@ services:
       DB_USER: casebang
       DB_PASSWORD_FILE: /run/secrets/postgres_password
       DINGTALK_CLIENT_SECRET_FILE: /run/secrets/dingtalk_client_secret
+      WPS_APP_SECRET_FILE: /run/secrets/wps_app_secret
     secrets:
       - postgres_password
       - dingtalk_client_secret
+      - wps_app_secret
     volumes:
       - collaboration_workbooks:/data/workbooks
     ports:
@@ -68,3 +70,5 @@ secrets:
     file: ./deploy/secrets/postgres_password.txt
   dingtalk_client_secret:
     file: ./deploy/secrets/dingtalk_client_secret.txt
+  wps_app_secret:
+    file: ./deploy/secrets/wps_app_secret.txt

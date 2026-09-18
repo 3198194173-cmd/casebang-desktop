@@ -6,10 +6,12 @@ import { z } from 'zod'
 import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem } from '@shared/contracts'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service'
+import { logger } from '@main/infrastructure/logger'
 import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
 
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
+const WORKBOOK_UPLOAD_TIMEOUT_MS = 15 * 60_000
 const publishSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1).max(240),
@@ -39,6 +41,7 @@ interface MembersResponse { members?: CollaborationMember[] }
 interface WorkItemsResponse { items?: CollaborationWorkItem[] }
 interface SubmitResponse { item?: CollaborationWorkItem; duplicate?: boolean; error?: string }
 interface WebOfficeSessionResponse { editorUrl?: string }
+interface RequestTiming { timeoutMs?: number; timeoutMessage?: string }
 
 export class CollaborationService {
   constructor(private readonly settings: SettingsRepository) {}
@@ -70,13 +73,26 @@ export class CollaborationService {
       sha256,
       requestKey: randomUUID()
     })).toString('base64url')
+    logger.info('Uploading shared workbook', {
+      fileName: path.basename(value.path),
+      sizeBytes: details.size,
+      timeoutMs: WORKBOOK_UPLOAD_TIMEOUT_MS
+    })
     const response = await this.request('/api/v1/collaboration/work-items', {
       method: 'POST',
       headers: { 'content-type': XLSX_CONTENT_TYPE, 'x-casebang-metadata': metadata },
       body: bytes
+    }, {
+      timeoutMs: WORKBOOK_UPLOAD_TIMEOUT_MS,
+      timeoutMessage: '工作簿上传超过 15 分钟，请检查网络后重试。'
     })
     const body = await response.json() as SubmitResponse
     if (!body.item) throw new Error(serverError(body.error))
+    logger.info('Shared workbook upload completed', {
+      workItemId: body.item.id,
+      sizeBytes: details.size,
+      duplicate: body.duplicate ?? false
+    })
     return { item: body.item, duplicate: body.duplicate ?? false }
   }
 
@@ -101,6 +117,9 @@ export class CollaborationService {
       method: 'POST',
       headers: { 'content-type': XLSX_CONTENT_TYPE, 'x-casebang-metadata': metadata },
       body: bytes
+    }, {
+      timeoutMs: WORKBOOK_UPLOAD_TIMEOUT_MS,
+      timeoutMessage: '工作簿上传超过 15 分钟，请检查网络后重试。'
     })
     const body = await response.json() as SubmitResponse
     if (!body.item) throw new Error(serverError(body.error))
@@ -155,17 +174,27 @@ export class CollaborationService {
     return { opened: true }
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+  private async request(path: string, init: RequestInit = {}, timing: RequestTiming = {}): Promise<Response> {
     const session = await this.settings.getCollaborationSession()
     if (!session) throw new Error('请先登录钉钉账号。')
     let response: Response
+    const timeoutMs = timing.timeoutMs ?? (init.method === 'POST' ? 120_000 : 30_000)
+    const signal = AbortSignal.timeout(timeoutMs)
     try {
       response = await net.fetch(`${COLLABORATION_ORIGIN}${path}`, {
         ...init,
         headers: { ...Object.fromEntries(new Headers(init.headers).entries()), authorization: `Bearer ${session.sessionToken}` },
-        signal: AbortSignal.timeout(init.method === 'POST' ? 120_000 : 30_000)
+        signal
       })
-    } catch {
+    } catch (reason) {
+      logger.warn('Collaboration request failed', {
+        method: init.method ?? 'GET',
+        path,
+        timeoutMs,
+        timedOut: signal.aborted,
+        error: reason instanceof Error ? reason.message : String(reason)
+      })
+      if (signal.aborted && timing.timeoutMessage) throw new Error(timing.timeoutMessage)
       throw new Error('无法连接协同服务，请检查网络后重试。')
     }
     if (response.status === 401) {

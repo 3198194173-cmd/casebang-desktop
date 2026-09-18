@@ -65,15 +65,18 @@ describe('desktop collaboration service', () => {
     await writeFile(workbookPath, Buffer.from('xlsx-test'))
     const item = { id: '30000000-0000-4000-8000-000000000001', title: '新建产品表.xlsx', state: 'PENDING_PROCESSING', sourceWorkflow: 'new-series', version: 1, revision: 1, createdAt: '2026-09-17T00:00:00.000Z', origin: { id: 'user-1', displayName: '建表人' }, assignee: { id: 'user-2', displayName: '加工人' } }
     vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ item, duplicate: false }), { status: 201 }))
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
     try {
       const result = await new CollaborationService(settings()).publishWorkbook({ path: workbookPath, title: '新建产品表.xlsx', sourceWorkflow: 'new-series' })
       expect(result.item.state).toBe('PENDING_PROCESSING')
+      expect(timeout).toHaveBeenCalledWith(15 * 60_000)
       const request = vi.mocked(net.fetch).mock.calls[0]
       const headers = request?.[1]?.headers as Record<string, string>
       const metadata = JSON.parse(Buffer.from(headers['x-casebang-metadata']!, 'base64url').toString('utf8'))
       expect(metadata).toEqual(expect.objectContaining({ sourceWorkflow: 'new-series', title: '新建产品表.xlsx' }))
       expect(metadata).not.toHaveProperty('assigneeId')
     } finally {
+      timeout.mockRestore()
       await rm(directory, { recursive: true, force: true })
     }
   })

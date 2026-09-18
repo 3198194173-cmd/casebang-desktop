@@ -30,12 +30,17 @@ interface WorksheetDrawing {
   nextDrawingIndex: number
 }
 
+const EMBEDDED_IMAGE_SCALE = 2
+const MIN_EMBEDDED_IMAGE_DIMENSION = 320
+const MAX_EMBEDDED_IMAGE_DIMENSION = 1600
+
 export async function exportFormatPreservingWorkbook(sourcePath: string, destinationPath: string, workbook: PreviewWorkbook, input: ExportGenerationWorkbookInput): Promise<void> {
   const entries = await readOoxmlPackage(sourcePath)
   let workbookXml = requireText(entries, 'xl/workbook.xml')
   let relationshipsXml = requireText(entries, 'xl/_rels/workbook.xml.rels')
   const sheetPaths = parseSheetPaths(workbookXml, relationshipsXml)
   const cropById = new Map(input.imageSource.crops.map((crop) => [crop.id, crop]))
+  const optimizedMedia = new Map<string, string>()
   let mediaIndex = nextPartIndex(entries, /^xl\/media\/image(\d+)\./i)
   let drawingIndex = nextPartIndex(entries, /^xl\/drawings\/drawing(\d+)\.xml$/i)
   const mappingStyles = workbook.id === 'product-image-mapping' ? addMappingStyles(entries) : null
@@ -106,12 +111,23 @@ export async function exportFormatPreservingWorkbook(sourcePath: string, destina
       let shapeId = drawing.nextShapeId
       for (const [index, write] of imageWrites.entries()) {
         const crop = cropById.get(write.cell.cropId!)!
-        const imagePath = `xl/media/image${mediaIndex++}.png`
-        const image = await sharp(input.imageSource.path).extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height }).png().toBuffer()
-        addEntry(entries, imagePath, image)
+        const target = resolveImagePlacement(write, sheetSpec)
+        const maximumWidth = embeddedImageDimension(target.imageWidthPx)
+        const maximumHeight = embeddedImageDimension(target.imageHeightPx)
+        const mediaKey = `${crop.id}:${crop.x}:${crop.y}:${crop.width}:${crop.height}:${maximumWidth}:${maximumHeight}`
+        let imagePath = optimizedMedia.get(mediaKey)
+        if (!imagePath) {
+          imagePath = `xl/media/image${mediaIndex++}.png`
+          const image = await sharp(input.imageSource.path)
+            .extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height })
+            .resize({ width: maximumWidth, height: maximumHeight, fit: 'inside', withoutEnlargement: true })
+            .png({ compressionLevel: 9, adaptiveFiltering: true })
+            .toBuffer()
+          addEntry(entries, imagePath, image)
+          optimizedMedia.set(mediaKey, imagePath)
+        }
         const relationshipId = `rId${nextRelationshipNumber(drawingRelationships)}`
         drawingRelationships.push(`<Relationship Id="${relationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${posix.basename(imagePath)}"/>`)
-        const target = resolveImagePlacement(write, sheetSpec)
         anchors.push(imageAnchor(
           shapeId++,
           target.startColumn,
@@ -149,6 +165,10 @@ export async function exportFormatPreservingWorkbook(sourcePath: string, destina
   replacePackageText(entries, 'xl/workbook.xml', recalculatingWorkbookXml)
   replacePackageText(entries, 'xl/_rels/workbook.xml.rels', relationshipsXml)
   await writeOoxmlPackage(destinationPath, entries)
+}
+
+function embeddedImageDimension(displayPixels: number): number {
+  return Math.min(MAX_EMBEDDED_IMAGE_DIMENSION, Math.max(MIN_EMBEDDED_IMAGE_DIMENSION, Math.ceil(displayPixels * EMBEDDED_IMAGE_SCALE)))
 }
 
 function collectWrites(sheet: PreviewSheet): Array<{ row: number; columnIndex: number; cell: PreviewCell }> {

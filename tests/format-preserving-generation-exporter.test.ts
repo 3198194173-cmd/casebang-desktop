@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, posix, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import sharp from 'sharp'
 import { exportFormatPreservingWorkbook } from '../src/main/modules/tasks/format-preserving-generation-exporter'
 import { findPackageText, readOoxmlPackage } from '../src/main/modules/spreadsheet/ooxml-package'
 import type { PreviewWorkbook } from '../src/shared/generation-contracts'
@@ -52,7 +53,7 @@ describe('format preserving generation exporter', () => {
             barcodeReference: join(sourceDirectory, 'A条码参考-260116(1).xlsx'),
             domesticNaming: join(sourceDirectory, '国内命名-260407(1).xlsx')
           },
-          imageSource: { path: masterImagePath, crops: [{ id: 'overview', x: 0, y: 0, width: 100, height: 100 }] },
+          imageSource: { path: masterImagePath, crops: [{ id: 'overview', x: 0, y: 0, width: 3800, height: 2642 }] },
           workspace: { title: 'test', generatedAt: new Date().toISOString(), workbooks: [], checks: [] }
         }
       )
@@ -80,7 +81,19 @@ describe('format preserving generation exporter', () => {
       expect(barcodeXml).toMatch(/<c\b[^>]*r="E2"[^>]*>\s*<v>89<\/v>\s*<\/c>/i)
       expect(barcodeXml).toMatch(/<c\b[^>]*r="F2"[^>]*>\s*<v>19\.99<\/v>\s*<\/c>/i)
       expect(barcodeXml).not.toMatch(/<c\b[^>]*r="[JK]\d+"/i)
-      expect(findPackageText(entries, 'xl/drawings/drawing4.xml') ?? findPackageText(entries, 'xl/drawings/drawing1.xml') ?? '').toContain('CASEBANG 图片')
+      const drawingEntry = entries.find((entry) => /^xl\/drawings\/drawing\d+\.xml$/i.test(entry.path) && entry.buffer?.toString().includes('CASEBANG 图片'))!
+      const drawingXml = drawingEntry.buffer!.toString()
+      expect(drawingXml).toContain('CASEBANG 图片')
+      const drawingRels = findPackageText(entries, `${posix.dirname(drawingEntry.path)}/_rels/${posix.basename(drawingEntry.path)}.rels`) ?? ''
+      const relationshipIds = [...drawingXml.matchAll(/<xdr:oneCellAnchor>[\s\S]*?<xdr:cNvPr\b[^>]*name="CASEBANG 图片[^>]*>[\s\S]*?<a:blip\b[^>]*r:embed="([^"]+)"[\s\S]*?<\/xdr:oneCellAnchor>/g)].map((match) => match[1]!)
+      expect(relationshipIds).toHaveLength(2)
+      const targets = relationshipIds.map((id) => new RegExp(`<Relationship\\b[^>]*Id="${id}"[^>]*Target="([^"]+)"`).exec(drawingRels)?.[1]).filter(Boolean) as string[]
+      expect(new Set(targets).size).toBe(1)
+      const optimizedImage = entries.find((entry) => entry.path === posix.normalize(posix.join(posix.dirname(drawingEntry.path), targets[0]!)))?.buffer
+      expect(optimizedImage).toBeDefined()
+      const optimizedMetadata = await sharp(optimizedImage!).metadata()
+      expect(optimizedMetadata.width).toBeLessThanOrEqual(320)
+      expect(optimizedMetadata.height).toBeLessThanOrEqual(320)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

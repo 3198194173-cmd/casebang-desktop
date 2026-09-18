@@ -9,7 +9,7 @@ import type { PrivateStorage } from './storage.js'
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const BINARY_CONTENT_TYPE = 'application/octet-stream'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
-const UPLOAD_CHUNK_SIZE = 256 * 1024
+const UPLOAD_CHUNK_SIZE = 64 * 1024
 const UPLOAD_TTL_MS = 30 * 60 * 1000
 const metadataSchema = z.object({
   assigneeId: z.string().uuid().optional(),

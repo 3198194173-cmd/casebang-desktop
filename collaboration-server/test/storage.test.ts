@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { PrivateStorage } from '../src/storage.js'
+import { PrivateStorage, normalizeNotFound } from '../src/storage.js'
 
 const temporary: string[] = []
 afterEach(async () => { for (const path of temporary.splice(0)) await rm(path, { recursive: true, force: true }) })
@@ -20,5 +20,15 @@ describe('private workbook storage', () => {
     for (const value of ['../secret', '/absolute', 'a/../../secret', 'a?.txt', 'a//b', '']) {
       expect(() => storage.resolveObject(value)).toThrow()
     }
+  })
+  it('normalizes both direct and nested COS not-found responses', () => {
+    for (const error of [
+      { code: 'NoSuchKey' },
+      { statusCode: 404, error: { Code: 'NoSuchResource' } }
+    ]) {
+      expect(normalizeNotFound(error)).toMatchObject({ code: 'ENOENT' })
+    }
+    const denied = { statusCode: 403, error: { Code: 'AccessDenied' } }
+    expect(normalizeNotFound(denied)).toBe(denied)
   })
 })

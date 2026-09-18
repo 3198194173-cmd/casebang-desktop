@@ -220,11 +220,22 @@ export class PrivateStorage {
   }
 }
 
-function normalizeNotFound(error: unknown): unknown {
-  if (error && typeof error === 'object' && 'code' in error && ['NoSuchKey', 'NotFound'].includes(String(error.code))) {
+export function normalizeNotFound(error: unknown): unknown {
+  if (isCosNotFound(error)) {
     const normalized = new Error('存储对象不存在') as NodeJS.ErrnoException
     normalized.code = 'ENOENT'
     return normalized
   }
   return error
+}
+
+function isCosNotFound(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const value = error as Record<string, unknown>
+  const nested = value.error && typeof value.error === 'object'
+    ? value.error as Record<string, unknown>
+    : undefined
+  const code = String(value.code ?? nested?.Code ?? '')
+  const statusCode = Number(value.statusCode ?? nested?.StatusCode)
+  return statusCode === 404 || ['NoSuchKey', 'NoSuchResource', 'NotFound'].includes(code)
 }

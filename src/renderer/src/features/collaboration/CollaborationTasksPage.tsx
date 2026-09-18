@@ -71,11 +71,11 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert success">{message}</div>}
     <section className="collaboration-list">
-      {!busy && !items.length ? <div className="collaboration-empty"><strong>暂无工作簿记录</strong><p>上游生成新建表并建立中央记录后，双方会在这里看到同一条记录。</p></div> : items.map(item => {
+      {!busy && !items.length ? <div className="collaboration-empty"><strong>暂无工作簿记录</strong><p>建立共享工作簿后，上游或下游身份都可以从这里打开并编辑。</p></div> : items.map(item => {
         const selectedStage = selectedStages[item.id] ?? item.state
         return <article key={item.id} className="collaboration-task-card">
           <div className="collaboration-state">{stateLabel(item.state)}</div>
-          <div className="collaboration-task-copy"><strong>{item.title}</strong><p>建表：{item.origin.displayName} · 加工：{item.assignee.displayName} · 工作簿修订 {item.revision}</p></div>
+          <div className="collaboration-task-copy"><strong>{item.title}</strong><p>创建人：{item.origin.displayName} · 最后编辑：{item.lastEditor?.displayName ?? item.origin.displayName} · {formatEditTime(item.lastEditedAt ?? item.createdAt)} · 修订 {item.revision}</p></div>
           <span>记录版本 {item.version}</span>
           {item.lastReason && <div className="collaboration-return-reason"><strong>阶段备注</strong><span>{item.lastReason}</span></div>}
           <div className="collaboration-stage-editor"><button className="secondary-button" disabled={activeItemId === item.id} onClick={() => void openOnline(item)}>{activeItemId === item.id ? '正在打开…' : 'WPS 在线编辑'}</button><label>当前进度<select value={selectedStage} onChange={event => setSelectedStages(current => ({ ...current, [item.id]: event.target.value }))}>{STAGES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="primary-button" disabled={activeItemId === item.id || selectedStage === item.state} onClick={() => void updateStage(item)}>{activeItemId === item.id ? '保存中…' : '保存阶段'}</button></div>
@@ -88,4 +88,11 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
 
 function stateLabel(state: string): string {
   return STAGES.find(([value]) => value === state)?.[1] ?? state
+}
+
+function formatEditTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).format(date)
 }

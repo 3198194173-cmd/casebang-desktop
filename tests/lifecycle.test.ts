@@ -108,6 +108,15 @@ describe('server transition guards', () => {
     expect(() => transitionWorkItem(item, { ...command, revision: 2 }, { fileVerified: true })).toThrow('版本')
     expect(transitionWorkItem(item, command, { fileVerified: true })).toMatchObject({ state: 'PENDING_PROCESSING', version: 2 })
   })
+  it('allows one account to test both workflow sides after switching business tools', () => {
+    const singleAccount = { ...item, originId: 'tester', assigneeId: 'tester' }
+    const submitted = transitionWorkItem(singleAccount, { ...command, actorId: 'tester' }, { fileVerified: true })
+    expect(submitted.state).toBe('PENDING_PROCESSING')
+    const claimed = transitionWorkItem(submitted, {
+      ...command, actorId: 'tester', action: 'claim', expectedVersion: submitted.version
+    }, {})
+    expect(claimed.state).toBe('PROCESSING')
+  })
   it('prevents passing unfinished artwork and requires a reason for returns', () => {
     const processing = { ...item, state: 'PROCESSING' as const }
     expect(() => transitionWorkItem(processing, { ...command, actorId: 'processor', action: 'return-origin' }, { codesVerified: true })).toThrow('图档')

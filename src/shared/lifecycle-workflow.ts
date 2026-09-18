@@ -7,7 +7,6 @@ export function transitionWorkItem(item: WorkItemState, input: {
 }, evidence: { fileVerified?: boolean; codesVerified?: boolean; artworkVerified?: boolean; masterVersionVerified?: boolean; remoteReadbackVerified?: boolean; serviceActor?: boolean }): WorkItemState {
   if (input.tenantId !== item.tenantId) throw new Error('企业范围不匹配')
   if (input.expectedVersion !== item.version || input.revision !== item.revision) throw new Error('版本冲突，请刷新任务')
-  if (item.originId === item.assigneeId) throw new Error('建表人与处理人必须是不同账号')
   const rules: Record<WorkAction, { from: WorkState[]; to: WorkState; actor: 'origin' | 'assignee' | 'service' }> = {
     submit: { from: ['DRAFT', 'NEEDS_SOURCE_FIX'], to: 'PENDING_PROCESSING', actor: 'origin' },
     claim: { from: ['PENDING_PROCESSING', 'REVISION_REQUESTED'], to: 'PROCESSING', actor: 'assignee' },

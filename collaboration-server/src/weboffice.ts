@@ -285,11 +285,13 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
           { revision: nextRevision, sha256: upload.uploaded_digest }]
       )
       const destination = session.user_id === current.origin_id ? current.assignee_id : current.origin_id
-      await client.query(
-        `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload) VALUES($1,$2,$3,$4,$5)`,
-        [randomUUID(), session.organization_id, eventId, destination,
-          { type: 'workbook-revision-saved', workItemId: file.id, title: current.title, revision: nextRevision }]
-      )
+      if (destination !== session.user_id) {
+        await client.query(
+          `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload) VALUES($1,$2,$3,$4,$5)`,
+          [randomUUID(), session.organization_id, eventId, destination,
+            { type: 'workbook-revision-saved', workItemId: file.id, title: current.title, revision: nextRevision }]
+        )
+      }
       await client.query(
         `UPDATE weboffice_uploads SET status='completed',completed_revision=$2,completed_at=now() WHERE id=$1`,
         [upload.id, nextRevision]

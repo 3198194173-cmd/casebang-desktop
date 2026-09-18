@@ -72,38 +72,55 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
-  it('requires one previously logged-in downstream account when an upstream workbook enters the shared flow', async () => {
+  it('lets one account create and own a shared workbook without a downstream account', async () => {
     const workbook = Buffer.from('workbook')
+    const originId = '10000000-0000-4000-8000-000000000001'
     const metadata = {
       sourceWorkflow: 'new-series', sourceId: 'source-1', title: '新建产品表.xlsx',
       sha256: createHash('sha256').update(workbook).digest('hex'), requestKey: '40000000-0000-4000-8000-000000000001'
     }
+    const stored = {
+      id: '30000000-0000-4000-8000-000000000001', title: metadata.title,
+      state: 'PENDING_PROCESSING', source_workflow: metadata.sourceWorkflow, version: 1, revision: 1,
+      created_at: new Date('2026-09-18T00:00:00Z'), origin_id: originId, origin_name: '建表人',
+      assignee_id: originId, assignee_name: '建表人'
+    }
     const query = vi.fn()
-      .mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '建表人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
+      .mockResolvedValueOnce(queryResult([{ id: originId, display_name: '建表人', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
       .mockResolvedValueOnce(queryResult([]))
       .mockResolvedValueOnce(queryResult([]))
       .mockResolvedValueOnce(queryResult([]))
+      .mockResolvedValueOnce(queryResult([stored]))
+    const clientQuery = vi.fn().mockResolvedValue(queryResult([]))
     const app = Fastify()
-    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, { writeObject: vi.fn() } as unknown as PrivateStorage)
+    registerCollaborationRoutes(app, {
+      query, connect: vi.fn(async () => ({ query: clientQuery, release: vi.fn() }))
+    } as unknown as pg.Pool, { writeObject: vi.fn(), removeObject: vi.fn() } as unknown as PrivateStorage)
     const response = await app.inject({
       method: 'POST', url: '/api/v1/collaboration/work-items',
       headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'x-casebang-metadata': Buffer.from(JSON.stringify(metadata)).toString('base64url') },
       payload: workbook
     })
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toEqual({ error: 'downstream_member_required' })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toEqual({ item: expect.objectContaining({
+      origin: { id: originId, displayName: '建表人' },
+      assignee: { id: originId, displayName: '建表人' },
+      lastEditor: { id: originId, displayName: '建表人' }
+    }), duplicate: false })
+    const insertWorkItem = clientQuery.mock.calls.find(call => String(call[0]).includes('INSERT INTO work_items'))
+    expect(insertWorkItem?.[1]?.[2]).toBe(originId)
+    expect(insertWorkItem?.[1]?.[3]).toBe(originId)
+    expect(clientQuery.mock.calls.some(call => String(call[0]).includes('INSERT INTO outbox_events'))).toBe(false)
     await app.close()
   })
 
-  it('rejects a chunked upload before storing anything when no downstream account exists', async () => {
+  it('prepares a chunked upload without requiring a downstream account', async () => {
     const workbook = Buffer.from('workbook')
     const actor = {
       id: '10000000-0000-4000-8000-000000000001', display_name: '建表人', avatar_url: null,
       organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream'
     }
-    const query = vi.fn()
-      .mockResolvedValueOnce(queryResult([actor]))
-      .mockResolvedValueOnce(queryResult([]))
+    const query = vi.fn().mockResolvedValueOnce(queryResult([actor]))
     const storage = { writeObject: vi.fn() }
     const app = Fastify()
     registerCollaborationRoutes(app, { query } as unknown as pg.Pool, storage as unknown as PrivateStorage)
@@ -117,9 +134,9 @@ describe('collaboration identity boundaries', () => {
       }
     })
 
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toEqual({ error: 'downstream_member_required' })
-    expect(storage.writeObject).not.toHaveBeenCalled()
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toEqual(expect.objectContaining({ uploadId: expect.any(String), totalChunks: 1 }))
+    expect(storage.writeObject).toHaveBeenCalledOnce()
     await app.close()
   })
 
@@ -184,7 +201,6 @@ describe('collaboration identity boundaries', () => {
     }
     const query = vi.fn()
       .mockResolvedValueOnce(queryResult([actor]))
-      .mockResolvedValueOnce(queryResult([{ id: assigneeId }]))
       .mockResolvedValueOnce(queryResult([actor]))
       .mockResolvedValueOnce(queryResult([actor]))
       .mockResolvedValueOnce(queryResult([]))

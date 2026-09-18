@@ -110,7 +110,7 @@ export function SettingsPage(): React.JSX.Element {
           <span className="eyebrow">ACCOUNT ACCESS</span>
           <h3>账号与组织登录</h3>
           {account?.user
-            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>{account.user.businessRole === 'upstream' ? '上游建表' : '下游加工'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 上下游工具不混用，但双方共同查看工作簿记录。</p></>
+            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>{account.user.businessRole === 'upstream' ? '上游建表' : '下游加工'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 退出后可重新选择业务端；业务端只切换工具，不限制共享工作簿编辑。</p></>
             : <><p>{account?.message ?? '正在读取钉钉账号状态…'} 登录前请选择该账号使用的业务端。</p><div className="business-role-picker">
               <label className={loginRole === 'upstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} /><span><strong>上游建表</strong><small>建表、提交、复核、合并</small></span></label>
               <label className={loginRole === 'downstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} /><span><strong>下游加工</strong><small>物料码、69 码和图档核对</small></span></label>

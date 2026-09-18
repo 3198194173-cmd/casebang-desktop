@@ -56,6 +56,9 @@ interface WorkItemRow {
   origin_name: string
   assignee_id: string
   assignee_name: string
+  modifier_id?: string
+  modifier_name?: string
+  revision_created_at?: Date
   last_action?: string | null
   last_reason?: string | null
   last_event_at?: Date | null
@@ -98,11 +101,17 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
               w.origin_id,origin.display_name AS origin_name,
               w.assignee_id,assignee.display_name AS assignee_name,
+              revision.created_by AS modifier_id,modifier.display_name AS modifier_name,
+              revision.created_at AS revision_created_at,
               latest.action AS last_action,latest.payload->>'reason' AS last_reason,
               latest.created_at AS last_event_at
        FROM work_items w
        JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
        JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
+       JOIN workbook_revisions revision
+         ON revision.organization_id=w.organization_id AND revision.work_item_id=w.id AND revision.revision=w.revision
+       JOIN app_users modifier
+         ON modifier.organization_id=revision.organization_id AND modifier.id=revision.created_by
        LEFT JOIN LATERAL (
          SELECT action,payload,created_at FROM work_item_events event
          WHERE event.organization_id=w.organization_id AND event.work_item_id=w.id
@@ -120,21 +129,6 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     if (!actor) return
     const input = uploadPrepareSchema.safeParse(request.body)
     if (!input.success) return reply.code(400).send({ error: 'invalid_upload_request' })
-    if (input.data.assigneeId) {
-      const assignee = await pool.query<{ id: string }>(
-        `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND id<>$3 AND active=true`,
-        [actor.organization_id, input.data.assigneeId, actor.id]
-      )
-      if (!assignee.rowCount) return reply.code(400).send({ error: 'invalid_assignee' })
-    } else {
-      const downstream = await pool.query<{ id: string }>(
-        `SELECT id FROM app_users
-         WHERE organization_id=$1 AND id<>$2 AND active=true AND business_role='downstream'
-         ORDER BY last_login_at DESC LIMIT 1`,
-        [actor.organization_id, actor.id]
-      )
-      if (!downstream.rowCount) return reply.code(409).send({ error: 'downstream_member_required' })
-    }
     const { size, ...metadata } = input.data
     const uploadId = randomUUID()
     const totalChunks = Math.ceil(size / UPLOAD_CHUNK_SIZE)
@@ -335,14 +329,16 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
         const destinationUserId = input.data.action === 'return-source'
           ? item.origin_id
           : actor.id === item.origin_id ? item.assignee_id : item.origin_id
-        await client.query(
-          `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
-           VALUES($1,$2,$3,$4,$5)`,
-          [randomUUID(), actor.organization_id, eventId, destinationUserId,
-            input.data.action === 'return-source'
-              ? { type: 'work-item-returned', workItemId: item.id, title: item.title, reason: input.data.reason?.trim() }
-              : { type: 'work-item-stage-updated', workItemId: item.id, title: item.title, state: nextState }]
-        )
+        if (destinationUserId !== actor.id) {
+          await client.query(
+            `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
+             VALUES($1,$2,$3,$4,$5)`,
+            [randomUUID(), actor.organization_id, eventId, destinationUserId,
+              input.data.action === 'return-source'
+                ? { type: 'work-item-returned', workItemId: item.id, title: item.title, reason: input.data.reason?.trim() }
+                : { type: 'work-item-stage-updated', workItemId: item.id, title: item.title, state: nextState }]
+          )
+        }
       }
       await client.query('COMMIT')
       const updated = await loadWorkItem(pool, actor.organization_id, item.id)
@@ -400,11 +396,14 @@ async function submitWorkbook(
   const existing = await pool.query<WorkItemRow>(
     `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
             w.origin_id,origin.display_name AS origin_name,
-            w.assignee_id,assignee.display_name AS assignee_name
+            w.assignee_id,assignee.display_name AS assignee_name,
+            r.created_by AS modifier_id,modifier.display_name AS modifier_name,
+            r.created_at AS revision_created_at
      FROM work_items w
      JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
      JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
      JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id AND r.revision=w.revision
+     JOIN app_users modifier ON modifier.organization_id=r.organization_id AND modifier.id=r.created_by
      WHERE w.organization_id=$1 AND w.source_workflow=$2 AND w.source_id=$3 AND r.sha256=$4`,
     [actor.organization_id, metadata.sourceWorkflow, metadata.sourceId, metadata.sha256]
   )
@@ -426,7 +425,7 @@ async function submitWorkbook(
       `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND active=true`,
       [actor.organization_id, assigneeId]
     )
-    if (!assignee.rowCount || assigneeId === actor.id) return { status: 400, body: { error: 'invalid_assignee' } }
+    if (!assignee.rowCount) return { status: 400, body: { error: 'invalid_assignee' } }
   } else {
     const downstream = await pool.query<{ id: string }>(
       `SELECT id FROM app_users
@@ -434,8 +433,7 @@ async function submitWorkbook(
        ORDER BY last_login_at DESC LIMIT 1`,
       [actor.organization_id, actor.id]
     )
-    assigneeId = downstream.rows[0]?.id
-    if (!assigneeId) return { status: 409, body: { error: 'downstream_member_required' } }
+    assigneeId = downstream.rows[0]?.id ?? actor.id
   }
 
   const workItemId = randomUUID()
@@ -465,12 +463,14 @@ async function submitWorkbook(
         createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
         { assigneeId, revision: 1, sha256: metadata.sha256 }]
     )
-    await client.query(
-      `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
-       VALUES($1,$2,$3,$4,$5)`,
-      [randomUUID(), actor.organization_id, eventId, assigneeId,
-        { type: 'workbook-published', workItemId, title: metadata.title, state: 'PENDING_PROCESSING' }]
-    )
+    if (assigneeId !== actor.id) {
+      await client.query(
+        `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload)
+         VALUES($1,$2,$3,$4,$5)`,
+        [randomUUID(), actor.organization_id, eventId, assigneeId,
+          { type: 'workbook-published', workItemId, title: metadata.title, state: 'PENDING_PROCESSING' }]
+      )
+    }
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK')
@@ -488,11 +488,17 @@ async function loadWorkItem(pool: pg.Pool, organizationId: string, id: string): 
     `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
             w.origin_id,origin.display_name AS origin_name,
             w.assignee_id,assignee.display_name AS assignee_name,
+            revision.created_by AS modifier_id,modifier.display_name AS modifier_name,
+            revision.created_at AS revision_created_at,
             latest.action AS last_action,latest.payload->>'reason' AS last_reason,
             latest.created_at AS last_event_at
      FROM work_items w
      JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
      JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
+     JOIN workbook_revisions revision
+       ON revision.organization_id=w.organization_id AND revision.work_item_id=w.id AND revision.revision=w.revision
+     JOIN app_users modifier
+       ON modifier.organization_id=revision.organization_id AND modifier.id=revision.created_by
      LEFT JOIN LATERAL (
        SELECT action,payload,created_at FROM work_item_events event
        WHERE event.organization_id=w.organization_id AND event.work_item_id=w.id
@@ -518,6 +524,8 @@ function publicWorkItem(row: WorkItemRow): object {
     lastReason: row.last_reason ?? null,
     lastEventAt: row.last_event_at?.toISOString() ?? null,
     origin: { id: row.origin_id, displayName: row.origin_name },
-    assignee: { id: row.assignee_id, displayName: row.assignee_name }
+    assignee: { id: row.assignee_id, displayName: row.assignee_name },
+    lastEditor: { id: row.modifier_id ?? row.origin_id, displayName: row.modifier_name ?? row.origin_name },
+    lastEditedAt: (row.revision_created_at ?? row.created_at).toISOString()
   }
 }

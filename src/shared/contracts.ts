@@ -174,6 +174,8 @@ export interface CollaborationWorkItem {
   lastEventAt: string | null
   origin: { id: string; displayName: string }
   assignee: { id: string; displayName: string }
+  lastEditor: { id: string; displayName: string }
+  lastEditedAt: string
 }
 
 export type CollaborationWorkAction = 'claim' | 'return-source' | 'update-stage'

@@ -9,7 +9,7 @@ import type { PrivateStorage } from './storage.js'
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const BINARY_CONTENT_TYPE = 'application/octet-stream'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
-const UPLOAD_CHUNK_SIZE = 512 * 1024
+const UPLOAD_CHUNK_SIZE = 256 * 1024
 const UPLOAD_TTL_MS = 30 * 60 * 1000
 const metadataSchema = z.object({
   assigneeId: z.string().uuid().optional(),
@@ -138,7 +138,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     return reply.code(201).header('cache-control', 'no-store').send({ uploadId, chunkSize: UPLOAD_CHUNK_SIZE, totalChunks })
   })
 
-  app.put('/api/v1/collaboration/workbook-uploads/:uploadId/chunks/:index', async (request, reply) => {
+  app.post('/api/v1/collaboration/workbook-uploads/:uploadId/chunks/:index', async (request, reply) => {
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
     const params = request.params as { uploadId?: string; index?: string }

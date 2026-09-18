@@ -11,7 +11,7 @@ import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
 
 const BINARY_CONTENT_TYPE = 'application/octet-stream'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
-const CHUNK_UPLOAD_TIMEOUT_MS = 90_000
+const CHUNK_UPLOAD_TIMEOUT_MS = 60_000
 const CHUNK_UPLOAD_ATTEMPTS = 3
 const publishSchema = z.object({
   path: z.string().trim().min(1),
@@ -49,7 +49,7 @@ interface UploadPrepareResponse {
 }
 const uploadPrepareResponseSchema = z.object({
   uploadId: z.string().uuid(),
-  chunkSize: z.number().int().positive().max(1024 * 1024),
+  chunkSize: z.number().int().positive().max(512 * 1024),
   totalChunks: z.number().int().positive()
 })
 interface WorkbookUploadMetadata {
@@ -215,7 +215,7 @@ export class CollaborationService {
       try {
         await this.request(
           `/api/v1/collaboration/workbook-uploads/${uploadId}/chunks/${index}`,
-          { method: 'PUT', headers: { 'content-type': BINARY_CONTENT_TYPE }, body: Uint8Array.from(chunk).buffer },
+          { method: 'POST', headers: { 'content-type': BINARY_CONTENT_TYPE }, body: Uint8Array.from(chunk).buffer },
           { timeoutMs: CHUNK_UPLOAD_TIMEOUT_MS, timeoutMessage: `工作簿第 ${index + 1} 个分块上传超时。` }
         )
         return

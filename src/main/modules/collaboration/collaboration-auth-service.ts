@@ -25,7 +25,6 @@ interface AccountResponse {
 }
 
 interface SessionStore {
-  getApplicationSettings(): Promise<{ allowNetworkFeatures: boolean }>
   getCollaborationSession(): Promise<CollaborationSession | null>
   setCollaborationSession(input: CollaborationSession): Promise<void>
   clearCollaborationSession(): Promise<void>
@@ -106,8 +105,6 @@ export class CollaborationAuthService {
   }
 
   private async performLogin(businessRole: BusinessRole): Promise<CollaborationAccountState> {
-    const application = await this.settings.getApplicationSettings()
-    if (!application.allowNetworkFeatures) throw new Error('联网功能已关闭，请先在系统设置中开启。')
     let startResponse: Response
     try {
       startResponse = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/start`, {
@@ -116,8 +113,8 @@ export class CollaborationAuthService {
         body: JSON.stringify({ businessRole }),
         signal: AbortSignal.timeout(12_000)
       })
-    } catch {
-      throw new Error('无法连接协同服务，请检查网络后重试。')
+    } catch (reason) {
+      throw new Error(connectionFailureMessage(reason))
     }
     if (!startResponse.ok) throw new Error(`协同服务暂时无法发起登录（HTTP ${startResponse.status}）`)
     const start = await startResponse.json() as LoginStartResponse
@@ -136,9 +133,9 @@ export class CollaborationAuthService {
           body: JSON.stringify({ attemptId: start.attemptId, pollToken: start.pollToken }),
           signal: AbortSignal.timeout(12_000)
         })
-      } catch {
+      } catch (reason) {
         consecutiveNetworkFailures += 1
-        if (consecutiveNetworkFailures >= 3) throw new Error('无法连接协同服务，请检查网络后重试。')
+        if (consecutiveNetworkFailures >= 3) throw new Error(connectionFailureMessage(reason))
         continue
       }
       consecutiveNetworkFailures = 0
@@ -186,6 +183,18 @@ function signedOut(): CollaborationAccountState {
 
 function signedIn(user: CollaborationUser): CollaborationAccountState {
   return { status: 'signed-in', user, message: '钉钉账号已连接。' }
+}
+
+function connectionFailureMessage(reason: unknown): string {
+  const candidate = reason as { message?: unknown; code?: unknown; errno?: unknown; cause?: { message?: unknown; code?: unknown; errno?: unknown } }
+  const detail = [candidate?.message, candidate?.code, candidate?.errno, candidate?.cause?.message, candidate?.cause?.code, candidate?.cause?.errno]
+    .filter(value => value !== undefined && value !== null)
+    .join(' ')
+    .toUpperCase()
+  if (detail.includes('ECONNRESET') || detail.includes('ERR_CONNECTION_CLOSED') || detail.includes('-100')) {
+    return '协同服务的 HTTPS 连接被中途关闭。这不是钉钉账号错误，请先检查 casebang.tech 的公网 HTTPS 连通性。'
+  }
+  return '无法连接协同服务，请检查网络后重试。'
 }
 
 function parseBusinessRole(value: unknown): BusinessRole {

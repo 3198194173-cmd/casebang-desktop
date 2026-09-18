@@ -12,12 +12,13 @@ import { SupplementPage } from '../features/supplement/SupplementPage'
 import { MaterialLifecyclePage } from '../features/lifecycle/MaterialLifecyclePage'
 import { useAccount } from './account-context'
 import { CollaborationTasksPage } from '../features/collaboration/CollaborationTasksPage'
+import { LoginGate } from './LoginGate'
 
 export function App(): React.JSX.Element {
   const [page, setPage] = useState<PageId>('dashboard')
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const { account, busy: accountBusy, error: accountError } = useAccount()
+  const { account, initialized: accountInitialized, busy: accountBusy, error: accountError } = useAccount()
   const businessRole = account?.user?.businessRole ?? null
   const visibleGroups = NAV_GROUPS.filter((group) => {
     if (group.id === 'overview' || group.id === 'system') return true
@@ -44,6 +45,8 @@ export function App(): React.JSX.Element {
     const visible = visibleGroups.some(group => group.items.some(item => item.id === page))
     if (!visible) setPage('dashboard')
   }, [businessRole, page])
+
+  if (!accountInitialized || account?.status !== 'signed-in') return <LoginGate />
 
   const renderPage = (): React.JSX.Element => {
     if (!snapshot) return <div className="loading-card">正在初始化应用…</div>
@@ -96,7 +99,7 @@ export function App(): React.JSX.Element {
           <div className="topbar-actions">
             <button className={`global-account ${account?.status ?? 'loading'}`} disabled={accountBusy} onClick={() => setPage('settings')}>
               <span>{account?.user?.displayName.slice(0, 1) ?? '钉'}</span>
-              <div><strong>{account?.user?.displayName ?? (accountBusy ? '等待登录确认…' : '登录钉钉')}</strong><small>{account?.status === 'signed-in' ? `${businessRole === 'upstream' ? '上游建表' : '下游加工'}` : account?.status === 'offline' ? '离线保留' : '选择业务端'}</small></div>
+              <div><strong>{account.user?.displayName}</strong><small>{businessRole === 'upstream' ? '上游建表' : '下游加工'}</small></div>
             </button>
             <div className="topbar-badge">Windows 桌面版</div>
           </div>

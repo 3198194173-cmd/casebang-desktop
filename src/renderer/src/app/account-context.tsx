@@ -4,6 +4,7 @@ import { desktopApi } from './desktop-api'
 
 interface AccountContextValue {
   account: CollaborationAccountState | null
+  initialized: boolean
   busy: boolean
   error: string | null
   refresh(): Promise<void>
@@ -15,12 +16,14 @@ const AccountContext = createContext<AccountContextValue | null>(null)
 
 export function AccountProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [account, setAccount] = useState<CollaborationAccountState | null>(null)
+  const [initialized, setInitialized] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = async (): Promise<void> => {
     try { setAccount(await desktopApi.account.get()); setError(null) }
     catch (reason) { setError(accountError(reason, '账号状态读取失败')) }
+    finally { setInitialized(true) }
   }
   useEffect(() => { void refresh() }, [])
 
@@ -36,7 +39,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }): Re
     catch (reason) { const message = accountError(reason, '退出登录失败'); setError(message); throw new Error(message) }
     finally { setBusy(false) }
   }
-  const value = useMemo(() => ({ account, busy, error, refresh, login, logout }), [account, busy, error])
+  const value = useMemo(() => ({ account, initialized, busy, error, refresh, login, logout }), [account, initialized, busy, error])
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>
 }
 

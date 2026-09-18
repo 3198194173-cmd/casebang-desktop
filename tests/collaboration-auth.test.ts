@@ -25,7 +25,6 @@ function response(body: unknown, status = 200): Response {
 function store(initial: CollaborationSession | null = null) {
   let session = initial
   return {
-    getApplicationSettings: vi.fn(async () => ({ allowNetworkFeatures: true })),
     getCollaborationSession: vi.fn(async () => session),
     setCollaborationSession: vi.fn(async (value: CollaborationSession) => { session = value }),
     clearCollaborationSession: vi.fn(async () => { session = null }),
@@ -74,6 +73,13 @@ describe('desktop DingTalk account login', () => {
 
     await expect(service.login('upstream')).rejects.toThrow('登录信息不完整')
     expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  it('explains a reset HTTPS connection before DingTalk authorization starts', async () => {
+    const reset = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }) })
+    const service = new CollaborationAuthService(store(), vi.fn(async () => { throw reset }), async () => undefined, async () => undefined)
+
+    await expect(service.login('upstream')).rejects.toThrow('HTTPS 连接被中途关闭')
   })
 
   it('keeps the verified user available offline and clears local login even if logout cannot reach the server', async () => {

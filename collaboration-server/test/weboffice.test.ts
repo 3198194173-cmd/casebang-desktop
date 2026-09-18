@@ -80,4 +80,33 @@ describe('WPS WebOffice gateway', () => {
     expect(response.json()).toEqual({ code: 0, message: '', data: expect.objectContaining({ id: fileId, name: '测试新建表.xlsx', version: 2, size: 12345 }) })
     await app.close()
   })
+
+  it('returns an explicit no-watermark response when the callback is enabled', async () => {
+    const workItemId = '30000000-0000-4000-8000-000000000001'
+    const fileId = 'f30000000000040008000000000000001'
+    const token = 't'.repeat(40)
+    const path = `/weboffice/v3/3rd/files/${fileId}/watermark`
+    const date = new Date().toUTCString()
+    const contentMd5 = createHash('md5').update(path).digest('hex')
+    const signature = createHash('sha1').update(`${config.wps.appSecret}${contentMd5}${date}`).digest('hex')
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([{ id: '40000000-0000-4000-8000-000000000001', organization_id: '20000000-0000-4000-8000-000000000001', work_item_id: workItemId, user_id: '10000000-0000-4000-8000-000000000001', display_name: '建表人', avatar_url: null }]))
+      .mockResolvedValueOnce(queryResult([{
+        id: workItemId, organization_id: '20000000-0000-4000-8000-000000000001', title: '测试新建表.xlsx', revision: 1, version: 1,
+        created_at: new Date(), origin_id: '10000000-0000-4000-8000-000000000001', assignee_id: '10000000-0000-4000-8000-000000000002',
+        object_key: 'org/item/revision-1.xlsx', sha256: 'a'.repeat(64), revision_created_at: new Date(), modifier_id: '10000000-0000-4000-8000-000000000001'
+      }]))
+    const app = Fastify()
+    registerWebOfficeRoutes(app, config, { query } as unknown as pg.Pool, {} as PrivateStorage)
+    const response = await app.inject({
+      method: 'GET', url: path,
+      headers: {
+        'x-app-id': config.wps.appId, 'x-weboffice-token': token, date, 'content-md5': contentMd5,
+        authorization: `WPS-2:${config.wps.appId}:${signature}`
+      }
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ code: 0, message: '', data: { type: 0 } })
+    await app.close()
+  })
 })

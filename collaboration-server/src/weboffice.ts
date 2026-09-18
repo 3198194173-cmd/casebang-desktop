@@ -149,6 +149,14 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
     })
   })
 
+  app.get('/weboffice/v3/3rd/files/:fileId/watermark', async (request, reply) => {
+    const session = await callbackSession(request, reply, config, pool)
+    if (!session) return
+    const file = await callbackFile(request, reply, pool, session)
+    if (!file) return
+    return wpsSuccess(reply, { type: 0 })
+  })
+
   const usersCallback = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => {
     const session = await callbackSession(request, reply, config, pool)
     if (!session) return

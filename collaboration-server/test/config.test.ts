@@ -51,4 +51,20 @@ describe('central service configuration', () => {
     })
     expect(value.publicOrigin).toBe('https://collab.casebang.tech')
   })
+
+  it('loads COS identifiers and secrets only when direct storage is enabled', () => {
+    expect(() => loadConfig({
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://collab.casebang.tech', DB_PASSWORD: 'x',
+      COS_STORAGE_ENABLED: 'true', COS_BUCKET: 'casebang-workbooks-1417690479', COS_REGION: 'ap-guangzhou'
+    })).toThrow('COS_SECRET_ID')
+    const value = loadConfig({
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://collab.casebang.tech', DB_PASSWORD: 'x',
+      COS_STORAGE_ENABLED: 'true', COS_BUCKET: 'casebang-workbooks-1417690479', COS_REGION: 'ap-guangzhou',
+      COS_SECRET_ID: 'test-id', COS_SECRET_KEY: 'test-key'
+    })
+    expect(value.cos).toEqual({
+      enabled: true, bucket: 'casebang-workbooks-1417690479', region: 'ap-guangzhou',
+      secretId: 'test-id', secretKey: 'test-key'
+    })
+  })
 })

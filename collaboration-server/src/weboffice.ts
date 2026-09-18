@@ -130,11 +130,12 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
     if (!session) return
     const file = await callbackFile(request, reply, pool, session)
     if (!file) return
+    if (storage.supportsDirectTransfer) {
+      return wpsSuccess(reply, { url: storage.createDownloadUrl(file.object_key, DOWNLOAD_TTL_SECONDS) })
+    }
     const expires = Math.floor(Date.now() / 1000) + DOWNLOAD_TTL_SECONDS
     const signature = downloadSignature(config.wps.appSecret, wpsFileId(file.id), file.revision, expires)
-    return wpsSuccess(reply, {
-      url: `${config.publicOrigin}/weboffice/content/${wpsFileId(file.id)}/${file.revision}?expires=${expires}&signature=${signature}`
-    })
+    return wpsSuccess(reply, { url: `${config.publicOrigin}/weboffice/content/${wpsFileId(file.id)}/${file.revision}?expires=${expires}&signature=${signature}` })
   })
 
   app.get('/weboffice/v3/3rd/files/:fileId/permission', async (request, reply) => {
@@ -194,7 +195,12 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'sha256',$9,$10,$11)`,
       [uploadId, file.organization_id, file.id, session.user_id, session.id, sha256(uploadToken), input.data.name, input.data.size, digest, objectKey, new Date(Date.now() + UPLOAD_TTL_MS)]
     )
-    return wpsSuccess(reply, {
+    return wpsSuccess(reply, storage.supportsDirectTransfer ? {
+      method: 'PUT',
+      url: storage.createUploadUrl(objectKey),
+      headers: { 'Content-Type': XLSX_CONTENT_TYPE, 'x-cos-meta-sha256': digest },
+      send_back_params: { upload_id: uploadId }
+    } : {
       method: 'PUT',
       url: `${config.publicOrigin}/weboffice/upload/${uploadId}`,
       headers: { 'Content-Type': XLSX_CONTENT_TYPE, 'X-Casebang-Upload-Token': uploadToken },
@@ -221,7 +227,7 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
       await pool.query(`UPDATE weboffice_uploads SET status='failed' WHERE id=$1`, [upload.id])
       return reply.code(409).send({ error: 'upload_digest_mismatch' })
     }
-    await storage.writeObject(upload.object_key, request.body)
+    await storage.writeObject(upload.object_key, request.body, digest)
     await pool.query(
       `UPDATE weboffice_uploads SET status='uploaded',uploaded_size=$2,uploaded_digest=$3 WHERE id=$1 AND status='prepared'`,
       [upload.id, request.body.length, digest]
@@ -250,6 +256,31 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
         [parsedUploadId.data, session.organization_id, file.id]
       )
       const upload = uploadResult.rows[0]
+      if (upload?.status === 'prepared' && storage.supportsDirectTransfer) {
+        let uploadedWorkbook: Buffer
+        try {
+          uploadedWorkbook = await storage.readObject(upload.object_key)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            await client.query('ROLLBACK')
+            return wpsFailure(reply, 409, 40001, 'upload not found')
+          }
+          throw error
+        }
+        const uploadedDigest = sha256(uploadedWorkbook)
+        if (uploadedWorkbook.length !== Number(upload.expected_size) || uploadedDigest !== upload.expected_digest) {
+          await client.query(`UPDATE weboffice_uploads SET status='failed' WHERE id=$1`, [upload.id])
+          await client.query('COMMIT')
+          return wpsFailure(reply, 409, 40001, 'upload digest mismatch')
+        }
+        await client.query(
+          `UPDATE weboffice_uploads SET status='uploaded',uploaded_size=$2,uploaded_digest=$3 WHERE id=$1 AND status='prepared'`,
+          [upload.id, uploadedWorkbook.length, uploadedDigest]
+        )
+        upload.status = 'uploaded'
+        upload.uploaded_size = uploadedWorkbook.length
+        upload.uploaded_digest = uploadedDigest
+      }
       if (!upload || (upload.status !== 'uploaded' && upload.status !== 'completed')) {
         await client.query('ROLLBACK')
         return wpsFailure(reply, 409, 40001, 'upload not found')
@@ -320,7 +351,8 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
     const expected = downloadSignature(config.wps.appSecret, params.fileId!, revision, expires)
     if (!safeEqual(expected, query.signature)) return reply.code(403).send({ error: 'download_forbidden' })
     const file = await revisionFile(pool, undefined, workItemId, revision)
-    return reply.header('content-type', XLSX_CONTENT_TYPE).header('cache-control', 'private, no-store').send(createReadStream(storage.resolveObject(file.object_key)))
+    if (storage.supportsDirectTransfer) return reply.redirect(storage.createDownloadUrl(file.object_key, DOWNLOAD_TTL_SECONDS))
+    return reply.header('content-type', XLSX_CONTENT_TYPE).header('cache-control', 'private, no-store').send(await storage.readObject(file.object_key))
   })
 }
 

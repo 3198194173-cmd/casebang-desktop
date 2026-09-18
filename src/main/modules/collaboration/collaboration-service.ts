@@ -12,6 +12,7 @@ import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
 const CHUNK_UPLOAD_TIMEOUT_MS = 90_000
 const CHUNK_UPLOAD_ATTEMPTS = 3
+const DIRECT_UPLOAD_TIMEOUT_MS = 15 * 60 * 1000
 const publishSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1).max(240),
@@ -42,14 +43,22 @@ interface WorkItemsResponse { items?: CollaborationWorkItem[] }
 interface SubmitResponse { item?: CollaborationWorkItem; duplicate?: boolean; error?: string }
 interface UploadPrepareResponse {
   uploadId?: string
+  uploadMode?: 'direct' | 'chunked'
+  uploadUrl?: string
+  headers?: Record<string, string>
+  expiresAt?: string
   chunkSize?: number
   totalChunks?: number
   error?: string
 }
 const uploadPrepareResponseSchema = z.object({
   uploadId: z.string().uuid(),
-  chunkSize: z.number().int().positive().max(512 * 1024),
-  totalChunks: z.number().int().positive()
+  uploadMode: z.enum(['direct', 'chunked']).default('chunked'),
+  uploadUrl: z.string().url().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  expiresAt: z.string().datetime().optional(),
+  chunkSize: z.number().int().positive().max(512 * 1024).optional(),
+  totalChunks: z.number().int().positive().optional()
 })
 interface WorkbookUploadMetadata {
   assigneeId?: string
@@ -168,7 +177,7 @@ export class CollaborationService {
     metadata: WorkbookUploadMetadata,
     fileName: string
   ): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
-    logger.info('Preparing chunked shared workbook upload', { fileName, sizeBytes: bytes.length })
+    logger.info('Preparing shared workbook upload', { fileName, sizeBytes: bytes.length })
     const preparedResponse = await this.request('/api/v1/collaboration/workbook-uploads', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -177,19 +186,26 @@ export class CollaborationService {
     const preparedBody = await preparedResponse.json() as UploadPrepareResponse
     const prepared = uploadPrepareResponseSchema.safeParse(preparedBody)
     if (!prepared.success) throw new Error(serverError(preparedBody.error ?? 'invalid_upload_response'))
-    if (prepared.data.totalChunks !== Math.ceil(bytes.length / prepared.data.chunkSize)) {
-      throw new Error('协同服务返回的分块参数不正确，请更新服务器后重试。')
-    }
-
-    for (let index = 0; index < prepared.data.totalChunks; index += 1) {
-      const start = index * prepared.data.chunkSize
-      const chunk = bytes.subarray(start, Math.min(start + prepared.data.chunkSize, bytes.length))
-      await this.uploadChunk(prepared.data.uploadId, index, chunk)
-      logger.info('Shared workbook chunk uploaded', {
-        fileName,
-        chunk: index + 1,
-        totalChunks: prepared.data.totalChunks
-      })
+    if (prepared.data.uploadMode === 'direct') {
+      if (!prepared.data.uploadUrl?.startsWith('https://') || !prepared.data.headers) {
+        throw new Error('协同服务返回的 COS 直传参数不正确，请更新服务器后重试。')
+      }
+      await this.uploadDirect(prepared.data.uploadUrl, prepared.data.headers, bytes)
+      logger.info('Shared workbook uploaded directly to object storage', { fileName, sizeBytes: bytes.length })
+    } else {
+      if (!prepared.data.chunkSize || !prepared.data.totalChunks || prepared.data.totalChunks !== Math.ceil(bytes.length / prepared.data.chunkSize)) {
+        throw new Error('协同服务返回的分块参数不正确，请更新服务器后重试。')
+      }
+      for (let index = 0; index < prepared.data.totalChunks; index += 1) {
+        const start = index * prepared.data.chunkSize
+        const chunk = bytes.subarray(start, Math.min(start + prepared.data.chunkSize, bytes.length))
+        await this.uploadChunk(prepared.data.uploadId, index, chunk)
+        logger.info('Shared workbook chunk uploaded', {
+          fileName,
+          chunk: index + 1,
+          totalChunks: prepared.data.totalChunks
+        })
+      }
     }
 
     const completedResponse = await this.request(
@@ -202,10 +218,26 @@ export class CollaborationService {
     logger.info('Shared workbook upload completed', {
       workItemId: completed.item.id,
       sizeBytes: bytes.length,
-      chunks: prepared.data.totalChunks,
+      uploadMode: prepared.data.uploadMode,
       duplicate: completed.duplicate ?? false
     })
     return { item: completed.item, duplicate: completed.duplicate ?? false }
+  }
+
+  private async uploadDirect(url: string, headers: Record<string, string>, bytes: Buffer): Promise<void> {
+    const signal = AbortSignal.timeout(DIRECT_UPLOAD_TIMEOUT_MS)
+    let response: Response
+    try {
+      const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+      response = await net.fetch(url, { method: 'PUT', headers, body, signal })
+    } catch (reason) {
+      logger.warn('Direct object storage upload failed', {
+        timedOut: signal.aborted,
+        error: reason instanceof Error ? reason.message : String(reason)
+      })
+      throw new Error(signal.aborted ? '上传到腾讯云 COS 超时，请检查网络后重试。' : '无法上传到腾讯云 COS，请检查网络后重试。')
+    }
+    if (!response.ok) throw new Error(`腾讯云 COS 上传失败（HTTP ${response.status}）。`)
   }
 
   private async uploadChunk(uploadId: string, index: number, chunk: Buffer): Promise<void> {

@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
 import type { FastifyInstance } from 'fastify'
 import type pg from 'pg'
 import { z } from 'zod'
@@ -33,6 +32,7 @@ const uploadManifestSchema = z.object({
   size: z.number().int().positive().max(MAX_WORKBOOK_SIZE),
   chunkSize: z.number().int().positive().max(UPLOAD_CHUNK_SIZE),
   totalChunks: z.number().int().positive(),
+  objectKey: z.string().optional(),
   expiresAt: z.string().datetime()
 }).strict()
 const actionSchema = z.object({
@@ -132,6 +132,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     const { size, ...metadata } = input.data
     const uploadId = randomUUID()
     const totalChunks = Math.ceil(size / UPLOAD_CHUNK_SIZE)
+    const objectKey = storage.supportsDirectTransfer ? `${uploadRoot(actor, uploadId)}/workbook.xlsx` : undefined
     const manifest: z.infer<typeof uploadManifestSchema> = {
       uploadId,
       organizationId: actor.organization_id,
@@ -140,6 +141,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       size,
       chunkSize: UPLOAD_CHUNK_SIZE,
       totalChunks,
+      ...(objectKey ? { objectKey } : {}),
       expiresAt: new Date(Date.now() + UPLOAD_TTL_MS).toISOString()
     }
     await storage.writeObject(uploadManifestKey(actor, uploadId), Buffer.from(JSON.stringify(manifest)))
@@ -147,7 +149,16 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       void storage.removeTree(uploadRoot(actor, uploadId)).catch(() => undefined)
     }, UPLOAD_TTL_MS + 60_000)
     cleanup.unref()
-    return reply.code(201).header('cache-control', 'no-store').send({ uploadId, chunkSize: UPLOAD_CHUNK_SIZE, totalChunks })
+    return reply.code(201).header('cache-control', 'no-store').send(objectKey ? {
+      uploadId,
+      uploadMode: 'direct',
+      uploadUrl: storage.createUploadUrl(objectKey),
+      headers: {
+        'content-type': XLSX_CONTENT_TYPE,
+        'x-cos-meta-sha256': metadata.sha256
+      },
+      expiresAt: manifest.expiresAt
+    } : { uploadId, uploadMode: 'chunked', chunkSize: UPLOAD_CHUNK_SIZE, totalChunks })
   })
 
   app.post('/api/v1/collaboration/workbook-uploads/:uploadId/chunks/:index', async (request, reply) => {
@@ -187,6 +198,21 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     if (!uploadId.success) return reply.code(400).send({ error: 'invalid_upload_request' })
     const manifest = await readUploadManifest(storage, actor, uploadId.data)
     if (!manifest) return reply.code(404).send({ error: 'upload_not_found' })
+    if (manifest.objectKey) {
+      let workbook: Buffer
+      try {
+        workbook = await storage.readObject(manifest.objectKey)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return reply.code(409).send({ error: 'upload_incomplete' })
+        throw error
+      }
+      if (workbook.length !== manifest.size || createHash('sha256').update(workbook).digest('hex') !== manifest.metadata.sha256) {
+        return reply.code(409).send({ error: 'workbook_hash_mismatch' })
+      }
+      const result = await submitWorkbook(actor, manifest.metadata, workbook, pool, storage)
+      if (result.status < 400) await storage.removeTree(uploadRoot(actor, uploadId.data))
+      return reply.code(result.status).header('cache-control', 'no-store').send(result.body)
+    }
     const chunks: Buffer[] = []
     for (let index = 0; index < manifest.totalChunks; index += 1) {
       try {
@@ -237,10 +263,13 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     )
     const row = result.rows[0]
     if (!row) return reply.code(404).send({ error: 'work_item_not_found' })
+    if (storage.supportsDirectTransfer) {
+      return reply.redirect(storage.createDownloadUrl(row.object_key))
+    }
     return reply
       .header('content-type', XLSX_CONTENT_TYPE)
       .header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(row.title)}`)
-      .send(createReadStream(storage.resolveObject(row.object_key)))
+      .send(await storage.readObject(row.object_key))
   })
 
   app.post('/api/v1/collaboration/work-items/:id/actions', async (request, reply) => {
@@ -439,7 +468,7 @@ async function submitWorkbook(
   const workItemId = randomUUID()
   const eventId = randomUUID()
   const objectKey = `${actor.organization_id}/${workItemId}/revision-1.xlsx`
-  await storage.writeObject(objectKey, workbook)
+  await storage.writeObject(objectKey, workbook, metadata.sha256)
   const client = await pool.connect()
   try {
     await client.query('BEGIN')

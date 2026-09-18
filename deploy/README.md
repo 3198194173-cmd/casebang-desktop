@@ -59,6 +59,30 @@ WPS_APP_ID=SX20260918QZNBYG
 
 首次部署先保持 `false`。即使尚未启用，Compose 也要求 `deploy/secrets/wps_app_secret.txt` 已存在。
 
+腾讯云 COS 使用专用 CAM 子用户密钥。密钥只保存在服务器，不得写入 `collaboration.env`：
+
+```sh
+read -rsp "COS SecretId: " CASEBANG_COS_SECRET_ID
+printf '\n'
+printf '%s' "$CASEBANG_COS_SECRET_ID" > deploy/secrets/cos_secret_id.txt
+unset CASEBANG_COS_SECRET_ID
+read -rsp "COS SecretKey: " CASEBANG_COS_SECRET_KEY
+printf '\n'
+printf '%s' "$CASEBANG_COS_SECRET_KEY" > deploy/secrets/cos_secret_key.txt
+unset CASEBANG_COS_SECRET_KEY
+chmod 600 deploy/secrets/cos_secret_id.txt deploy/secrets/cos_secret_key.txt
+```
+
+`deploy/collaboration.env` 中配置存储桶标识：
+
+```dotenv
+COS_STORAGE_ENABLED=true
+COS_BUCKET=casebang-workbooks-1417690479
+COS_REGION=ap-guangzhou
+```
+
+启用后，桌面端和 WPS 使用短时、单对象、仅上传或仅下载的一次性签名地址直接访问私有 COS；永久密钥不会离开中央服务。
+
 ## 3. 启动数据库与 API
 
 ```sh

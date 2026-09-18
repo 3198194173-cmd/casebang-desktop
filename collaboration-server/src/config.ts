@@ -10,6 +10,13 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3100),
   PUBLIC_ORIGIN: z.string().url(),
   STORAGE_ROOT: z.string().min(1).default('/data/workbooks'),
+  COS_STORAGE_ENABLED: booleanValue,
+  COS_BUCKET: z.string().optional(),
+  COS_REGION: z.string().optional(),
+  COS_SECRET_ID: z.string().optional(),
+  COS_SECRET_ID_FILE: z.string().optional(),
+  COS_SECRET_KEY: z.string().optional(),
+  COS_SECRET_KEY_FILE: z.string().optional(),
   MIGRATIONS_ROOT: z.string().optional(),
   DB_HOST: z.string().min(1).default('postgres'),
   DB_PORT: z.coerce.number().int().min(1).max(65535).default(5432),
@@ -36,6 +43,7 @@ export interface ServerConfig {
   port: number
   publicOrigin: string
   storageRoot: string
+  cos: { enabled: boolean; bucket: string; region: string; secretId: string; secretKey: string }
   migrationsRoot: string
   database: { host: string; port: number; name: string; user: string; password: string; ssl: boolean }
   dingtalk: { enabled: boolean; corpId: string; clientId: string; agentId: string; clientSecret: string }
@@ -57,6 +65,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
   if (!isAbsolute(storageRoot)) throw new Error('STORAGE_ROOT 必须是绝对路径')
   const here = dirname(fileURLToPath(import.meta.url))
   const databasePassword = secret('DB_PASSWORD', value.DB_PASSWORD, value.DB_PASSWORD_FILE, production)
+  const cosRequired = value.COS_STORAGE_ENABLED
+  const cosSecretId = cosRequired ? secret('COS_SECRET_ID', value.COS_SECRET_ID, value.COS_SECRET_ID_FILE, production) : ''
+  const cosSecretKey = cosRequired ? secret('COS_SECRET_KEY', value.COS_SECRET_KEY, value.COS_SECRET_KEY_FILE, production) : ''
+  if (cosRequired && !(value.COS_BUCKET && value.COS_REGION)) {
+    throw new Error('启用腾讯云 COS 时必须配置 COS_BUCKET 和 COS_REGION')
+  }
   const dingtalkRequired = value.DINGTALK_STREAM_ENABLED
   const dingtalkClientSecret = dingtalkRequired
     ? secret('DINGTALK_CLIENT_SECRET', value.DINGTALK_CLIENT_SECRET, value.DINGTALK_CLIENT_SECRET_FILE, production)
@@ -75,6 +89,13 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
     port: value.PORT,
     publicOrigin: value.PUBLIC_ORIGIN.replace(/\/$/, ''),
     storageRoot,
+    cos: {
+      enabled: cosRequired,
+      bucket: value.COS_BUCKET ?? '',
+      region: value.COS_REGION ?? '',
+      secretId: cosSecretId,
+      secretKey: cosSecretKey
+    },
     migrationsRoot: resolve(value.MIGRATIONS_ROOT ?? resolve(here, '../migrations')),
     database: { host: value.DB_HOST, port: value.DB_PORT, name: value.DB_NAME, user: value.DB_USER, password: databasePassword, ssl: value.DB_SSL },
     dingtalk: {

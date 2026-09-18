@@ -140,6 +140,41 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
+  it('returns a short-lived direct COS upload target when object storage is enabled', async () => {
+    const workbook = Buffer.from('workbook')
+    const actor = {
+      id: '10000000-0000-4000-8000-000000000001', display_name: '建表人', avatar_url: null,
+      organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream'
+    }
+    const query = vi.fn().mockResolvedValueOnce(queryResult([actor]))
+    const storage = {
+      supportsDirectTransfer: true,
+      writeObject: vi.fn(),
+      createUploadUrl: vi.fn(() => 'https://casebang-workbooks.cos.ap-guangzhou.myqcloud.com/signed')
+    }
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, storage as unknown as PrivateStorage)
+
+    const sha256 = createHash('sha256').update(workbook).digest('hex')
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/collaboration/workbook-uploads',
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/json' },
+      payload: {
+        sourceWorkflow: 'new-series', sourceId: 'source-direct', title: 'COS工作簿.xlsx', size: workbook.length,
+        sha256, requestKey: '40000000-0000-4000-8000-000000000005'
+      }
+    })
+
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toEqual(expect.objectContaining({
+      uploadId: expect.any(String), uploadMode: 'direct',
+      uploadUrl: 'https://casebang-workbooks.cos.ap-guangzhou.myqcloud.com/signed',
+      headers: expect.objectContaining({ 'x-cos-meta-sha256': sha256 })
+    }))
+    expect(storage.createUploadUrl).toHaveBeenCalledWith(expect.stringMatching(/workbook\.xlsx$/))
+    await app.close()
+  })
+
   it('stores the exported workbook and automatically links the downstream account', async () => {
     const workbook = Buffer.from('generated workbook')
     const originId = '10000000-0000-4000-8000-000000000001'
@@ -174,7 +209,7 @@ describe('collaboration identity boundaries', () => {
 
     expect(response.statusCode).toBe(201)
     expect(response.json()).toEqual({ item: expect.objectContaining({ title: metadata.title, state: 'PENDING_PROCESSING', revision: 1 }), duplicate: false })
-    expect(storage.writeObject).toHaveBeenCalledWith(expect.stringMatching(/revision-1\.xlsx$/), workbook)
+    expect(storage.writeObject).toHaveBeenCalledWith(expect.stringMatching(/revision-1\.xlsx$/), workbook, metadata.sha256)
     const insertWorkItem = clientQuery.mock.calls.find(call => String(call[0]).includes('INSERT INTO work_items'))
     expect(insertWorkItem?.[1]?.[3]).toBe(assigneeId)
     const outbox = clientQuery.mock.calls.find(call => String(call[0]).includes('INSERT INTO outbox_events'))
@@ -248,7 +283,7 @@ describe('collaboration identity boundaries', () => {
     expect(completed.statusCode).toBe(201)
     expect(completed.json()).toEqual({ item: expect.objectContaining({ id: stored.id, revision: 1 }), duplicate: false })
     expect(storage.removeTree).toHaveBeenCalled()
-    expect(storage.writeObject).toHaveBeenCalledWith(expect.stringMatching(/revision-1\.xlsx$/), workbook)
+    expect(storage.writeObject).toHaveBeenCalledWith(expect.stringMatching(/revision-1\.xlsx$/), workbook, metadata.sha256)
     await app.close()
   })
 

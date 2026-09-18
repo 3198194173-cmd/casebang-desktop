@@ -11,7 +11,7 @@ import { registerWebOfficeRoutes } from './weboffice.js'
 async function main(): Promise<void> {
   const config = loadConfig()
   const pool = createDatabase(config.database)
-  const storage = new PrivateStorage(config.storageRoot)
+  const storage = new PrivateStorage(config.storageRoot, config.cos.enabled ? config.cos : undefined)
   await storage.initialize()
   await runMigrations(pool, config.migrationsRoot)
   const stream = new DingTalkStreamBridge(config.dingtalk, pool, consoleLogger)

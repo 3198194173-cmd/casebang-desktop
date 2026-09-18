@@ -15,6 +15,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "cos-nodejs-sdk-v5": "^3.0.0",
     "dingtalk-stream": "2.1.7-beta.1",
     "fastify": "5.6.1",
     "pg": "8.16.3",

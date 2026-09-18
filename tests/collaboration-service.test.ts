@@ -74,14 +74,17 @@ describe('desktop collaboration service', () => {
     try {
       const result = await new CollaborationService(settings()).publishWorkbook({ path: workbookPath, title: '新建产品表.xlsx', sourceWorkflow: 'new-series' })
       expect(result.item.state).toBe('PENDING_PROCESSING')
-      expect(timeout).toHaveBeenCalledWith(45_000)
+      expect(timeout).toHaveBeenCalledWith(90_000)
       expect(net.fetch).toHaveBeenCalledTimes(4)
       const prepareRequest = vi.mocked(net.fetch).mock.calls[0]
       const metadata = JSON.parse(String(prepareRequest?.[1]?.body))
       expect(metadata).toEqual(expect.objectContaining({ sourceWorkflow: 'new-series', title: '新建产品表.xlsx', size: workbook.length }))
       expect(metadata).not.toHaveProperty('assigneeId')
       expect(vi.mocked(net.fetch).mock.calls[1]?.[0]).toContain('/chunks/0')
-      expect(vi.mocked(net.fetch).mock.calls[1]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }))
+      expect(vi.mocked(net.fetch).mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+        method: 'POST', headers: expect.objectContaining({ 'content-type': 'application/json' })
+      }))
+      expect(Buffer.from(JSON.parse(String(vi.mocked(net.fetch).mock.calls[1]?.[1]?.body)).data, 'base64')).toEqual(workbook.subarray(0, 64 * 1024))
       expect(vi.mocked(net.fetch).mock.calls[2]?.[0]).toContain('/chunks/1')
       expect(vi.mocked(net.fetch).mock.calls[3]?.[0]).toContain('/complete')
     } finally {

@@ -22,6 +22,9 @@ const metadataSchema = z.object({
 const uploadPrepareSchema = metadataSchema.extend({
   size: z.number().int().positive().max(MAX_WORKBOOK_SIZE)
 }).strict()
+const uploadChunkSchema = z.object({
+  data: z.string().min(4).max(Math.ceil(UPLOAD_CHUNK_SIZE / 3) * 4).regex(/^[A-Za-z0-9+/]+={0,2}$/)
+}).strict()
 const uploadManifestSchema = z.object({
   uploadId: z.string().uuid(),
   organizationId: z.string().uuid(),
@@ -144,8 +147,17 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     const params = request.params as { uploadId?: string; index?: string }
     const uploadId = z.string().uuid().safeParse(params.uploadId)
     const index = z.coerce.number().int().nonnegative().safeParse(params.index)
-    if (!uploadId.success || !index.success || !Buffer.isBuffer(request.body)) {
+    if (!uploadId.success || !index.success) {
       return reply.code(400).send({ error: 'invalid_upload_chunk' })
+    }
+    let chunk: Buffer
+    if (Buffer.isBuffer(request.body)) {
+      chunk = request.body
+    } else {
+      const input = uploadChunkSchema.safeParse(request.body)
+      if (!input.success) return reply.code(400).send({ error: 'invalid_upload_chunk' })
+      chunk = Buffer.from(input.data.data, 'base64')
+      if (chunk.toString('base64') !== input.data.data) return reply.code(400).send({ error: 'invalid_upload_chunk' })
     }
     const manifest = await readUploadManifest(storage, actor, uploadId.data)
     if (!manifest) return reply.code(404).send({ error: 'upload_not_found' })
@@ -153,8 +165,8 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     const expectedSize = index.data === manifest.totalChunks - 1
       ? manifest.size - manifest.chunkSize * (manifest.totalChunks - 1)
       : manifest.chunkSize
-    if (request.body.length !== expectedSize) return reply.code(409).send({ error: 'upload_chunk_size_mismatch' })
-    await storage.writeObject(uploadChunkKey(actor, uploadId.data, index.data), request.body)
+    if (chunk.length !== expectedSize) return reply.code(409).send({ error: 'upload_chunk_size_mismatch' })
+    await storage.writeObject(uploadChunkKey(actor, uploadId.data, index.data), chunk)
     return reply.code(204).send()
   })
 

@@ -9,11 +9,9 @@ import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service
 import { logger } from '@main/infrastructure/logger'
 import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
 
-const BINARY_CONTENT_TYPE = 'application/octet-stream'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
-const CHUNK_UPLOAD_TIMEOUT_MS = 45_000
+const CHUNK_UPLOAD_TIMEOUT_MS = 90_000
 const CHUNK_UPLOAD_ATTEMPTS = 3
-const PARALLEL_CHUNK_UPLOADS = 3
 const publishSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1).max(240),
@@ -183,26 +181,16 @@ export class CollaborationService {
       throw new Error('协同服务返回的分块参数不正确，请更新服务器后重试。')
     }
 
-    let nextChunk = 0
-    const uploadNext = async (): Promise<void> => {
-      while (true) {
-        const index = nextChunk
-        nextChunk += 1
-        if (index >= prepared.data.totalChunks) return
-        const start = index * prepared.data.chunkSize
-        const chunk = bytes.subarray(start, Math.min(start + prepared.data.chunkSize, bytes.length))
-        await this.uploadChunk(prepared.data.uploadId, index, chunk)
-        logger.info('Shared workbook chunk uploaded', {
-          fileName,
-          chunk: index + 1,
-          totalChunks: prepared.data.totalChunks
-        })
-      }
+    for (let index = 0; index < prepared.data.totalChunks; index += 1) {
+      const start = index * prepared.data.chunkSize
+      const chunk = bytes.subarray(start, Math.min(start + prepared.data.chunkSize, bytes.length))
+      await this.uploadChunk(prepared.data.uploadId, index, chunk)
+      logger.info('Shared workbook chunk uploaded', {
+        fileName,
+        chunk: index + 1,
+        totalChunks: prepared.data.totalChunks
+      })
     }
-    await Promise.all(Array.from(
-      { length: Math.min(PARALLEL_CHUNK_UPLOADS, prepared.data.totalChunks) },
-      () => uploadNext()
-    ))
 
     const completedResponse = await this.request(
       `/api/v1/collaboration/workbook-uploads/${prepared.data.uploadId}/complete`,
@@ -226,7 +214,11 @@ export class CollaborationService {
       try {
         await this.request(
           `/api/v1/collaboration/workbook-uploads/${uploadId}/chunks/${index}`,
-          { method: 'POST', headers: { 'content-type': BINARY_CONTENT_TYPE }, body: Uint8Array.from(chunk).buffer },
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ data: chunk.toString('base64') })
+          },
           { timeoutMs: CHUNK_UPLOAD_TIMEOUT_MS, timeoutMessage: `工作簿第 ${index + 1} 个分块上传超时。` }
         )
         return

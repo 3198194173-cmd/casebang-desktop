@@ -193,7 +193,7 @@ describe('collaboration identity boundaries', () => {
 
     const chunk = await app.inject({
       method: 'POST', url: `/api/v1/collaboration/workbook-uploads/${upload.uploadId}/chunks/0`,
-      headers: { authorization, 'content-type': 'application/octet-stream' }, payload: workbook
+      headers: { authorization, 'content-type': 'application/json' }, payload: { data: workbook.toString('base64') }
     })
     expect(chunk.statusCode).toBe(204)
 

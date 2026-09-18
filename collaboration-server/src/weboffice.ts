@@ -448,9 +448,9 @@ function wpsSignatureFailure(request: FastifyRequest, config: ServerConfig): str
   if (typeof date !== 'string') return 'date_missing'
   if (typeof contentMd5 !== 'string') return 'content_md5_missing'
   if (typeof authorization !== 'string') return 'authorization_missing'
-  const timestamp = Date.parse(date)
-  if (!Number.isFinite(timestamp)) return 'date_invalid'
-  if (Math.abs(Date.now() - timestamp) > 10 * 60 * 1000) return 'date_out_of_range'
+  // WPS signs the literal Date header but does not define an accepted clock-skew
+  // window. Replay protection is provided by the short-lived WebOffice session
+  // token, so callback validity must not depend on the host clock.
   const contentType = request.method === 'GET' ? '' : (request.headers['content-type'] ?? '').split(';')[0]!
   const digest = createHash('sha1').update(`${config.wps.appSecret}${contentMd5}${contentType}${date}`).digest('hex')
   return safeEqual(`WPS-2:${config.wps.appId}:${digest}`, authorization) ? null : 'signature_mismatch'

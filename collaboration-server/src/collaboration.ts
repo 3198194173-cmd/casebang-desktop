@@ -120,6 +120,21 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     if (!actor) return
     const input = uploadPrepareSchema.safeParse(request.body)
     if (!input.success) return reply.code(400).send({ error: 'invalid_upload_request' })
+    if (input.data.assigneeId) {
+      const assignee = await pool.query<{ id: string }>(
+        `SELECT id FROM app_users WHERE organization_id=$1 AND id=$2 AND id<>$3 AND active=true`,
+        [actor.organization_id, input.data.assigneeId, actor.id]
+      )
+      if (!assignee.rowCount) return reply.code(400).send({ error: 'invalid_assignee' })
+    } else {
+      const downstream = await pool.query<{ id: string }>(
+        `SELECT id FROM app_users
+         WHERE organization_id=$1 AND id<>$2 AND active=true AND business_role='downstream'
+         ORDER BY last_login_at DESC LIMIT 1`,
+        [actor.organization_id, actor.id]
+      )
+      if (!downstream.rowCount) return reply.code(409).send({ error: 'downstream_member_required' })
+    }
     const { size, ...metadata } = input.data
     const uploadId = randomUUID()
     const totalChunks = Math.ceil(size / UPLOAD_CHUNK_SIZE)

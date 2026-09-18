@@ -95,6 +95,34 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
+  it('rejects a chunked upload before storing anything when no downstream account exists', async () => {
+    const workbook = Buffer.from('workbook')
+    const actor = {
+      id: '10000000-0000-4000-8000-000000000001', display_name: '建表人', avatar_url: null,
+      organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream'
+    }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([actor]))
+      .mockResolvedValueOnce(queryResult([]))
+    const storage = { writeObject: vi.fn() }
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, storage as unknown as PrivateStorage)
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/collaboration/workbook-uploads',
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/json' },
+      payload: {
+        sourceWorkflow: 'new-series', sourceId: 'source-preflight', title: '预检工作簿.xlsx', size: workbook.length,
+        sha256: createHash('sha256').update(workbook).digest('hex'), requestKey: '40000000-0000-4000-8000-000000000004'
+      }
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({ error: 'downstream_member_required' })
+    expect(storage.writeObject).not.toHaveBeenCalled()
+    await app.close()
+  })
+
   it('stores the exported workbook and automatically links the downstream account', async () => {
     const workbook = Buffer.from('generated workbook')
     const originId = '10000000-0000-4000-8000-000000000001'
@@ -156,6 +184,7 @@ describe('collaboration identity boundaries', () => {
     }
     const query = vi.fn()
       .mockResolvedValueOnce(queryResult([actor]))
+      .mockResolvedValueOnce(queryResult([{ id: assigneeId }]))
       .mockResolvedValueOnce(queryResult([actor]))
       .mockResolvedValueOnce(queryResult([actor]))
       .mockResolvedValueOnce(queryResult([]))

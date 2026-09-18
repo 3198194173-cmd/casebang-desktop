@@ -67,6 +67,24 @@ export class SupplementService {
     finally { this.busy = false }
   }
   async export(input?: unknown): Promise<string | null> {
+    const output = this.prepareOutput(input)
+    this.busy = true
+    try {
+      const r = await dialog.showSaveDialog({ defaultPath: `原有产品补充新机型-${Date.now()}.xlsx`, filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }] })
+      if (r.canceled || !r.filePath) return null
+      await this.writeOutput(r.filePath, output)
+      return r.filePath
+    } finally { this.busy = false }
+  }
+  async exportTo(path: string, input?: unknown): Promise<string> {
+    const output = this.prepareOutput(input)
+    this.busy = true
+    try {
+      await this.writeOutput(path, output)
+      return path
+    } finally { this.busy = false }
+  }
+  private prepareOutput(input?: unknown): SupplementResult {
     const restored = z.object({ draft: z.object({ sourcePaths: z.array(z.string().min(1)).length(2), result: z.object({ matched: z.number(), missing: z.number(), conflict: z.number(), rows: z.array(z.object({ source: z.string(), batch: z.string(), series: z.string(), original: z.string(), model: z.string(), variant: z.string(), status: z.enum(['matched', 'missing', 'conflict']), reason: z.string(), reference: z.string(), values: z.array(z.string()).max(12) })).max(20000) }) }).optional() }).parse(input ?? {}).draft
     if (!this.busy && restored) {
       const rows = restored.result.rows
@@ -74,15 +92,12 @@ export class SupplementService {
       this.sources = restored.sourcePaths.map(p => resolve(p).toLowerCase())
     }
     if (this.busy || !this.result?.matched) throw new Error('请先完成分析，至少需要一条已匹配物料')
-    const output = applySupplementOverrides(this.result, input)
-    this.busy = true
+    return applySupplementOverrides(this.result, input)
+  }
+  private async writeOutput(path: string, output: SupplementResult): Promise<void> {
     try {
-      const r = await dialog.showSaveDialog({ defaultPath: `原有产品补充新机型-${Date.now()}.xlsx`, filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }] })
-      if (r.canceled || !r.filePath) return null
-      if (this.sources.includes(resolve(r.filePath).toLowerCase())) throw new Error('不能覆盖输入文件，请另存新文件')
-      await writeSupplement(r.filePath, output)
-      return r.filePath
+      if (this.sources.includes(resolve(path).toLowerCase())) throw new Error('不能覆盖输入文件，请另存新文件')
+      await writeSupplement(path, output)
     } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('文件已存在，请换一个新文件名；本流程不覆盖已有文件'); throw e }
-    finally { this.busy = false }
   }
 }

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 vi.mock('electron', () => ({ dialog: {} }))
-import { writeSupplement, applySupplementOverrides } from '../src/main/modules/supplement/supplement-service'
+import { writeSupplement, applySupplementOverrides, SupplementService } from '../src/main/modules/supplement/supplement-service'
 import { SettingsRepository } from '../src/main/infrastructure/settings-repository'
 import { analyzeSupplement, splitModel, readSheets, expandShellVariants } from '../src/main/modules/supplement/supplement-engine'
 describe('supplement model boundaries', () => {
@@ -35,6 +35,18 @@ describe('supplement model boundaries', () => {
     expect(splitModel(`CASEBANG 出镜壳-X CZ00050 ${model}（银框）（Y）`)).toEqual({ base: 'CASEBANG 出镜壳-X CZ00050', model, variant: '（银框）（Y）' })
   })
   it('does not guess unknown suffixes', () => { expect(splitModel('CASEBANG 出镜壳-X CZ00050 iP18 Unknown')).toBeNull() })
+  it('writes a shared-workbook staging file without opening a save dialog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'casebang-supplement-shared-'))
+    const result = {
+      rows: [{ source: 'Sheet1!A2', batch: '测试批次', series: '测试系列', original: '原物料', model: 'iP18 Pro', variant: '', status: 'matched' as const, reason: '', reference: 'ref', values: ['图片', '', '', 'CASEBANG 测试物料 iP18 Pro', '99', 'US$19.99', '材质', '备注', '来源', '已匹配'] }],
+      matched: 1, missing: 0, conflict: 0
+    }
+    try {
+      const out = join(dir, 'shared.xlsx')
+      await new SupplementService().exportTo(out, { draft: { sourcePaths: ['master.xlsx', 'input.xlsx'], result }, variants: [] })
+      expect((await readSheets(out)).length).toBe(1)
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
   it.runIf(process.env.CASEBANG_SUPPLEMENT_REAL === '1')('reads real files without writing sources', async () => {
     const root = 'C:/Users/Administrator/Desktop/CASEBANG 表格编码自动化/表格文件/'
     const result = await analyzeSupplement({ masterPath: root + 'CASEBANG 物料名称汇总-260908（含建议零售价）.xlsx', inputPath: root + '补Iphone18折叠屏系列-260826(1).xlsx', targetModel: 'iP Fold（Duo）' })

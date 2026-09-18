@@ -68,7 +68,7 @@ export class TaskService {
     return draft
   }
 
-  async exportGenerationWorkbook(input: ExportGenerationWorkbookInput): Promise<ExportGenerationWorkbookResult> {
+  async exportGenerationWorkbook(input: ExportGenerationWorkbookInput, options: { outputDirectory?: string } = {}): Promise<ExportGenerationWorkbookResult> {
     const preferences = await this.settings.getApplicationSettings()
     if (preferences.requireQualityCheck && input.workspace.checks.some((check) => !check.passed)) {
       throw new Error('导出前强制质检已开启，请先处理所有未通过项目。')
@@ -85,9 +85,9 @@ export class TaskService {
     const overwriteBaseFiles = input.overwriteBaseFiles ?? false
     const configuredBaseFiles = await this.settings.getBaseFilePaths()
     const requiresOutputDirectory = selectedIds.has('generated-product') || !overwriteBaseFiles
-    let outputDirectory: string | null = null
+    let outputDirectory: string | null = options.outputDirectory ?? null
     const skipped: Array<{ label: string; reason: string }> = []
-    if (requiresOutputDirectory) {
+    if (requiresOutputDirectory && !outputDirectory) {
       const selection = await dialog.showOpenDialog({
         title: '选择 Excel 文件的导出文件夹',
         properties: ['openDirectory', 'createDirectory']

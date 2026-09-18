@@ -15,7 +15,8 @@ const api: CasebangDesktopApi = {
     selectMaster: () => ipcRenderer.invoke(IPC_CHANNELS.supplementSelectMaster),
     select: () => ipcRenderer.invoke(IPC_CHANNELS.supplementSelect),
     analyze: (input) => ipcRenderer.invoke(IPC_CHANNELS.supplementAnalyze, input),
-    export: (input) => ipcRenderer.invoke(IPC_CHANNELS.supplementExport, input)
+    export: (input) => ipcRenderer.invoke(IPC_CHANNELS.supplementExport, input),
+    publishShared: (input) => ipcRenderer.invoke(IPC_CHANNELS.supplementPublishShared, input)
   },
   app: {
     getSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.appGetSnapshot)
@@ -47,7 +48,8 @@ const api: CasebangDesktopApi = {
   tasks: {
     selectMasterImage: () => ipcRenderer.invoke(IPC_CHANNELS.tasksSelectMasterImage),
     createDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.tasksCreateDraft, input),
-    exportGenerationWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.tasksExportGenerationWorkbook, input)
+    exportGenerationWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.tasksExportGenerationWorkbook, input),
+    publishGenerationWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.tasksPublishGenerationWorkbook, input)
   },
   images: {
     analyze: (input) => ipcRenderer.invoke(IPC_CHANNELS.imagesAnalyze, input),

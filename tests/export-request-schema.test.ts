@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { exportGenerationWorkbookInputSchema } from '../src/shared/schemas'
+import { exportGenerationWorkbookInputSchema, publishGenerationWorkbookInputSchema } from '../src/shared/schemas'
 import { workbookFileError } from '../src/main/modules/spreadsheet/safe-workbook-file'
 
 const ids = ['generated-product', 'barcode-reference', 'domestic-naming', 'product-image-mapping'] as const
@@ -20,6 +20,11 @@ it.each(ids)('accepts a single selected workbook: %s', (id) => {
 it('accepts two and four selected workbooks', () => {
   expect(exportGenerationWorkbookInputSchema.safeParse(request(ids.slice(0, 2))).success).toBe(true)
   expect(exportGenerationWorkbookInputSchema.safeParse(request()).success).toBe(true)
+})
+it('accepts direct central publishing only for an upstream generation workflow', () => {
+  expect(publishGenerationWorkbookInputSchema.safeParse({ generation: request(['generated-product']), sourceWorkflow: 'new-series' }).success).toBe(true)
+  expect(publishGenerationWorkbookInputSchema.safeParse({ generation: request(['generated-product']), sourceWorkflow: 'new-products' }).success).toBe(true)
+  expect(publishGenerationWorkbookInputSchema.safeParse({ generation: request(['generated-product']), sourceWorkflow: 'new-models' }).success).toBe(false)
 })
 it('preserves the deliberately blank frame header and accepts wide existing-series append plans', () => {
   const input = request(['generated-product'])

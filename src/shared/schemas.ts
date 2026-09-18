@@ -286,3 +286,8 @@ export const exportGenerationWorkbookInputSchema = z.object({
     context.addIssue({ code: 'custom', path: ['selectedWorkbookIds'], message: '缺少选中工作簿的生成数据，请重新生成后重试。' })
   }
 })
+
+export const publishGenerationWorkbookInputSchema = z.object({
+  generation: exportGenerationWorkbookInputSchema,
+  sourceWorkflow: z.enum(['new-series', 'new-products'])
+}).strict()

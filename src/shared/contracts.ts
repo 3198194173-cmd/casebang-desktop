@@ -283,6 +283,7 @@ export interface CasebangDesktopApi {
     selectMasterImage(): Promise<SelectFileResult>
     createDraft(input: TaskDraftInput): Promise<TaskDraft>
     exportGenerationWorkbook(input: ExportGenerationWorkbookInput): Promise<ExportGenerationWorkbookResult>
+    publishGenerationWorkbook(input: import('./generation-contracts').PublishGenerationWorkbookInput): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
   }
   images: {
     analyze(input: AnalyzeMasterImageInput): Promise<ImageAnalysisResult>

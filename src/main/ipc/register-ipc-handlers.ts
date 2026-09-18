@@ -1,8 +1,12 @@
 import { comparePatternsInputSchema, materialInputSchema } from '@shared/schemas'
 import { app, ipcMain } from 'electron'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { z } from 'zod'
 import { SupplementService } from '../modules/supplement/supplement-service'
 import { LifecycleService } from '../modules/lifecycle/lifecycle-service'
 import type { AppSnapshot } from '@shared/contracts'
+import type { ExportGenerationWorkbookInput } from '@shared/generation-contracts'
 import { IPC_CHANNELS } from '@shared/ipc-channels'
 import {
   baseFileKindSchema,
@@ -14,6 +18,7 @@ import {
   connectorTestInputSchema,
   controlledWriteIpcInputSchema,
   exportGenerationWorkbookInputSchema,
+  publishGenerationWorkbookInputSchema,
   exportConfirmedCropsInputSchema,
   refineCropInputSchema,
   generateTemplateConfigInputSchema,
@@ -66,6 +71,19 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.supplementSelect, async event => { assertTrustedSender(event.senderFrame); return supplement.select() })
   ipcMain.handle(IPC_CHANNELS.supplementAnalyze, async (event, input: unknown) => { assertTrustedSender(event.senderFrame); return supplement.analyze(input) })
   ipcMain.handle(IPC_CHANNELS.supplementExport, async (event, input: unknown) => { assertTrustedSender(event.senderFrame); return supplement.export(input) })
+  ipcMain.handle(IPC_CHANNELS.supplementPublishShared, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    const request = z.object({ title: z.string().trim().min(1).max(180), overrides: z.unknown() }).strict().parse(input)
+    const stagingDirectory = await mkdtemp(join(app.getPath('temp'), 'casebang-supplement-shared-'))
+    try {
+      const path = await supplement.exportTo(join(stagingDirectory, 'supplement.xlsx'), request.overrides)
+      return await dependencies.collaboration.publishWorkbook({ path, title: `${request.title.replace(/\.xlsx$/i, '')}.xlsx`, sourceWorkflow: 'new-models' })
+    } finally {
+      await rm(stagingDirectory, { recursive: true, force: true }).catch((reason: unknown) => {
+        logger.warn('Could not remove supplement staging directory', { error: reason instanceof Error ? reason.message : String(reason) })
+      })
+    }
+  })
   ipcMain.handle(IPC_CHANNELS.appGetSnapshot, async (event): Promise<AppSnapshot> => {
     assertTrustedSender(event.senderFrame)
     return {
@@ -196,6 +214,41 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
       skippedCount: result.skipped?.length ?? 0
     })
     return result
+  })
+
+  ipcMain.handle(IPC_CHANNELS.tasksPublishGenerationWorkbook, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    const parsed = publishGenerationWorkbookInputSchema.safeParse(input)
+    if (!parsed.success) {
+      logger.error('Invalid shared workbook request', { issues: parsed.error.issues })
+      throw new Error('共享工作簿数据校验失败，请返回“生成与质检”重新生成后重试。')
+    }
+    const generatedWorkbook = parsed.data.generation.workspace.workbooks.find((book) => book.id === 'generated-product')
+    if (!generatedWorkbook) throw new Error('缺少新建产品表，无法建立共享工作簿。')
+    const request: ExportGenerationWorkbookInput = {
+      ...parsed.data.generation,
+      workspace: { ...parsed.data.generation.workspace, workbooks: [generatedWorkbook] },
+      selectedWorkbookIds: ['generated-product'],
+      overwriteBaseFiles: false
+    }
+    const stagingDirectory = await mkdtemp(join(app.getPath('temp'), 'casebang-shared-workbook-'))
+    try {
+      logger.info('Preparing generated workbook for central storage', { title: request.workspace.title })
+      const generated = await dependencies.tasks.exportGenerationWorkbook(request, { outputDirectory: stagingDirectory })
+      const workbook = generated.files?.find((file) => file.label === '新建产品表')
+      if (!workbook) throw new Error('新建产品表生成失败，未建立共享工作簿。')
+      return await dependencies.collaboration.publishWorkbook({
+        path: workbook.path,
+        title: workbook.fileName,
+        sourceWorkflow: parsed.data.sourceWorkflow
+      })
+    } finally {
+      await rm(stagingDirectory, { recursive: true, force: true }).catch((reason: unknown) => {
+        logger.warn('Could not remove shared workbook staging directory', {
+          error: reason instanceof Error ? reason.message : String(reason)
+        })
+      })
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.imagesAnalyze, async (event, input: unknown) => {

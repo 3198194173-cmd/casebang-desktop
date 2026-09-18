@@ -12,4 +12,5 @@ export interface SupplementApi {
   select(): Promise<string | null>
   analyze(input: SupplementRequest): Promise<SupplementResult>
   export(input?: SupplementOverrides): Promise<string | null>
+  publishShared(input: { title: string; overrides: SupplementOverrides }): Promise<{ item: import('./contracts').CollaborationWorkItem; duplicate: boolean }>
 }

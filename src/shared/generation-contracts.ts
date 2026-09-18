@@ -83,3 +83,8 @@ export interface ExportGenerationWorkbookResult {
   overwritten?: Array<{ label: string; path: string; historyId: string }>
   skipped?: Array<{ label: string; reason: string }>
 }
+
+export interface PublishGenerationWorkbookInput {
+  generation: ExportGenerationWorkbookInput
+  sourceWorkflow: 'new-series' | 'new-products'
+}

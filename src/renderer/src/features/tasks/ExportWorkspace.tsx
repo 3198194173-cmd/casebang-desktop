@@ -21,15 +21,13 @@ const DEFAULT_EXPORT_IDS: WorkbookId[] = ['generated-product']
 const DEFAULT_BASE_IDS: BaseWorkbookId[] = ['barcode-reference', 'domestic-naming']
 
 export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, sourceWorkflow, onDataChanged }: Props): React.JSX.Element {
-  const [busyMode, setBusyMode] = useState<'export' | 'overwrite' | 'publish' | null>(null)
+  const [busyMode, setBusyMode] = useState<'export' | 'overwrite' | 'publish' | 'open' | null>(null)
   const operationPending = useRef(false)
   const [result, setResult] = useState<string | null>(null)
   const [processedFiles, setProcessedFiles] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [exportIds, setExportIds] = useState<WorkbookId[]>(DEFAULT_EXPORT_IDS)
   const [baseUpdateIds, setBaseUpdateIds] = useState<BaseWorkbookId[]>(() => workspace.workbooks.some((item) => item.id === 'product-image-mapping') ? [...DEFAULT_BASE_IDS, 'product-image-mapping'] : DEFAULT_BASE_IDS)
   const [requireQualityCheck, setRequireQualityCheck] = useState(true)
-  const [sharedFile, setSharedFile] = useState<{ path: string; fileName: string } | null>(null)
   const [publishedRecord, setPublishedRecord] = useState<{ id: string; revision: number } | null>(null)
   const ready = !requireQualityCheck || workspace.checks.every((check) => check.passed)
 
@@ -37,9 +35,38 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
     void desktopApi.settings.get().then((value) => setRequireQualityCheck(value.requireQualityCheck))
   }, [])
 
+  const generationRequest = (selectedWorkbookIds: WorkbookId[], overwriteBaseFiles: boolean) => {
+    const namingFormula = baseFiles.namingFormula.path
+    const barcodeReference = baseFiles.barcodeReference.path
+    const domesticNaming = baseFiles.domesticNaming.path
+    if (!namingFormula || !barcodeReference || !domesticNaming) throw new Error('三个基础表路径不完整，无法处理。')
+    return {
+      suggestedName: workspace.title,
+      workspace: {
+        ...workspace,
+        workbooks: workspace.workbooks.filter((book) => selectedWorkbookIds.includes(book.id)).map((book) => ({
+          ...book,
+          sheets: book.sheets.map((sheet) => ({
+            ...sheet,
+            headerCells: sheet.headerCells?.map(({ historicalImageDataUrl: _image, ...cell }) => cell),
+            rows: sheet.rows.map((row) => row.map(({ historicalImageDataUrl: _image, ...cell }) => cell))
+          }))
+        }))
+      },
+      templateName,
+      sourcePaths: { namingFormula, barcodeReference, domesticNaming, productImageMapping: baseFiles.productImageMapping?.path ?? undefined },
+      imageSource: {
+        path: analysis.sourceImagePath,
+        crops: analysis.crops.map(({ id, x, y, width, height }) => ({ id, x, y, width, height }))
+      },
+      selectedWorkbookIds,
+      overwriteBaseFiles
+    }
+  }
+
   const runOperation = async (mode: 'export' | 'overwrite'): Promise<void> => {
     if (operationPending.current) return
-    const selectedWorkbookIds: WorkbookId[] = mode === 'export' ? exportIds : baseUpdateIds
+    const selectedWorkbookIds: WorkbookId[] = mode === 'export' ? DEFAULT_EXPORT_IDS : baseUpdateIds
     if (selectedWorkbookIds.length === 0) {
       setError(mode === 'export' ? '请至少选择一个要导出的表格。' : '请至少选择一个要覆盖的基础表。')
       return
@@ -56,35 +83,9 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
       setError(null)
       setResult(null)
       setProcessedFiles([])
-      if (mode === 'export') { setSharedFile(null); setPublishedRecord(null) }
       // Paint the busy indicator before preparing the IPC payload.
       await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
-      const namingFormula = baseFiles.namingFormula.path
-      const barcodeReference = baseFiles.barcodeReference.path
-      const domesticNaming = baseFiles.domesticNaming.path
-      if (!namingFormula || !barcodeReference || !domesticNaming) throw new Error('三个基础表路径不完整，无法处理。')
-      const response = await desktopApi.tasks.exportGenerationWorkbook({
-        suggestedName: workspace.title,
-        workspace: {
-          ...workspace,
-          workbooks: workspace.workbooks.filter((book) => selectedWorkbookIds.includes(book.id)).map((book) => ({
-            ...book,
-            sheets: book.sheets.map((sheet) => ({
-              ...sheet,
-              headerCells: sheet.headerCells?.map(({ historicalImageDataUrl: _image, ...cell }) => cell),
-              rows: sheet.rows.map((row) => row.map(({ historicalImageDataUrl: _image, ...cell }) => cell))
-            }))
-          }))
-        },
-        templateName,
-        sourcePaths: { namingFormula, barcodeReference, domesticNaming, productImageMapping: baseFiles.productImageMapping?.path ?? undefined },
-        imageSource: {
-          path: analysis.sourceImagePath,
-          crops: analysis.crops.map(({ id, x, y, width, height }) => ({ id, x, y, width, height }))
-        },
-        selectedWorkbookIds,
-        overwriteBaseFiles: mode === 'overwrite'
-      })
+      const response = await desktopApi.tasks.exportGenerationWorkbook(generationRequest(selectedWorkbookIds, mode === 'overwrite'))
       if (response.canceled) {
         setError(mode === 'export' ? '已取消选择导出目录，没有生成任何文件。' : '基础资料覆盖已取消。')
         return
@@ -107,8 +108,6 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
       }
       setResult(`文件导出完成：${response.outputPath ?? ''}`)
       setProcessedFiles(exported.map((item) => item.fileName))
-      const generated = exported.find(item => item.label === '新建产品表')
-      if (generated) { setSharedFile({ path: generated.path, fileName: generated.fileName }); setPublishedRecord(null) }
     } catch (reason) {
       setError(reason instanceof Error
         ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
@@ -119,23 +118,39 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
     }
   }
 
-  const toggleExport = (id: WorkbookId): void => {
-    setExportIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
-  }
   const toggleBaseUpdate = (id: BaseWorkbookId): void => {
     setBaseUpdateIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
   }
 
   const publishWorkbook = async (): Promise<void> => {
-    if (!sharedFile || operationPending.current) return
+    if (operationPending.current) return
     try {
       operationPending.current = true
-      setBusyMode('publish'); setError(null); setResult(null)
-      const response = await desktopApi.collaboration.publishWorkbook({ path: sharedFile.path, title: sharedFile.fileName, sourceWorkflow })
+      setBusyMode('publish'); setError(null); setResult(null); setProcessedFiles([])
+      await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
+      const response = await desktopApi.tasks.publishGenerationWorkbook({
+        generation: generationRequest(DEFAULT_EXPORT_IDS, false),
+        sourceWorkflow
+      })
       setPublishedRecord({ id: response.item.id, revision: response.item.revision })
-      setResult(response.duplicate ? '该工作簿已在共享流程中，未重复建立记录。' : '已导入共享工作簿，阶段为“已建表，待下游加工”。')
+      setResult(response.duplicate ? '中央工作簿已经存在，已连接到原记录。' : '共享工作簿已建立，双方现在编辑同一份中央文件。')
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '') : '导入共享工作簿失败')
+      setError(reason instanceof Error ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '') : '建立共享工作簿失败')
+    } finally {
+      operationPending.current = false
+      setBusyMode(null)
+    }
+  }
+
+  const openOnlineWorkbook = async (): Promise<void> => {
+    if (!publishedRecord || operationPending.current) return
+    try {
+      operationPending.current = true
+      setBusyMode('open'); setError(null)
+      await desktopApi.collaboration.openOnlineWorkbook({ workItemId: publishedRecord.id })
+      setResult('已打开 WPS 在线工作簿；双方从“工作簿记录”进入时编辑的是同一份中央文件。')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '') : '打开 WPS 在线工作簿失败')
     } finally {
       operationPending.current = false
       setBusyMode(null)
@@ -143,28 +158,25 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
   }
 
   return <div className="export-workspace">
-    <section className="export-card primary-export">
-      <div className="export-file-icon">导出</div>
-      <div>
-        <span className="eyebrow">导出副本</span>
-        <h4>另存新建产品表</h4>
-        <p>A 条码参考和国内命名表通过下方覆盖流程原位更新，不再要求导出副本。</p>
-        <div className="export-selection-list">
-          {workspace.workbooks.filter((item) => item.id === 'generated-product').map((item) => <label key={item.id}>
-            <input type="checkbox" checked={exportIds.includes(item.id)} onChange={() => toggleExport(item.id)} />
-            <span><strong>{item.name}</strong><small>包含图片表和条码表</small></span>
-          </label>)}
-        </div>
-      </div>
-      <button className="primary-button" disabled={!ready || busyMode !== null || exportIds.length === 0} onClick={() => void runOperation('export')}>
-        {busyMode === 'export' ? '正在导出…' : '导出所选文件'}
-      </button>
-    </section>
-
     <section className="export-card shared-workbook-export">
       <div className="export-file-icon update">共享</div>
-      <div><span className="eyebrow">进入流程</span><h4>导入共享工作簿</h4><p>将已质检的新建表保存到中央服务，双方共用一条工作簿记录。</p><div className="base-update-operation-name"><span>当前文件</span><strong>{sharedFile?.fileName ?? '请先在上方导出新建产品表'}</strong></div>{publishedRecord && <small>共享记录 {publishedRecord.id.slice(0, 8)} · 修订 {publishedRecord.revision}</small>}</div>
-      <button className="primary-button" disabled={!ready || !sharedFile || busyMode !== null || Boolean(publishedRecord)} onClick={() => void publishWorkbook()}>{busyMode === 'publish' ? '正在导入…' : publishedRecord ? '已进入共享流程' : '导入共享工作簿'}</button>
+      <div><span className="eyebrow">进入协作</span><h4>建立共享工作簿</h4><p>软件在后台生成并上传新建产品表，不需要先导出本地文件。建立后双方编辑同一份中央工作簿。</p><div className="base-update-operation-name"><span>中央工作簿</span><strong>{workspace.title}.xlsx</strong></div>{publishedRecord && <small>共享记录 {publishedRecord.id.slice(0, 8)} · 修订 {publishedRecord.revision}</small>}</div>
+      <div className="shared-workbook-actions">
+        <button className="primary-button" disabled={!ready || busyMode !== null || Boolean(publishedRecord)} onClick={() => void publishWorkbook()}>{busyMode === 'publish' ? '正在建立并上传…' : publishedRecord ? '共享工作簿已建立' : '建立共享工作簿'}</button>
+        {publishedRecord && <button className="secondary-button" disabled={busyMode !== null} onClick={() => void openOnlineWorkbook()}>{busyMode === 'open' ? '正在打开…' : '打开 WPS 在线编辑'}</button>}
+      </div>
+    </section>
+
+    <section className="export-card primary-export local-copy-export">
+      <div className="export-file-icon">副本</div>
+      <div>
+        <span className="eyebrow">可选操作</span>
+        <h4>导出本地副本</h4>
+        <p>仅用于离线备份或发送。本地副本与中央工作簿相互独立，后续修改不会自动同步。</p>
+      </div>
+      <button className="secondary-button" disabled={!ready || busyMode !== null} onClick={() => void runOperation('export')}>
+        {busyMode === 'export' ? '正在导出…' : '导出本地副本'}
+      </button>
     </section>
 
     <section className="export-card base-update-export">

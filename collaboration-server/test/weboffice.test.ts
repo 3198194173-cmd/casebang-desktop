@@ -7,7 +7,7 @@ import type { PrivateStorage } from '../src/storage.js'
 import { registerWebOfficeRoutes } from '../src/weboffice.js'
 
 const config = loadConfig({
-  NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab', DB_PASSWORD: 'test', STORAGE_ROOT: './tmp-test',
+  NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://collab.casebang.tech', DB_PASSWORD: 'test', STORAGE_ROOT: './tmp-test',
   WPS_WEBOFFICE_ENABLED: 'true', WPS_APP_ID: 'SX20260918QZNBYG', WPS_APP_SECRET: 'wps-test-secret'
 })
 

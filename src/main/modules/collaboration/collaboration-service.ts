@@ -6,8 +6,8 @@ import { z } from 'zod'
 import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem } from '@shared/contracts'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service'
+import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
 
-const SERVICE_ORIGIN = 'https://casebang.tech/collab'
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
 const publishSchema = z.object({
@@ -150,7 +150,7 @@ export class CollaborationService {
     const value = openOnlineSchema.parse(input)
     const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/weboffice-session`, { method: 'POST' })
     const body = await response.json() as WebOfficeSessionResponse
-    if (!body.editorUrl?.startsWith(`${SERVICE_ORIGIN}/weboffice/editor?`)) throw new Error('在线编辑地址校验失败。')
+    if (!body.editorUrl?.startsWith(`${COLLABORATION_ORIGIN}/weboffice/editor?`)) throw new Error('在线编辑地址校验失败。')
     await shell.openExternal(body.editorUrl)
     return { opened: true }
   }
@@ -160,7 +160,7 @@ export class CollaborationService {
     if (!session) throw new Error('请先登录钉钉账号。')
     let response: Response
     try {
-      response = await net.fetch(`${SERVICE_ORIGIN}${path}`, {
+      response = await net.fetch(`${COLLABORATION_ORIGIN}${path}`, {
         ...init,
         headers: { ...Object.fromEntries(new Headers(init.headers).entries()), authorization: `Bearer ${session.sessionToken}` },
         signal: AbortSignal.timeout(init.method === 'POST' ? 120_000 : 30_000)

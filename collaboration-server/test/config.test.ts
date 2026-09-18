@@ -35,20 +35,20 @@ describe('central service configuration', () => {
 
   it('loads WPS WebOffice identifiers only when its secret is configured', () => {
     expect(() => loadConfig({
-      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab', DB_PASSWORD: 'x',
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://collab.casebang.tech', DB_PASSWORD: 'x',
       WPS_WEBOFFICE_ENABLED: 'true', WPS_APP_ID: 'SX20260918QZNBYG'
     })).toThrow('WPS_APP_SECRET')
     const value = loadConfig({
-      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab', DB_PASSWORD: 'x',
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://collab.casebang.tech', DB_PASSWORD: 'x',
       WPS_WEBOFFICE_ENABLED: 'true', WPS_APP_ID: 'SX20260918QZNBYG', WPS_APP_SECRET: 'test-wps-secret'
     })
     expect(value.wps).toEqual({ enabled: true, appId: 'SX20260918QZNBYG', appSecret: 'test-wps-secret' })
   })
-  it('preserves and normalizes the public reverse-proxy path prefix', () => {
+  it('normalizes the public tunnel origin', () => {
     const value = loadConfig({
-      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://casebang.tech/collab/',
+      NODE_ENV: 'test', PUBLIC_ORIGIN: 'https://collab.casebang.tech/',
       DB_PASSWORD: 'test-password', STORAGE_ROOT: './tmp-test'
     })
-    expect(value.publicOrigin).toBe('https://casebang.tech/collab')
+    expect(value.publicOrigin).toBe('https://collab.casebang.tech')
   })
 })

@@ -1,8 +1,7 @@
 import { net, shell } from 'electron'
 import type { BusinessRole, CollaborationAccountState, CollaborationUser } from '@shared/contracts'
 import type { CollaborationSession, SettingsRepository } from '@main/infrastructure/settings-repository'
-
-const SERVICE_ORIGIN = 'https://casebang.tech/collab'
+import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
 const POLL_INTERVAL_MS = 1_500
 
 interface LoginStartResponse {
@@ -52,7 +51,7 @@ export class CollaborationAuthService {
       return { ...signedOut(), message: '登录已过期，请重新登录。' }
     }
     try {
-      const response = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/me`, {
+      const response = await this.fetcher(`${COLLABORATION_ORIGIN}/api/v1/auth/me`, {
         headers: { authorization: `Bearer ${session.sessionToken}` },
         signal: AbortSignal.timeout(12_000)
       })
@@ -90,7 +89,7 @@ export class CollaborationAuthService {
     const session = await this.settings.getCollaborationSession()
     try {
       if (session) {
-        await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/logout`, {
+        await this.fetcher(`${COLLABORATION_ORIGIN}/api/v1/auth/logout`, {
           method: 'POST',
           headers: { authorization: `Bearer ${session.sessionToken}` },
           signal: AbortSignal.timeout(8_000)
@@ -107,7 +106,7 @@ export class CollaborationAuthService {
   private async performLogin(businessRole: BusinessRole): Promise<CollaborationAccountState> {
     let startResponse: Response
     try {
-      startResponse = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/start`, {
+      startResponse = await this.fetcher(`${COLLABORATION_ORIGIN}/api/v1/auth/dingtalk/start`, {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
         body: JSON.stringify({ businessRole }),
@@ -127,7 +126,7 @@ export class CollaborationAuthService {
       await this.delay(POLL_INTERVAL_MS)
       let response: Response
       try {
-        response = await this.fetcher(`${SERVICE_ORIGIN}/api/v1/auth/dingtalk/status`, {
+        response = await this.fetcher(`${COLLABORATION_ORIGIN}/api/v1/auth/dingtalk/status`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify({ attemptId: start.attemptId, pollToken: start.pollToken }),

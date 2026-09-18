@@ -2,13 +2,11 @@
 
 更新时间：2026-09-17。已有条件：Ubuntu 服务器、casebang.tech 域名、钉钉开发者权限。
 
-## 1. 域名可以复用，但不覆盖已有程序
+## 1. 独立协同入口，不覆盖已有程序
 
-因中国大陆服务器的独立子域名被备案系统拦截，最终采用现有 HTTPS 主机名下的独立路径 `https://casebang.tech/collab/`。已有 `https://casebang.tech/AI/index.html` 的应用、路由和数据保持不变；只在现有 HTTPS `server` 块中增加 `/collab/` 代理位置。新数据库和私有文件目录仍独立管理。
+中国大陆腾讯云入口会在 TLS 握手阶段拦截未备案域名；把接口改成 `/collab/` 路径无法绕过，因为拦截发生在读取路径之前。正式测试入口因此调整为 `https://collab.casebang.tech/`，由 Cloudflare Tunnel 主动连接服务器本机的 `http://127.0.0.1:3100`。
 
-代理使用尾斜杠规则：外部 `/collab/health/live` 转发为内部 `/health/live`。`PUBLIC_ORIGIN` 必须设置为 `https://casebang.tech/collab`，后续登录回调也必须基于这个公共前缀生成，不能回退到根路径或 `/AI/`。
-
-原理参考：[Nginx 基于域名选择虚拟服务](https://nginx.org/en/docs/http/request_processing.html)。HTTPS 需要覆盖新主机名的有效证书，不能假设现有证书包含它：[Nginx HTTPS 配置](https://nginx.org/en/docs/http/configuring_https_servers.html)。
+`PUBLIC_ORIGIN` 必须设置为 `https://collab.casebang.tech`。现有 `https://casebang.tech/AI/index.html`、门户、Nginx 路由和数据保持不变；新数据库和私有文件目录仍独立管理。Tunnel 入口不启用额外 Cloudflare Access 登录页，访问控制由 CASEBANG 会话、钉钉身份和 WPS 回调签名承担。
 
 服务器已确认具备 Docker、Docker Compose 和运行中的 Nginx。实际部署步骤见 `deploy/README.md`。不需要发送服务器密码或 SSH 私钥。
 
@@ -33,8 +31,8 @@ df -h /
 由有权限的开发者创建独立测试应用，准备 CorpId、AppKey/Client ID、AgentId。AppSecret/Client Secret 仅保存在服务器的安全配置中，不写入源码、安装包、日志或聊天。应用基础信息位置参考：[钉钉官方端外登录示例](https://github.com/open-dingtalk/h5app-out-login-demo)。
 
 - 两个同企业测试账号：A 登录时选择“上游建表”，B 选择“下游加工”；都要在应用可见范围内并实际登录软件。上游不显示加工工具，下游不显示建表工具；两个账号都能查看同一中央工作簿记录。
-- 登录回调地址已经固定为 `https://casebang.tech/collab/api/v1/auth/dingtalk/callback`。必须在“钉钉登录与分享/接入登录”的回调地址中完整登记该地址，不能只填域名，也不能填 `/AI/`。
-- 若开发者后台要求先添加“网页应用”能力，应用首页地址和 PC 端首页地址都填写 `https://casebang.tech/collab/login`；该页面只提示用户从 Windows 桌面版发起登录，不承载业务数据。
+- 登录回调地址固定为 `https://collab.casebang.tech/api/v1/auth/dingtalk/callback`。必须在“钉钉登录与分享/接入登录”的回调地址中完整登记该地址，不能只填域名，也不能填 `/AI/`。
+- 若开发者后台要求网页应用首页地址和 PC 端首页地址，均填写 `https://collab.casebang.tech/login`；该页面只提示用户从 Windows 桌面版发起登录，不承载业务数据。
 - 申请登录所需的最小个人权限“通讯录个人信息读权限”，以及企业应用校验成员所需的“成员信息读权限”。不需要为登录打开整页通讯录变更事件订阅。
 - 根据真正采用的接口申请最小权限：登录身份、企业内消息、指定钉盘图档和在线表格。开发者权限不代表应用自动拥有全部文件的访问权。
 - 先使用测试文件夹和测试在线表格，不让开发测试改动生产物料总表。
@@ -55,7 +53,7 @@ df -h /
 
 ## 6. 当前真实环境验收记录
 
-- `https://casebang.tech/collab/health/live` 与 `/health/ready` 已通过 HTTPS 验证。
+- 服务器本机 `/health/live` 与 `/health/ready` 已通过；旧公网 `/collab/` 入口在 Windows 外网 TLS 握手阶段被拦截，正在切换到 `https://collab.casebang.tech/` Cloudflare Tunnel 后重新验收。
 - PostgreSQL、私有存储和钉钉 Stream 均返回正常，开发者后台显示 Stream 在线。
 - `/AI/index.html` 在增加 `/collab/` 代理后仍返回 HTTP 200。
 - 登录迁移、精确回调地址、最小权限和 Stream 已部署。真实账号“卓志”已完成钉钉授权，浏览器显示登录成功，服务端 `app_users` 已写入对应企业 userId、启用状态和最后登录时间。

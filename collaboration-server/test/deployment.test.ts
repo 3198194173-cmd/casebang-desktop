@@ -8,7 +8,7 @@ describe('same-host reverse-proxy deployment', () => {
     const snippet = await readFile(resolve(root, 'deploy/nginx/casebang.tech-collab.location.example'), 'utf8')
     const environment = await readFile(resolve(root, 'deploy/collaboration.env.example'), 'utf8')
 
-    expect(environment).toContain('PUBLIC_ORIGIN=https://casebang.tech/collab')
+    expect(environment).toContain('PUBLIC_ORIGIN=https://collab.casebang.tech')
     expect(environment).toContain('WPS_APP_ID=SX20260918QZNBYG')
     expect(environment).toContain('WPS_WEBOFFICE_ENABLED=false')
     expect(snippet).toContain('location /collab/')

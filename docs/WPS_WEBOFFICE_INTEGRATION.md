@@ -35,7 +35,7 @@ WPS WebOffice 不替 CASEBANG 保存业务文件。CASEBANG 继续拥有 XLSX �
 
 - 在 WPS 开放平台创建并通过审核的 WebOffice 应用，确认已开通表格在线编辑能力。
 - WebOffice AppId。AppSecret 不发送到聊天、不写入 Git，只写入服务器权限为 600 的 secret 文件。
-- 在 WPS 后台把公网回调网关配置到 `https://casebang.tech/collab/weboffice/`，逐项通过在线调试后再开启。
+- 在 WPS 后台把公网回调网关配置到 `https://collab.casebang.tech/weboffice`，逐项通过在线调试后再开启。
 - 两个测试账号都能访问该应用，用同一条测试工作簿完成同时编辑、自动保存、主动保存和断线重连测试。
 
 钉钉登录应用与 WPS WebOffice 应用是两个独立的凭据体系：钉钉负责确认 CASEBANG 用户身份，WPS 负责在线编辑。不能把钉钉 Client Secret 当作 WPS AppSecret 使用。

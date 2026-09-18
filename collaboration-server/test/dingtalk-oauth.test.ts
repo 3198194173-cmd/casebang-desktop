@@ -4,7 +4,7 @@ import { DingTalkOAuthClient, DingTalkOAuthError } from '../src/dingtalk-oauth.j
 
 const config = loadConfig({
   NODE_ENV: 'test',
-  PUBLIC_ORIGIN: 'https://casebang.tech/collab',
+  PUBLIC_ORIGIN: 'https://collab.casebang.tech',
   DB_PASSWORD: 'database-test',
   DINGTALK_STREAM_ENABLED: 'true',
   DINGTALK_CORP_ID: 'ding-corp',
@@ -18,7 +18,7 @@ describe('DingTalk OAuth client', () => {
     const client = new DingTalkOAuthClient(config)
     const url = new URL(client.authorizationUrl('state-value'))
     expect(url.origin + url.pathname).toBe('https://login.dingtalk.com/oauth2/auth')
-    expect(url.searchParams.get('redirect_uri')).toBe('https://casebang.tech/collab/api/v1/auth/dingtalk/callback')
+    expect(url.searchParams.get('redirect_uri')).toBe('https://collab.casebang.tech/api/v1/auth/dingtalk/callback')
     expect(url.searchParams.get('client_id')).toBe('ding-client')
     expect(url.searchParams.get('scope')).toBe('openid')
     expect(url.searchParams.get('state')).toBe('state-value')

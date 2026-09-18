@@ -1,6 +1,6 @@
 # CASEBANG 中央协同服务部署
 
-此部署与现有 `casebang.tech/AI/` 分离：新服务使用 `https://casebang.tech/collab/`，只在现有 HTTPS 主机中增加一个独立路径。API 只绑定服务器本机 `127.0.0.1:3100`，PostgreSQL 不发布端口，Nginx 是唯一公网入口。
+此部署与现有 `casebang.tech/AI/` 分离：协同服务使用 `https://collab.casebang.tech/`，通过 Cloudflare Tunnel 转发到服务器本机 `127.0.0.1:3100`。API 和 PostgreSQL 都不直接发布公网端口，未备案的腾讯云公网 HTTPS 入口不再参与协同链路。
 
 ## 0. 部署前安全动作
 
@@ -72,29 +72,25 @@ curl -fsS http://127.0.0.1:3100/health/ready
 
 首次启动会在空测试库中自动、按校验和执行迁移。任何迁移失败都会阻止 API 启动，不会把半迁移状态宣称为可用。
 
-## 4. 在现有 HTTPS 站点中增加独立路径
+## 4. 建立 Cloudflare Tunnel 公网入口
 
-不要创建新的 `collab.casebang.tech` 站点。先将 location 片段复制到 Nginx snippets：
+先把域名权威 DNS 切换到 Cloudflare，并等待站点状态变为 `Active`。在 Cloudflare Zero Trust 中创建名为 `casebang-collaboration` 的 Tunnel，把控制台提供的私密安装命令放到 Ubuntu 服务器执行；Tunnel Token 不得写入仓库、日志或聊天。
 
-```sh
-sudo cp deploy/nginx/casebang.tech-collab.location.example /etc/nginx/snippets/casebang-collaboration.conf
+新增 Published application：
+
+```text
+Hostname: collab.casebang.tech
+Service:  http://127.0.0.1:3100
 ```
 
-然后只在现有 `casebang.tech` 的 HTTPS `server` 块内加入下面一行；不要放到 `/AI/` 的 location 内，也不要放到 `server` 块之外：
+不要为此公开 Docker 的 3100 端口，也不要启用 Cloudflare Access 登录页，否则钉钉和 WPS 服务端回调将无法访问。Cloudflare 激活后从外部 Windows 电脑验证：
 
-```nginx
-include /etc/nginx/snippets/casebang-collaboration.conf;
+```powershell
+curl.exe -fsS https://collab.casebang.tech/health/live
+curl.exe -fsS https://collab.casebang.tech/health/ready
 ```
 
-验证并重新加载：
-
-```sh
-sudo nginx -t && sudo systemctl reload nginx
-curl -fsS https://casebang.tech/collab/health/live
-curl -fsS https://casebang.tech/collab/health/ready
-```
-
-复用 `casebang.tech` 现有证书，不再为 `collab.casebang.tech` 申请证书。`nginx -t` 不通过时不要 reload。
+现有 Nginx `/AI/` 和门户配置保持不变；旧 `/collab/` location 仅作为停用的历史配置，不再是桌面端入口。
 
 ## 5. 启用钉钉 Stream
 
@@ -103,7 +99,7 @@ curl -fsS https://casebang.tech/collab/health/ready
 ```sh
 docker compose -f compose.collaboration.yml up -d --build api
 docker compose -f compose.collaboration.yml logs --tail=100 api
-curl -fsS https://casebang.tech/collab/health/ready
+curl -fsS https://collab.casebang.tech/health/ready
 ```
 
 Stream 是服务端主动连接钉钉，不需要配置公网 HTTP 回调地址。服务端只在事件成功落库后确认消费；落库失败会请求稍后重试。当前只验证连接与安全收件，尚未开放账号登录、任务交接和在线总表写入。
@@ -113,7 +109,7 @@ Stream 是服务端主动连接钉钉，不需要配置公网 HTTP 回调地址�
 代码和迁移部署完成后，在 WPS WebOffice 控制台将回调网关设置为：
 
 ```text
-https://casebang.tech/collab/weboffice
+https://collab.casebang.tech/weboffice
 ```
 
 需要调试并开启的接口：文件信息、文件下载地址、文档用户权限、批量用户信息，以及三阶段保存的准备上传、获取上传地址、上传完成。历史版本、重命名、另存和打印目前保持关闭。
@@ -129,7 +125,7 @@ WPS_WEBOFFICE_ENABLED=true
 ```sh
 docker compose -f compose.collaboration.yml up -d --build --force-recreate api
 docker compose -f compose.collaboration.yml logs --tail=150 api
-curl -fsS https://casebang.tech/collab/api/v1/system/capabilities
+curl -fsS https://collab.casebang.tech/api/v1/system/capabilities
 ```
 
 桌面端从“工作簿记录”点击“WPS 在线编辑”会签发四小时的用户凭证，并打开相同 `file_id`。凭证放在 URL Fragment 中，不进入 Nginx 请求日志；WPS 保存采用三阶段上传，每次完成后中央修订号递增。

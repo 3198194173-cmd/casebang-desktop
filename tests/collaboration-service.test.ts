@@ -95,7 +95,7 @@ describe('desktop collaboration service', () => {
 
   it('opens only the verified CASEBANG WebOffice editor address', async () => {
     const workItemId = '30000000-0000-4000-8000-000000000001'
-    const editorUrl = `https://casebang.tech/collab/weboffice/editor?fileId=f30000000000040008000000000000001#token=test`
+    const editorUrl = `https://collab.casebang.tech/weboffice/editor?fileId=f30000000000040008000000000000001#token=test`
     vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ editorUrl }), { status: 201 }))
     await new CollaborationService(settings()).openOnlineWorkbook({ workItemId })
     expect(net.fetch).toHaveBeenCalledWith(expect.stringContaining(`/work-items/${workItemId}/weboffice-session`), expect.objectContaining({ method: 'POST' }))

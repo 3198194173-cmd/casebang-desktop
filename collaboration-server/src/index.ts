@@ -42,6 +42,28 @@ const consoleLogger = {
 }
 
 main().catch(error => {
-  console.error('中央协同服务启动失败', error instanceof Error ? error.message : String(error))
+  console.error('中央协同服务启动失败', formatStartupError(error))
   process.exitCode = 1
 })
+
+function formatStartupError(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? error.message
+  if (!error || typeof error !== 'object') return String(error)
+
+  const value = error as Record<string, unknown>
+  const safeDetails = {
+    statusCode: value.statusCode,
+    code: value.code,
+    message: value.message,
+    error: value.error
+  }
+  try {
+    return JSON.stringify(
+      safeDetails,
+      ['statusCode', 'code', 'message', 'error', 'Code', 'Message', 'Resource', 'RequestId', 'TraceId'],
+      2
+    )
+  } catch {
+    return Object.prototype.toString.call(error)
+  }
+}

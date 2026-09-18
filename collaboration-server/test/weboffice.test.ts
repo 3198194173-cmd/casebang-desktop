@@ -16,6 +16,19 @@ function queryResult<T>(rows: T[]): pg.QueryResult<T> {
 }
 
 describe('WPS WebOffice gateway', () => {
+  it('shows the active callback gateway when editor connection times out', async () => {
+    const app = Fastify()
+    registerWebOfficeRoutes(app, config, {} as pg.Pool, {} as PrivateStorage)
+    const response = await app.inject({
+      method: 'GET',
+      url: '/weboffice/editor?fileId=f30000000000040008000000000000001'
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.body).toContain('https://collab.casebang.tech/weboffice')
+    expect(response.body).toContain('15000')
+    await app.close()
+  })
+
   it('issues a short-lived editor token only to a work item participant', async () => {
     const workItemId = '30000000-0000-4000-8000-000000000001'
     const query = vi.fn()

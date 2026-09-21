@@ -1,6 +1,6 @@
 import { comparePatternsInputSchema, materialInputSchema } from '@shared/schemas'
 import { app, ipcMain } from 'electron'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { SupplementService } from '../modules/supplement/supplement-service'
@@ -60,6 +60,54 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.lifecycleGet, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.get(input) })
   ipcMain.handle(IPC_CHANNELS.lifecycleSave, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.save(input) })
   ipcMain.handle(IPC_CHANNELS.lifecyclePreview, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.preview(input) })
+  const sharedAnalysisSchema = z.object({
+    workItemId: z.string().uuid(), title: z.string().trim().min(1).max(240),
+    version: z.number().int().positive(), revision: z.number().int().positive(),
+    monthPrefix: z.string().regex(/^\d{4}(0[1-9]|1[0-2])$/),
+    patternVariants: z.record(z.string().max(1000), z.string().regex(/^[A-Z0-9]{2}$/)).optional()
+  }).strict()
+  ipcMain.handle(IPC_CHANNELS.lifecycleAnalyzeShared, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    const request = sharedAnalysisSchema.parse(input)
+    const directory = await mkdtemp(join(app.getPath('temp'), 'casebang-lifecycle-analysis-'))
+    try {
+      const path = join(directory, 'shared.xlsx')
+      await writeFile(path, await dependencies.collaboration.downloadWorkbook({ workItemId: request.workItemId }))
+      return await lifecycle.analyzeSharedFile(request, path)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  ipcMain.handle(IPC_CHANNELS.lifecycleApplyShared, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    const request = sharedAnalysisSchema.omit({ version: true, revision: true }).extend({
+      expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive(),
+      fillBarcodes: z.boolean(), fillMaterialCodes: z.boolean(), openOnlineAfterSave: z.boolean().optional()
+    }).strict().parse(input)
+    const directory = await mkdtemp(join(app.getPath('temp'), 'casebang-lifecycle-write-'))
+    try {
+      const source = join(directory, 'source.xlsx')
+      const destination = join(directory, 'allocated.xlsx')
+      await writeFile(source, await dependencies.collaboration.downloadWorkbook({ workItemId: request.workItemId }))
+      const counts = await lifecycle.writeSharedFile({
+        ...request, version: request.expectedVersion, revision: request.expectedRevision,
+        patternVariants: request.patternVariants ?? {}
+      }, source, destination)
+      const saved = await dependencies.collaboration.saveWorkbookRevision({
+        workItemId: request.workItemId, title: request.title,
+        expectedVersion: request.expectedVersion, expectedRevision: request.expectedRevision,
+        bytes: await readFile(destination)
+      })
+      let openedOnline = false
+      if (request.openOnlineAfterSave) {
+        await dependencies.collaboration.openOnlineWorkbook({ workItemId: request.workItemId })
+        openedOnline = true
+      }
+      return { item: saved.item, ...counts, openedOnline }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   const supplement = new SupplementService()
   ipcMain.handle(IPC_CHANNELS.supplementGetMaster, async event => { assertTrustedSender(event.senderFrame); return dependencies.settings.getMaterialMasterPath() })
   ipcMain.handle(IPC_CHANNELS.supplementSelectMaster, async event => {

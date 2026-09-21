@@ -72,6 +72,43 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
+  it('saves an automated allocation as a new revision for either task participant', async () => {
+    const workbook = Buffer.from('allocated workbook')
+    const actorId = '10000000-0000-4000-8000-000000000001'
+    const organizationId = '20000000-0000-4000-8000-000000000001'
+    const workItemId = '30000000-0000-4000-8000-000000000001'
+    const metadata = {
+      sourceWorkflow: 'manual', sourceId: workItemId, title: '新建产品表.xlsx',
+      sha256: createHash('sha256').update(workbook).digest('hex'), requestKey: '40000000-0000-4000-8000-000000000099',
+      targetWorkItemId: workItemId, expectedVersion: 3, expectedRevision: 2
+    }
+    const current = {
+      id: workItemId, title: metadata.title, state: 'PROCESSING', source_workflow: 'new-series', version: 3, revision: 2,
+      created_at: new Date('2026-09-18T00:00:00Z'), origin_id: actorId, origin_name: '测试人',
+      assignee_id: actorId, assignee_name: '测试人', current_sha256: 'a'.repeat(64)
+    }
+    const updated = { ...current, version: 4, revision: 3, modifier_id: actorId, modifier_name: '测试人', revision_created_at: new Date('2026-09-21T00:00:00Z') }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([{ id: actorId, display_name: '测试人', avatar_url: null, organization_id: organizationId, corp_id: 'corp', business_role: 'downstream' }]))
+      .mockResolvedValueOnce(queryResult([updated]))
+    const clientQuery = vi.fn(async (sql: string) => String(sql).includes('FOR UPDATE OF w') ? queryResult([current]) : queryResult([]))
+    const storage = { writeObject: vi.fn(), removeObject: vi.fn() }
+    const app = Fastify()
+    registerCollaborationRoutes(app, {
+      query, connect: vi.fn(async () => ({ query: clientQuery, release: vi.fn() }))
+    } as unknown as pg.Pool, storage as unknown as PrivateStorage)
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/collaboration/work-items',
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'x-casebang-metadata': Buffer.from(JSON.stringify(metadata)).toString('base64url') },
+      payload: workbook
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toEqual({ item: expect.objectContaining({ id: workItemId, version: 4, revision: 3, lastEditor: { id: actorId, displayName: '测试人' } }), duplicate: false })
+    expect(storage.writeObject).toHaveBeenCalledWith(`${organizationId}/${workItemId}/revision-3.xlsx`, workbook, metadata.sha256)
+    expect(clientQuery.mock.calls.some(call => String(call[0]).includes("'save-workbook'"))).toBe(true)
+    await app.close()
+  })
+
   it('lets one account create and own a shared workbook without a downstream account', async () => {
     const workbook = Buffer.from('workbook')
     const originId = '10000000-0000-4000-8000-000000000001'

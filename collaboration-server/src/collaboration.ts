@@ -10,17 +10,25 @@ const BINARY_CONTENT_TYPE = 'application/octet-stream'
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
 const UPLOAD_CHUNK_SIZE = 64 * 1024
 const UPLOAD_TTL_MS = 30 * 60 * 1000
-const metadataSchema = z.object({
+const metadataFields = {
   assigneeId: z.string().uuid().optional(),
   sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models', 'manual']),
   sourceId: z.string().min(1).max(200),
   title: z.string().trim().min(1).max(240),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
-  requestKey: z.string().uuid()
-}).strict()
-const uploadPrepareSchema = metadataSchema.extend({
+  requestKey: z.string().uuid(),
+  targetWorkItemId: z.string().uuid().optional(),
+  expectedVersion: z.number().int().positive().optional(),
+  expectedRevision: z.number().int().positive().optional()
+} as const
+const hasCompleteRevisionTarget = (value: { targetWorkItemId?: string; expectedVersion?: number; expectedRevision?: number }): boolean => {
+  const revisionFields = [value.targetWorkItemId, value.expectedVersion, value.expectedRevision]
+  return revisionFields.every(item => item == null) || revisionFields.every(item => item != null)
+}
+const metadataSchema = z.object(metadataFields).strict().refine(hasCompleteRevisionTarget, 'revision fields must be supplied together')
+const uploadPrepareSchema = z.object({ ...metadataFields,
   size: z.number().int().positive().max(MAX_WORKBOOK_SIZE)
-}).strict()
+}).strict().refine(hasCompleteRevisionTarget, 'revision fields must be supplied together')
 const uploadChunkSchema = z.object({
   data: z.string().min(4).max(Math.ceil(UPLOAD_CHUNK_SIZE / 3) * 4).regex(/^[A-Za-z0-9+/]+={0,2}$/)
 }).strict()
@@ -421,6 +429,9 @@ async function submitWorkbook(
 ): Promise<{ status: number; body: object }> {
   const actualHash = createHash('sha256').update(workbook).digest('hex')
   if (actualHash !== metadata.sha256) return { status: 409, body: { error: 'workbook_hash_mismatch' } }
+  if (metadata.targetWorkItemId && metadata.expectedVersion && metadata.expectedRevision) {
+    return saveWorkbookRevision(actor, metadata, workbook, pool, storage)
+  }
 
   const existing = await pool.query<WorkItemRow>(
     `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
@@ -510,6 +521,80 @@ async function submitWorkbook(
   }
   const created = await loadWorkItem(pool, actor.organization_id, workItemId)
   return { status: 201, body: { item: publicWorkItem(created), duplicate: false } }
+}
+
+async function saveWorkbookRevision(
+  actor: SessionUserRow,
+  metadata: z.infer<typeof metadataSchema>,
+  workbook: Buffer,
+  pool: pg.Pool,
+  storage: PrivateStorage
+): Promise<{ status: number; body: object }> {
+  const client = await pool.connect()
+  let objectKey: string | null = null
+  try {
+    await client.query('BEGIN')
+    const found = await client.query<WorkItemRow & { current_sha256: string }>(
+      `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
+              w.origin_id,origin.display_name AS origin_name,w.assignee_id,assignee.display_name AS assignee_name,
+              r.sha256 AS current_sha256
+       FROM work_items w
+       JOIN app_users origin ON origin.organization_id=w.organization_id AND origin.id=w.origin_id
+       JOIN app_users assignee ON assignee.organization_id=w.organization_id AND assignee.id=w.assignee_id
+       JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id AND r.revision=w.revision
+       WHERE w.organization_id=$1 AND w.id=$2 FOR UPDATE OF w`,
+      [actor.organization_id, metadata.targetWorkItemId]
+    )
+    const current = found.rows[0]
+    if (!current) { await client.query('ROLLBACK'); return { status: 404, body: { error: 'work_item_not_found' } } }
+    if (current.origin_id !== actor.id && current.assignee_id !== actor.id) {
+      await client.query('ROLLBACK'); return { status: 403, body: { error: 'forbidden_action' } }
+    }
+    if (current.current_sha256 === metadata.sha256) {
+      await client.query('COMMIT')
+      const item = await loadWorkItem(pool, actor.organization_id, current.id)
+      return { status: 200, body: { item: publicWorkItem(item), duplicate: true } }
+    }
+    if (current.version !== metadata.expectedVersion || current.revision !== metadata.expectedRevision) {
+      await client.query('ROLLBACK'); return { status: 409, body: { error: 'version_conflict' } }
+    }
+    const nextRevision = current.revision + 1
+    const nextVersion = current.version + 1
+    objectKey = `${actor.organization_id}/${current.id}/revision-${nextRevision}.xlsx`
+    await storage.writeObject(objectKey, workbook, metadata.sha256)
+    await client.query(
+      `INSERT INTO workbook_revisions(organization_id,work_item_id,revision,object_key,sha256,created_by)
+       VALUES($1,$2,$3,$4,$5,$6)`,
+      [actor.organization_id, current.id, nextRevision, objectKey, metadata.sha256, actor.id]
+    )
+    await client.query('UPDATE work_items SET revision=$3,version=$4 WHERE organization_id=$1 AND id=$2',
+      [actor.organization_id, current.id, nextRevision, nextVersion])
+    const eventId = randomUUID()
+    await client.query(
+      `INSERT INTO work_item_events(id,organization_id,work_item_id,actor_id,request_key,request_hash,version,action,payload)
+       VALUES($1,$2,$3,$4,$5,$6,$7,'save-workbook',$8)`,
+      [eventId, actor.organization_id, current.id, actor.id, metadata.requestKey,
+        createHash('sha256').update(JSON.stringify(metadata)).digest('hex'), nextVersion,
+        { revision: nextRevision, sha256: metadata.sha256 }]
+    )
+    const destinationUserId = actor.id === current.origin_id ? current.assignee_id : current.origin_id
+    if (destinationUserId !== actor.id) {
+      await client.query(
+        `INSERT INTO outbox_events(id,organization_id,event_id,destination_user_id,payload) VALUES($1,$2,$3,$4,$5)`,
+        [randomUUID(), actor.organization_id, eventId, destinationUserId,
+          { type: 'workbook-revision-saved', workItemId: current.id, title: current.title, revision: nextRevision }]
+      )
+    }
+    await client.query('COMMIT')
+    const item = await loadWorkItem(pool, actor.organization_id, current.id)
+    return { status: 201, body: { item: publicWorkItem(item), duplicate: false } }
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    if (objectKey) await storage.removeObject(objectKey).catch(() => undefined)
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 async function loadWorkItem(pool: pg.Pool, organizationId: string, id: string): Promise<WorkItemRow> {

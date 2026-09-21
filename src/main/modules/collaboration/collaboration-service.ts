@@ -67,6 +67,9 @@ interface WorkbookUploadMetadata {
   title: string
   sha256: string
   requestKey: string
+  targetWorkItemId?: string
+  expectedVersion?: number
+  expectedRevision?: number
 }
 interface WebOfficeSessionResponse { editorUrl?: string }
 interface RequestTiming { timeoutMs?: number; timeoutMessage?: string }
@@ -161,6 +164,30 @@ export class CollaborationService {
     const openError = await shell.openPath(destination)
     if (openError) throw new Error(`无法打开工作簿：${openError}`)
     return { path: destination }
+  }
+
+  async downloadWorkbook(input: { workItemId: string }): Promise<Buffer> {
+    const value = z.object({ workItemId: z.string().uuid() }).strict().parse(input)
+    const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/workbook`)
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (!bytes.length || bytes.length > MAX_WORKBOOK_SIZE) throw new Error('服务端返回的共享工作簿为空或超过 64 MB。')
+    return bytes
+  }
+
+  async saveWorkbookRevision(input: {
+    workItemId: string; title: string; expectedVersion: number; expectedRevision: number; bytes: Buffer
+  }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
+    const value = z.object({
+      workItemId: z.string().uuid(), title: z.string().trim().min(1).max(240),
+      expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive()
+    }).strict().parse({ workItemId: input.workItemId, title: input.title, expectedVersion: input.expectedVersion, expectedRevision: input.expectedRevision })
+    if (!input.bytes.length || input.bytes.length > MAX_WORKBOOK_SIZE) throw new Error('要保存的共享工作簿为空或超过 64 MB。')
+    const sha256 = createHash('sha256').update(input.bytes).digest('hex')
+    return this.uploadWorkbook(input.bytes, {
+      sourceWorkflow: 'manual', sourceId: value.workItemId, title: value.title,
+      sha256, requestKey: randomUUID(), targetWorkItemId: value.workItemId,
+      expectedVersion: value.expectedVersion, expectedRevision: value.expectedRevision
+    }, value.title)
   }
 
   async openOnlineWorkbook(input: unknown): Promise<{ opened: true }> {
@@ -320,7 +347,7 @@ function serverError(code?: string, status?: number): string {
     invalid_action: '任务操作参数不正确，请刷新后重试。',
     stage_required: '请选择要保存的工作簿阶段。',
     return_reason_required: '退回任务必须填写原因。',
-    forbidden_action: '当前账号不是这个任务的处理人。',
+    forbidden_action: '当前账号不是这个共享工作簿的参与人。',
     version_conflict: '任务版本已经更新，请刷新任务后重试。',
     state_conflict: '任务状态已经变化，请刷新任务后重试。',
     idempotency_conflict: '任务操作标识冲突，请刷新后重新操作。',

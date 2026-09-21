@@ -4,9 +4,10 @@ import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, stat, unlink } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview } from '../../../shared/lifecycle-contracts'
-import { patternVariantKey, previewMaterialCodes } from '../../../shared/material-coding'
+import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview, SharedLifecycleAnalysis } from '../../../shared/lifecycle-contracts'
+import { internalBarcodeCandidate, patternVariantKey, previewMaterialCodes } from '../../../shared/material-coding'
 import { readLifecycleWorkbook } from './workbook-reader'
+import { inspectBarcodeSequence, writeLifecycleCells } from './workbook-allocator'
 import type { LifecycleRepository } from './lifecycle-repository'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 
@@ -27,6 +28,71 @@ export class LifecycleService {
   async list(): Promise<LifecycleDraftSummary[]> { return (await this.repo()).list() }
   async get(input: unknown): Promise<LifecycleDraft> { return (await this.repo()).get(z.string().uuid().parse(input)) }
   async preview(input: unknown): Promise<LifecycleRowPreview[]> { return previewMaterialCodes(await this.get(input)) }
+  async analyzeSharedFile(
+    input: { workItemId: string; title: string; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string> },
+    workbookPath: string
+  ): Promise<SharedLifecycleAnalysis> {
+    const masterPath = await this.settings.getMaterialMasterPath()
+    if (!masterPath) throw new Error('请先选择最新的物料总表，再计算 69 码起始号码。')
+    const parsed = await readLifecycleWorkbook(workbookPath)
+    const variants = input.patternVariants ?? {}
+    const materialCodePreviews = previewMaterialCodes({ rows: parsed.rows, patternVariants: variants })
+    const master = await inspectBarcodeSequence(masterPath, input.monthPrefix)
+    let maximumSequence = master.maximumSequence
+    for (const row of parsed.rows) {
+      const match = new RegExp(`^${input.monthPrefix}(\\d{7})$`).exec(row.barcode.trim())
+      if (match) maximumSequence = Math.max(maximumSequence, Number(match[1]))
+    }
+    return {
+      workItemId: input.workItemId,
+      title: input.title,
+      version: input.version,
+      revision: input.revision,
+      rows: parsed.rows,
+      warnings: parsed.warnings,
+      materialCodePreviews,
+      barcodePlan: {
+        monthPrefix: input.monthPrefix,
+        previousCode: maximumSequence ? internalBarcodeCandidate(input.monthPrefix, maximumSequence) : null,
+        nextCode: internalBarcodeCandidate(input.monthPrefix, maximumSequence + 1),
+        pendingCount: parsed.rows.filter(row => !row.barcode.trim()).length,
+        existingCount: parsed.rows.filter(row => row.barcode.trim()).length,
+        masterFileName: master.masterFileName
+      }
+    }
+  }
+  async writeSharedFile(
+    input: { workItemId: string; title: string; version: number; revision: number; monthPrefix: string; fillBarcodes: boolean; fillMaterialCodes: boolean; patternVariants: Record<string, string> },
+    sourcePath: string,
+    destinationPath: string
+  ): Promise<{ barcodeFilled: number; materialCodeFilled: number }> {
+    if (!input.fillBarcodes && !input.fillMaterialCodes) throw new Error('请至少选择填写 69 码或物料编码中的一项。')
+    const analysis = await this.analyzeSharedFile(input, sourcePath)
+    const writes = new Map<string, Array<{ address: string; value: string }>>()
+    const add = (sheet: string, address: string, value: string): void => {
+      const values = writes.get(sheet) ?? []
+      values.push({ address, value }); writes.set(sheet, values)
+    }
+    let sequence = Number(analysis.barcodePlan.nextCode.slice(6))
+    let barcodeFilled = 0
+    let materialCodeFilled = 0
+    const materialResults = new Map(analysis.materialCodePreviews.map(result => [result.rowId, result]))
+    for (const row of analysis.rows) {
+      if (input.fillBarcodes && !row.barcode.trim() && row.materialName.trim() && !row.issues.some(issue => issue.includes('业务字段含公式'))) {
+        add(row.sheet, row.barcodeAddress, internalBarcodeCandidate(input.monthPrefix, sequence++))
+        barcodeFilled += 1
+      }
+      const material = materialResults.get(row.id)
+      if (input.fillMaterialCodes && !row.materialCode.trim() && material?.status === 'candidate' && material.candidate) {
+        add(row.sheet, row.materialCodeAddress, material.candidate)
+        materialCodeFilled += 1
+      }
+    }
+    if (input.fillBarcodes && barcodeFilled === 0 && analysis.barcodePlan.pendingCount > 0) throw new Error('待填写的 69 码行含公式或缺少物料名称，未自动覆盖，请先人工核实。')
+    if (input.fillMaterialCodes && materialCodeFilled === 0 && analysis.rows.some(row => !row.materialCode.trim())) throw new Error('没有可安全写入的物料编码；请先确认图案标识和机型映射。')
+    await writeLifecycleCells(sourcePath, destinationPath, writes)
+    return { barcodeFilled, materialCodeFilled }
+  }
   async submissionSnapshot(id: string, expectedVersion: number): Promise<{ draft: LifecycleDraft; path: string }> {
     const draft = await this.get(id)
     if (draft.version !== expectedVersion) throw new Error('草稿已更新，请重新打开后再提交。')

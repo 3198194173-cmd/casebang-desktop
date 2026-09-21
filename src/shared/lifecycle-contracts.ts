@@ -53,10 +53,47 @@ export interface LifecycleRowPreview {
   status: 'existing' | 'candidate' | 'blocked'
   issues: string[]
 }
+export interface BarcodeAllocationPlan {
+  monthPrefix: string
+  previousCode: string | null
+  nextCode: string
+  pendingCount: number
+  existingCount: number
+  masterFileName: string
+}
+export interface SharedLifecycleAnalysis {
+  workItemId: string
+  title: string
+  version: number
+  revision: number
+  rows: LifecycleRow[]
+  warnings: string[]
+  materialCodePreviews: LifecycleRowPreview[]
+  barcodePlan: BarcodeAllocationPlan
+}
+export interface ApplySharedLifecycleInput {
+  workItemId: string
+  title: string
+  expectedVersion: number
+  expectedRevision: number
+  monthPrefix: string
+  fillBarcodes: boolean
+  fillMaterialCodes: boolean
+  patternVariants: Record<string, string>
+  openOnlineAfterSave?: boolean
+}
+export interface SharedLifecycleWriteResult {
+  item: import('./contracts').CollaborationWorkItem
+  barcodeFilled: number
+  materialCodeFilled: number
+  openedOnline: boolean
+}
 export interface LifecycleApi {
   list(): Promise<LifecycleDraftSummary[]>
   importWorkbook(): Promise<LifecycleDraft | null>
   get(id: string): Promise<LifecycleDraft>
   save(input: { id: string; expectedVersion: number; barcodeSource: BarcodeSource | null; patternVariants: Record<string, string> }): Promise<LifecycleDraft>
   preview(id: string): Promise<LifecycleRowPreview[]>
+  analyzeShared(input: { workItemId: string; title: string; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string> }): Promise<SharedLifecycleAnalysis>
+  applyShared(input: ApplySharedLifecycleInput): Promise<SharedLifecycleWriteResult>
 }

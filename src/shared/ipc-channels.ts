@@ -4,6 +4,8 @@ export const IPC_CHANNELS = {
   lifecycleGet: 'lifecycle:get',
   lifecycleSave: 'lifecycle:save',
   lifecyclePreview: 'lifecycle:preview',
+  lifecycleAnalyzeShared: 'lifecycle:analyze-shared',
+  lifecycleApplyShared: 'lifecycle:apply-shared',
   supplementGetMaster: 'supplement:get-master',
   supplementSelectMaster: 'supplement:select-master',
   supplementSelect: 'supplement:select',

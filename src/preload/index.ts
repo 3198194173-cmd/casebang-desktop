@@ -8,7 +8,9 @@ const api: CasebangDesktopApi = {
     importWorkbook: () => ipcRenderer.invoke(IPC_CHANNELS.lifecycleImport),
     get: (id) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleGet, id),
     save: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleSave, input),
-    preview: (id) => ipcRenderer.invoke(IPC_CHANNELS.lifecyclePreview, id)
+    preview: (id) => ipcRenderer.invoke(IPC_CHANNELS.lifecyclePreview, id),
+    analyzeShared: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleAnalyzeShared, input),
+    applyShared: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleApplyShared, input)
   },
   supplement: {
     getMaster: () => ipcRenderer.invoke(IPC_CHANNELS.supplementGetMaster),

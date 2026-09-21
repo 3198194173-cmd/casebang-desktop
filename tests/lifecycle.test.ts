@@ -12,6 +12,8 @@ import { internalBarcodeCandidate, hasValidGtin13Checksum, parseMaterialIdentity
 import { transitionWorkItem, type WorkItemState } from '../src/shared/lifecycle-workflow'
 import { LifecycleRepository } from '../src/main/modules/lifecycle/lifecycle-repository'
 import { readLifecycleWorkbook } from '../src/main/modules/lifecycle/workbook-reader'
+import { inspectBarcodeSequence, writeLifecycleCells } from '../src/main/modules/lifecycle/workbook-allocator'
+import { findPackageText, readOoxmlPackage } from '../src/main/modules/spreadsheet/ooxml-package'
 
 const temporary: string[] = []
 afterEach(async () => { for (const path of temporary.splice(0)) await rm(path, { recursive: true, force: true }) })
@@ -158,5 +160,32 @@ describe('workbook import coverage', () => {
   it('rejects missing business headers and declared XML entities', async () => {
     await expect(readLifecycleWorkbook(await workbook('<worksheet><sheetData/></worksheet>'))).rejects.toThrow('业务表头')
     await expect(readLifecycleWorkbook(await workbook('<!DOCTYPE worksheet><worksheet/>'))).rejects.toThrow('实体声明')
+  })
+})
+
+describe('shared workbook allocation writes', () => {
+  it('continues the selected month by its greatest used sequence and ignores other formats', async () => {
+    const headers = ['类目', '69码', '物料编码（工厂）', '物料名称']
+    const sheet = `<worksheet><sheetData><row r="1">${headers.map((value, index) => cell(`${String.fromCharCode(65 + index)}1`, value)).join('')}</row>
+      <row r="2">${cell('B2', '2026090000616')}</row>
+      <row r="3">${cell('B3', '8800000000001')}</row>
+      <row r="4">${cell('B4', '2026090000602')}</row>
+      <row r="5">${cell('B5', '2026100000009')}</row></sheetData></worksheet>`
+    const result = await inspectBarcodeSequence(await workbook(sheet), '202609')
+    expect(result).toMatchObject({ previousCode: '2026090000616', maximumSequence: 616 })
+  })
+
+  it('writes only requested cells while preserving the surrounding worksheet', async () => {
+    const source = await workbook(`<worksheet><sheetData><row r="1">${cell('B1', '69码')}${cell('C1', '物料编码')}</row><row r="2">${cell('D2', '保留内容')}</row></sheetData></worksheet>`)
+    const destination = join(await directory(), 'allocated.xlsx')
+    await writeLifecycleCells(source, destination, new Map([['条码306', [
+      { address: 'B2', value: '2026090000617' }, { address: 'C2', value: 'C.K.CA.AP.J4.BQ75' }
+    ]]]))
+    const xml = findPackageText(await readOoxmlPackage(destination), 'xl/worksheets/sheet1.xml') ?? ''
+    expect(xml).toContain('2026090000617')
+    expect(xml).toContain('C.K.CA.AP.J4.BQ75')
+    expect(xml).toContain('保留内容')
+    expect(xml.indexOf('r="B2"')).toBeLessThan(xml.indexOf('r="C2"'))
+    expect(xml.indexOf('r="C2"')).toBeLessThan(xml.indexOf('r="D2"'))
   })
 })

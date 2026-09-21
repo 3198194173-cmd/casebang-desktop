@@ -71,20 +71,31 @@ export class DingTalkDriveClient {
   }
 
   private async listSpaces(token: string, unionId: string): Promise<Array<{ id: string }>> {
-    const values: Array<{ id: string }> = []
-    let nextToken = ''
-    do {
-      const url = new URL(SPACES_ENDPOINT)
-      url.searchParams.set('unionId', unionId); url.searchParams.set('maxResults', '50')
-      // DingTalk's public API calls the user's "My Documents" space `personal`.
-      // `mySpace` is a product/CLI term and is rejected by this endpoint.
-      url.searchParams.set('spaceType', 'personal')
-      if (nextToken) url.searchParams.set('nextToken', nextToken)
-      const body = await this.json<{ spaces?: Array<{ spaceId?: string }>; nextToken?: string }>(url, { headers: authHeaders(token) }, 'list_personal_spaces')
-      values.push(...(body.spaces ?? []).flatMap(space => space.spaceId ? [{ id: space.spaceId }] : []))
-      nextToken = body.nextToken ?? ''
-    } while (nextToken)
-    return values
+    const values = new Map<string, { id: string }>()
+    let lastFailure: DingTalkDriveError | null = null
+    // “My Documents” can be backed by either a personal space or the current
+    // organization's drive. DingTalk may reject one space type while allowing
+    // the other, so enumerate both independently and keep the accessible one.
+    for (const spaceType of ['personal', 'org'] as const) {
+      let nextToken = ''
+      try {
+        do {
+          const url = new URL(SPACES_ENDPOINT)
+          url.searchParams.set('unionId', unionId); url.searchParams.set('maxResults', '50')
+          url.searchParams.set('spaceType', spaceType)
+          if (nextToken) url.searchParams.set('nextToken', nextToken)
+          const body = await this.json<{ spaces?: Array<{ spaceId?: string }>; nextToken?: string }>(url, { headers: authHeaders(token) }, `list_${spaceType}_spaces`)
+          for (const space of body.spaces ?? []) if (space.spaceId) values.set(space.spaceId, { id: space.spaceId })
+          nextToken = body.nextToken ?? ''
+        } while (nextToken)
+      } catch (error) {
+        if (error instanceof DingTalkDriveError) { lastFailure = error; continue }
+        throw error
+      }
+    }
+    if (values.size) return [...values.values()]
+    if (lastFailure) throw lastFailure
+    return []
   }
 
   private async listAll(token: string, unionId: string, spaceId: string): Promise<DingTalkDentry[]> {

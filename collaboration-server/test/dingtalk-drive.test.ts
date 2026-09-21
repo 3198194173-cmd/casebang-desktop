@@ -13,7 +13,7 @@ describe('personal DingTalk artwork drive', () => {
       if (url.endsWith('/oauth2/accessToken')) return Response.json({ accessToken: 'app-token' })
       if (url.includes('/v1.0/drive/spaces?')) {
         expect(url).toContain('unionId=union-1')
-        expect(url).toContain('spaceType=personal')
+        expect(url).toMatch(/spaceType=(personal|org)/)
         return Response.json({ spaces: [{ spaceId: 'personal-space' }] })
       }
       if (url.includes('/dentries/listAll')) return Response.json({ dentries: [
@@ -30,7 +30,7 @@ describe('personal DingTalk artwork drive', () => {
     expect(result.spaceId).toBe('personal-space')
     expect(result.folder.name).toBe('印刷图档')
     expect(result.descendants.map(entry => entry.name)).toEqual(['J7系列', 'Heart Hat Cat.png'])
-    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(fetcher).toHaveBeenCalledTimes(4)
   })
 
   it('falls back to recursively listing folders when listAll is unavailable', async () => {
@@ -52,7 +52,28 @@ describe('personal DingTalk artwork drive', () => {
     const result = await client.resolvePersonalFolder('union-1', 'folder-node-from-url')
 
     expect(result.descendants.map(entry => entry.name)).toEqual(['Heart Hat Cat.png'])
-    expect(fetcher).toHaveBeenCalledTimes(5)
+    expect(fetcher).toHaveBeenCalledTimes(6)
+  })
+
+  it('uses an organization drive when personal space access is denied', async () => {
+    const fetcher = vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/oauth2/accessToken')) return Response.json({ accessToken: 'app-token' })
+      if (url.includes('spaceType=personal')) return Response.json({ code: 'no.priviledge', message: 'not authorized' }, { status: 400 })
+      if (url.includes('spaceType=org')) return Response.json({ spaces: [{ spaceId: 'org-space' }] })
+      if (url.includes('/dentries/listAll')) return Response.json({ dentries: [
+        { id: 'folder-id', uuid: 'org-folder-node', parentId: '0', name: '印刷图档', type: 'FOLDER' },
+        { id: 'image-id', parentId: 'folder-id', name: 'Heart Hat Cat.png', type: 'FILE', extension: 'png' }
+      ] })
+      return new Response(null, { status: 404 })
+    })
+    const client = new DingTalkDriveClient(config, fetcher as typeof fetch)
+
+    const result = await client.resolvePersonalFolder('union-1', 'org-folder-node')
+
+    expect(result.spaceId).toBe('org-space')
+    expect(result.folder.name).toBe('印刷图档')
+    expect(result.descendants.map(entry => entry.name)).toEqual(['Heart Hat Cat.png'])
   })
 
   it('classifies alternate DingTalk permission errors', async () => {
@@ -65,7 +86,7 @@ describe('personal DingTalk artwork drive', () => {
 
     await expect(client.resolvePersonalFolder('union-1', 'folder-node-from-url')).rejects.toMatchObject({
       code: 'dingtalk_drive_permission_denied',
-      details: { operation: 'list_personal_spaces', httpStatus: 403, remoteCode: 'Forbidden.AccessDenied' }
+      details: { operation: 'list_org_spaces', httpStatus: 403, remoteCode: 'Forbidden.AccessDenied' }
     })
   })
 })

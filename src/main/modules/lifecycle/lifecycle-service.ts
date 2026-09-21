@@ -4,10 +4,10 @@ import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, stat, unlink } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview, SharedLifecycleAnalysis } from '../../../shared/lifecycle-contracts'
-import { internalBarcodeCandidate, patternVariantKey, previewMaterialCodes } from '../../../shared/material-coding'
+import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview, LifecycleSource, SharedLifecycleAnalysis } from '../../../shared/lifecycle-contracts'
+import { internalBarcodeCandidate, parsePhoneMaterialCodePrefix, patternVariantKey, planMaterialPatterns, previewMaterialCodes } from '../../../shared/material-coding'
 import { readLifecycleWorkbook } from './workbook-reader'
-import { inspectBarcodeSequence, writeLifecycleCells } from './workbook-allocator'
+import { inspectBarcodeSequence, inspectMaterialMappingRows, writeLifecycleCells } from './workbook-allocator'
 import type { LifecycleRepository } from './lifecycle-repository'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 
@@ -29,15 +29,27 @@ export class LifecycleService {
   async get(input: unknown): Promise<LifecycleDraft> { return (await this.repo()).get(z.string().uuid().parse(input)) }
   async preview(input: unknown): Promise<LifecycleRowPreview[]> { return previewMaterialCodes(await this.get(input)) }
   async analyzeSharedFile(
-    input: { workItemId: string; title: string; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string> },
+    input: { workItemId: string; title: string; sourceWorkflow: LifecycleSource; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string>; patternOverrideEnabled?: boolean; patternOverrideReason?: string },
     workbookPath: string
   ): Promise<SharedLifecycleAnalysis> {
     const masterPath = await this.settings.getMaterialMasterPath()
     if (!masterPath) throw new Error('请先选择最新的物料总表，再计算 69 码起始号码。')
     const parsed = await readLifecycleWorkbook(workbookPath)
     const variants = input.patternVariants ?? {}
-    const materialCodePreviews = previewMaterialCodes({ rows: parsed.rows, patternVariants: variants })
-    const master = await inspectBarcodeSequence(masterPath, input.monthPrefix)
+    const [masterRows, master] = await Promise.all([
+      inspectMaterialMappingRows(masterPath),
+      inspectBarcodeSequence(masterPath, input.monthPrefix)
+    ])
+    const referenceRows = [...masterRows, ...parsed.rows]
+    const automaticPlan = planMaterialPatterns(parsed.rows, referenceRows, {}, input.sourceWorkflow)
+    const rowKeys = new Set(parsed.rows.map(row => patternVariantKey(row.identity)))
+    if (Object.keys(variants).some(key => !rowKeys.has(key))) throw new Error('图案标识不属于当前共享工作簿。')
+    const overrides = Object.entries(variants).filter(([key, variant]) => automaticPlan.patternVariants[key] !== variant)
+    if (overrides.length && !['new-series', 'new-products'].includes(input.sourceWorkflow)) throw new Error('该来源不允许自定义图案标识。')
+    if (overrides.length && !input.patternOverrideEnabled) throw new Error('请先查看自动识别结果，再开启自定义图案标识。')
+    if (overrides.length && !input.patternOverrideReason?.trim()) throw new Error('自定义图案标识后必须填写修改原因。')
+    const patternPlan = planMaterialPatterns(parsed.rows, referenceRows, variants, input.sourceWorkflow)
+    const materialCodePreviews = previewMaterialCodes({ rows: parsed.rows, patternVariants: patternPlan.patternVariants, sourceWorkflow: input.sourceWorkflow })
     let maximumSequence = master.maximumSequence
     for (const row of parsed.rows) {
       const match = new RegExp(`^${input.monthPrefix}(\\d{7})$`).exec(row.barcode.trim())
@@ -46,11 +58,14 @@ export class LifecycleService {
     return {
       workItemId: input.workItemId,
       title: input.title,
+      sourceWorkflow: input.sourceWorkflow,
       version: input.version,
       revision: input.revision,
       rows: parsed.rows,
       warnings: parsed.warnings,
       materialCodePreviews,
+      patternVariants: patternPlan.patternVariants,
+      patternPlans: patternPlan.plans,
       barcodePlan: {
         monthPrefix: input.monthPrefix,
         previousCode: maximumSequence ? internalBarcodeCandidate(input.monthPrefix, maximumSequence) : null,
@@ -62,12 +77,13 @@ export class LifecycleService {
     }
   }
   async writeSharedFile(
-    input: { workItemId: string; title: string; version: number; revision: number; monthPrefix: string; fillBarcodes: boolean; fillMaterialCodes: boolean; patternVariants: Record<string, string> },
+    input: { workItemId: string; title: string; sourceWorkflow: LifecycleSource; version: number; revision: number; monthPrefix: string; fillBarcodes: boolean; fillMaterialCodes: boolean; patternVariants: Record<string, string>; patternOverrideEnabled?: boolean; patternOverrideReason?: string },
     sourcePath: string,
     destinationPath: string
-  ): Promise<{ barcodeFilled: number; materialCodeFilled: number }> {
+  ): Promise<{ barcodeFilled: number; materialCodeFilled: number; patternOverrides: Array<{ key: string; detectedVariant: string | null; finalVariant: string }> }> {
     if (!input.fillBarcodes && !input.fillMaterialCodes) throw new Error('请至少选择填写 69 码或物料编码中的一项。')
     const analysis = await this.analyzeSharedFile(input, sourcePath)
+    if (input.fillMaterialCodes && analysis.patternPlans.some(plan => plan.customized && plan.issues.length)) throw new Error('自定义图案标识存在占用或规则冲突，请修正后再保存。')
     const writes = new Map<string, Array<{ address: string; value: string }>>()
     const add = (sheet: string, address: string, value: string): void => {
       const values = writes.get(sheet) ?? []
@@ -83,15 +99,19 @@ export class LifecycleService {
         barcodeFilled += 1
       }
       const material = materialResults.get(row.id)
-      if (input.fillMaterialCodes && !row.materialCode.trim() && material?.status === 'candidate' && material.candidate) {
+      const replacePrefix = input.sourceWorkflow === 'new-models' && Boolean(parsePhoneMaterialCodePrefix(row.materialCode))
+      if (input.fillMaterialCodes && (!row.materialCode.trim() || replacePrefix) && material?.status === 'candidate' && material.candidate) {
         add(row.sheet, row.materialCodeAddress, material.candidate)
         materialCodeFilled += 1
       }
     }
     if (input.fillBarcodes && barcodeFilled === 0 && analysis.barcodePlan.pendingCount > 0) throw new Error('待填写的 69 码行含公式或缺少物料名称，未自动覆盖，请先人工核实。')
-    if (input.fillMaterialCodes && materialCodeFilled === 0 && analysis.rows.some(row => !row.materialCode.trim())) throw new Error('没有可安全写入的物料编码；请先确认图案标识和机型映射。')
+    const hasPendingMaterialCode = analysis.rows.some(row => !row.materialCode.trim() || (input.sourceWorkflow === 'new-models' && Boolean(parsePhoneMaterialCodePrefix(row.materialCode))))
+    if (input.fillMaterialCodes && materialCodeFilled === 0 && hasPendingMaterialCode) throw new Error('没有可安全写入的物料编码；请先确认图案标识、历史编码前缀和机型映射。')
     await writeLifecycleCells(sourcePath, destinationPath, writes)
-    return { barcodeFilled, materialCodeFilled }
+    return { barcodeFilled, materialCodeFilled, patternOverrides: analysis.patternPlans.filter(plan => plan.customized && plan.variant).map(plan => ({
+      key: plan.key, detectedVariant: plan.detectedVariant, finalVariant: plan.variant!
+    })) }
   }
   async submissionSnapshot(id: string, expectedVersion: number): Promise<{ draft: LifecycleDraft; path: string }> {
     const draft = await this.get(id)

@@ -57,7 +57,7 @@ describe('supplement model boundaries', () => {
     expect(result.matched).toBeGreaterThan(89)
     expect(result.conflict).toBe(0)
     expect(result.matched).toBeGreaterThan(0)
-    expect(result.rows.filter(r => r.status === 'matched').every(r => r.values[1] === '' && r.values[2] === '' && r.values[3]!.includes('iP Fold（Duo）'))).toBe(true)
+    expect(result.rows.filter(r => r.status === 'matched').every(r => r.values[1] === '' && /^C\.K\.(?:BG|CA)\.(?:AP|SA|HW)\.[A-Z0-9]{1,8}\.[A-Z0-9]{2}$/.test(r.values[2]!) && r.values[3]!.includes('iP Fold（Duo）'))).toBe(true)
     const normal = result.rows.find(r => r.source === '出镜壳!B3')!
     const silver = result.rows.find(r => r.source === '出镜壳!B4' || r.source === '出镜壳!B3·自动银框')!
     expect(normal.values.slice(4, 7)).toEqual(['149', 'US$31.99', '银色片材'])

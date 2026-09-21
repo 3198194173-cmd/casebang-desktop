@@ -19,7 +19,13 @@ const metadataFields = {
   requestKey: z.string().uuid(),
   targetWorkItemId: z.string().uuid().optional(),
   expectedVersion: z.number().int().positive().optional(),
-  expectedRevision: z.number().int().positive().optional()
+  expectedRevision: z.number().int().positive().optional(),
+  changeReason: z.string().trim().min(1).max(500).optional(),
+  patternOverrides: z.array(z.object({
+    key: z.string().max(1000),
+    detectedVariant: z.string().regex(/^[A-Z0-9]{2}$/).nullable(),
+    finalVariant: z.string().regex(/^[A-Z0-9]{2}$/)
+  }).strict()).max(200).optional()
 } as const
 const hasCompleteRevisionTarget = (value: { targetWorkItemId?: string; expectedVersion?: number; expectedRevision?: number }): boolean => {
   const revisionFields = [value.targetWorkItemId, value.expectedVersion, value.expectedRevision]
@@ -575,7 +581,8 @@ async function saveWorkbookRevision(
        VALUES($1,$2,$3,$4,$5,$6,$7,'save-workbook',$8)`,
       [eventId, actor.organization_id, current.id, actor.id, metadata.requestKey,
         createHash('sha256').update(JSON.stringify(metadata)).digest('hex'), nextVersion,
-        { revision: nextRevision, sha256: metadata.sha256 }]
+        { revision: nextRevision, sha256: metadata.sha256, ...(metadata.changeReason ? { reason: metadata.changeReason } : {}),
+          ...(metadata.patternOverrides?.length ? { patternOverrides: metadata.patternOverrides } : {}) }]
     )
     const destinationUserId = actor.id === current.origin_id ? current.assignee_id : current.origin_id
     if (destinationUserId !== actor.id) {

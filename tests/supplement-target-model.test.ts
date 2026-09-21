@@ -19,7 +19,7 @@ describe('supplement destination model is independent from master lookup', () =>
     expect(actual.rows.map(r => [r.source, r.status, r.reference])).toEqual(other.rows.map(r => [r.source, r.status, r.reference]))
     for (const row of actual.rows.filter(r => r.status === 'matched')) {
       expect(row.values[3]).toContain(' HW PX VIEW' + row.variant)
-      expect(row.values[1]).toBe(''); expect(row.values[2]).toBe('')
+      expect(row.values[1]).toBe(''); expect(row.values[2]).toMatch(/^C\.K\.(?:BG|CA)\.(?:AP|SA|HW)\.[A-Z0-9]{1,8}\.[A-Z0-9]{2}$/)
     }
     console.log('PXV_RESULT', { total: actual.rows.length, matched: actual.matched, missing: actual.missing, conflict: actual.conflict, examples: actual.rows.filter(r => r.status === 'matched').slice(0, 2).map(r => ({ source: r.source, original: r.original, generated: r.values[3] })), unmatched: actual.rows.filter(r => r.status !== 'matched').slice(0, 5).map(r => ({ source: r.source, reason: r.reason })) })
   }, 60000)

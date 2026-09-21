@@ -80,7 +80,9 @@ describe('collaboration identity boundaries', () => {
     const metadata = {
       sourceWorkflow: 'manual', sourceId: workItemId, title: '新建产品表.xlsx',
       sha256: createHash('sha256').update(workbook).digest('hex'), requestKey: '40000000-0000-4000-8000-000000000099',
-      targetWorkItemId: workItemId, expectedVersion: 3, expectedRevision: 2
+      targetWorkItemId: workItemId, expectedVersion: 3, expectedRevision: 2,
+      changeReason: '图案标识经业务确认调整',
+      patternOverrides: [{ key: 'pattern-1', detectedVariant: 'A0', finalVariant: 'H0' }]
     }
     const current = {
       id: workItemId, title: metadata.title, state: 'PROCESSING', source_workflow: 'new-series', version: 3, revision: 2,
@@ -106,6 +108,8 @@ describe('collaboration identity boundaries', () => {
     expect(response.json()).toEqual({ item: expect.objectContaining({ id: workItemId, version: 4, revision: 3, lastEditor: { id: actorId, displayName: '测试人' } }), duplicate: false })
     expect(storage.writeObject).toHaveBeenCalledWith(`${organizationId}/${workItemId}/revision-3.xlsx`, workbook, metadata.sha256)
     expect(clientQuery.mock.calls.some(call => String(call[0]).includes("'save-workbook'"))).toBe(true)
+    const eventInsert = clientQuery.mock.calls.find(call => String(call[0]).includes("'save-workbook'"))
+    expect(eventInsert?.[1]?.[7]).toEqual(expect.objectContaining({ reason: metadata.changeReason, patternOverrides: metadata.patternOverrides }))
     await app.close()
   })
 

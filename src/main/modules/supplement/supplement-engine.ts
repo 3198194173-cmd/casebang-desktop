@@ -6,6 +6,7 @@ import type { SupplementRequest, SupplementResult, SupplementRow } from '../../.
 import { needsSilver, silverVariant, withoutSilver } from '../../../shared/supplement-rules'
 import { WorkbookPreviewService } from '../spreadsheet/workbook-preview-service'
 import { chineseLookupKey, collectSupplementInputs, type SupplementInputCell } from './supplement-input'
+import { parsePhoneMaterialCode } from '../../../shared/material-coding'
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@', removeNSPrefix: true, parseTagValue: false })
 const list = <T>(v: T | T[] | undefined): T[] => v === undefined ? [] : Array.isArray(v) ? v : [v]
@@ -154,7 +155,16 @@ export async function analyzeSupplement(request: SupplementRequest): Promise<Sup
           output.status = 'matched'; output.reference = selected.reference
           output.reason = sameModel ? '采用输入同机型参考行；价格/材质差异不阻止生成' : '未找到完全相同机型，采用同图案同款式首条参考行；请核对价格/材质'
           if (c.generated) output.reason = '自动补齐款式；' + (copiedOtherVariant ? '总表无该款式，复制另一款式参考数据，请调整对应价格' : output.reason)
-          output.values = [...selected.values]; output.values[1] = ''; output.values[2] = ''
+          output.values = [...selected.values]; output.values[1] = ''
+          const historicalCode = parsePhoneMaterialCode(output.values[2] ?? '')
+          if (!historicalCode) {
+            output.status = 'conflict'
+            output.reason = '参考行缺少可验证的完整物料编码，不能安全保留图案前缀'
+            output.values = []
+            result.push(output)
+            continue
+          }
+          output.values[2] = (selected.values[2] ?? '').slice(0, -2)
           const referenceName = splitModel(output.values[3]!)!
           output.values[3] = `${referenceName.base} ${targetModel}${parsed.variant}`
         }

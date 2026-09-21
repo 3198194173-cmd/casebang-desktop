@@ -8,11 +8,11 @@ import { pipeline } from 'node:stream/promises'
 import yazl from 'yazl'
 import type { LifecycleDraft, LifecycleRow } from '../src/shared/lifecycle-contracts'
 import { MATERIAL_MODELS, findMaterialModel } from '../src/shared/material-model-dictionary'
-import { internalBarcodeCandidate, hasValidGtin13Checksum, parseMaterialIdentity, parsePhoneMaterialCode, patternVariantKey, previewMaterialCodes } from '../src/shared/material-coding'
+import { internalBarcodeCandidate, hasValidGtin13Checksum, parseMaterialIdentity, parsePhoneMaterialCode, parsePhoneMaterialCodePrefix, patternVariantKey, planMaterialPatterns, previewMaterialCodes } from '../src/shared/material-coding'
 import { transitionWorkItem, type WorkItemState } from '../src/shared/lifecycle-workflow'
 import { LifecycleRepository } from '../src/main/modules/lifecycle/lifecycle-repository'
 import { readLifecycleWorkbook } from '../src/main/modules/lifecycle/workbook-reader'
-import { inspectBarcodeSequence, writeLifecycleCells } from '../src/main/modules/lifecycle/workbook-allocator'
+import { inspectBarcodeSequence, inspectMaterialMappingRows, writeLifecycleCells } from '../src/main/modules/lifecycle/workbook-allocator'
 import { findPackageText, readOoxmlPackage } from '../src/main/modules/spreadsheet/ooxml-package'
 
 const temporary: string[] = []
@@ -68,6 +68,49 @@ describe('material coding preparation', () => {
   it('preserves unsupported existing codes and blocks unknown models instead of guessing', () => {
     expect(previewMaterialCodes(draft([row('iP14 Pro', '', 'C.K.CT.AP.J7.A057')]))[0]).toMatchObject({ candidate: 'C.K.CT.AP.J7.A057', status: 'blocked' })
     expect(previewMaterialCodes(draft([row('Unknown Phone')]))[0]?.status).toBe('blocked')
+  })
+  it('reuses master mappings and proposes unused A0/B0 pattern starts with an iP13 Pro preview', () => {
+    const existing = row('iP14 Pro', '', 'C.K.CA.AP.J7.A057', 'Bear BG00736')
+    const samePattern = row('iP15 Pro', '', '', 'Bear BG00736')
+    const newPattern = row('iP13 Pro', '', '', 'Rabbit BG00737')
+    const plan = planMaterialPatterns([samePattern, newPattern], [existing], {})
+    expect(plan.patternVariants[patternVariantKey(samePattern.identity)]).toBe('A0')
+    expect(plan.patternVariants[patternVariantKey(newPattern.identity)]).toBe('B0')
+    expect(plan.plans[0]).toMatchObject({ source: 'master', referenceCode: 'C.K.CA.AP.J7.A053' })
+    expect(plan.plans[1]).toMatchObject({ source: 'proposed', referenceCode: 'C.K.CA.AP.J7.B053' })
+  })
+  it('keeps a new silver-frame pattern blocked until its two-character marker is confirmed', () => {
+    const silver = row('iP13 Pro', '（银框）', '', 'Rabbit BG00737')
+    const blocked = planMaterialPatterns([silver], [], {})
+    expect(blocked.patternVariants).toEqual({})
+    expect(blocked.plans[0]).toMatchObject({ source: 'blocked', referenceCode: 'C.K.CA.AP.J7.__53' })
+    const manual = planMaterialPatterns([silver], [], { [patternVariantKey(silver.identity)]: 'AC' })
+    expect(manual.patternVariants[patternVariantKey(silver.identity)]).toBe('AC')
+    expect(manual.plans[0]).toMatchObject({ source: 'manual', referenceCode: 'C.K.CA.AP.J7.AC53' })
+  })
+  it('applies post-recognition overrides by pattern group and rejects occupied markers', () => {
+    const existing = row('iP14 Pro', '', 'C.K.CA.AP.J7.A057', 'Bear BG00736')
+    const rabbit = row('iP13 Pro', '', '', 'Rabbit BG00737')
+    const key = patternVariantKey(rabbit.identity)
+    const automatic = planMaterialPatterns([rabbit], [existing], {}, 'new-products')
+    expect(automatic.plans[0]).toMatchObject({ detectedVariant: 'B0', variant: 'B0', customized: false })
+    const customized = planMaterialPatterns([rabbit], [existing], { [key]: 'H0' }, 'new-products')
+    expect(customized.patternVariants[key]).toBe('H0')
+    expect(customized.plans[0]).toMatchObject({ detectedVariant: 'B0', variant: 'H0', source: 'manual', customized: true })
+    const conflict = planMaterialPatterns([rabbit], [existing], { [key]: 'A0' }, 'new-products')
+    expect(conflict.patternVariants[key]).toBeUndefined()
+    expect(conflict.plans[0]?.issues.join()).toContain('占用')
+  })
+  it('keeps the historical prefix for new-model work and only appends the mapped model code', () => {
+    const target = row('iP18 Pro Max/17 Pro Max', ''); target.materialCode = 'C.K.CA.AP.J7.BQ'
+    expect(parsePhoneMaterialCodePrefix(target.materialCode)).toMatchObject({ patternVariant: 'BQ' })
+    const plan = planMaterialPatterns([target], [], {}, 'new-models')
+    expect(plan.plans[0]).toMatchObject({ detectedVariant: 'BQ', variant: 'BQ', customized: false })
+    expect(previewMaterialCodes({ rows: [target], patternVariants: plan.patternVariants, sourceWorkflow: 'new-models' })[0]).toMatchObject({
+      candidate: 'C.K.CA.AP.J7.BQ75', status: 'candidate'
+    })
+    const forbidden = planMaterialPatterns([target], [], { [patternVariantKey(target.identity)]: 'ZZ' }, 'new-models')
+    expect(forbidden.plans[0]?.issues.join()).toContain('不允许修改')
   })
   it('separates internal monthly numbers from GTIN validation and checks sequence bounds', () => {
     expect(internalBarcodeCandidate('202609', 1)).toBe('2026090000001')
@@ -160,6 +203,13 @@ describe('workbook import coverage', () => {
   it('rejects missing business headers and declared XML entities', async () => {
     await expect(readLifecycleWorkbook(await workbook('<worksheet><sheetData/></worksheet>'))).rejects.toThrow('业务表头')
     await expect(readLifecycleWorkbook(await workbook('<!DOCTYPE worksheet><worksheet/>'))).rejects.toThrow('实体声明')
+  })
+  it('reads material-code mappings from a master without importing it as a task', async () => {
+    const sheet = `<worksheet><sheetData><row r="1">${cell('A1', '类目')}${cell('C1', '物料编码（工厂）')}${cell('D1', '物料名称')}</row>
+      <row r="2">${cell('A2', '一体壳')}${cell('C2', 'C.K.CA.AP.J7.A057')}${cell('D2', row('iP14 Pro').materialName)}</row></sheetData></worksheet>`
+    const mappings = await inspectMaterialMappingRows(await workbook(sheet))
+    expect(mappings).toHaveLength(1)
+    expect(mappings[0]).toMatchObject({ materialCode: 'C.K.CA.AP.J7.A057', itemClass: '一体壳' })
   })
 })
 

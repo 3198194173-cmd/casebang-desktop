@@ -62,18 +62,24 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.lifecyclePreview, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.preview(input) })
   const sharedAnalysisSchema = z.object({
     workItemId: z.string().uuid(), title: z.string().trim().min(1).max(240),
+    sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models', 'manual']),
     version: z.number().int().positive(), revision: z.number().int().positive(),
     monthPrefix: z.string().regex(/^\d{4}(0[1-9]|1[0-2])$/),
-    patternVariants: z.record(z.string().max(1000), z.string().regex(/^[A-Z0-9]{2}$/)).optional()
+    patternVariants: z.record(z.string().max(1000), z.string().regex(/^[A-Z0-9]{2}$/)).optional(),
+    patternOverrideEnabled: z.boolean().optional(),
+    patternOverrideReason: z.string().trim().max(500).optional()
   }).strict()
   ipcMain.handle(IPC_CHANNELS.lifecycleAnalyzeShared, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     const request = sharedAnalysisSchema.parse(input)
+    const workItem = (await dependencies.collaboration.workItems()).find(item => item.id === request.workItemId)
+    if (!workItem) throw new Error('共享工作簿不存在或当前账号无权访问。')
+    if (workItem.sourceWorkflow !== request.sourceWorkflow || workItem.version !== request.version || workItem.revision !== request.revision) throw new Error('共享工作簿来源或版本已变化，请刷新后重试。')
     const directory = await mkdtemp(join(app.getPath('temp'), 'casebang-lifecycle-analysis-'))
     try {
       const path = join(directory, 'shared.xlsx')
       await writeFile(path, await dependencies.collaboration.downloadWorkbook({ workItemId: request.workItemId }))
-      return await lifecycle.analyzeSharedFile(request, path)
+      return await lifecycle.analyzeSharedFile({ ...request, title: workItem.title, sourceWorkflow: workItem.sourceWorkflow }, path)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -84,6 +90,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
       expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive(),
       fillBarcodes: z.boolean(), fillMaterialCodes: z.boolean(), openOnlineAfterSave: z.boolean().optional()
     }).strict().parse(input)
+    const workItem = (await dependencies.collaboration.workItems()).find(item => item.id === request.workItemId)
+    if (!workItem) throw new Error('共享工作簿不存在或当前账号无权访问。')
+    if (workItem.sourceWorkflow !== request.sourceWorkflow || workItem.version !== request.expectedVersion || workItem.revision !== request.expectedRevision) throw new Error('共享工作簿来源或版本已变化，请刷新后重试。')
     const directory = await mkdtemp(join(app.getPath('temp'), 'casebang-lifecycle-write-'))
     try {
       const source = join(directory, 'source.xlsx')
@@ -91,12 +100,14 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
       await writeFile(source, await dependencies.collaboration.downloadWorkbook({ workItemId: request.workItemId }))
       const counts = await lifecycle.writeSharedFile({
         ...request, version: request.expectedVersion, revision: request.expectedRevision,
-        patternVariants: request.patternVariants ?? {}
+        title: workItem.title, sourceWorkflow: workItem.sourceWorkflow, patternVariants: request.patternVariants ?? {}
       }, source, destination)
       const saved = await dependencies.collaboration.saveWorkbookRevision({
         workItemId: request.workItemId, title: request.title,
         expectedVersion: request.expectedVersion, expectedRevision: request.expectedRevision,
-        bytes: await readFile(destination)
+        bytes: await readFile(destination),
+        changeReason: counts.patternOverrides.length ? request.patternOverrideReason : undefined,
+        patternOverrides: counts.patternOverrides
       })
       let openedOnline = false
       if (request.openOnlineAfterSave) {

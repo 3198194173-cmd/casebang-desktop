@@ -61,25 +61,45 @@ export interface BarcodeAllocationPlan {
   existingCount: number
   masterFileName: string
 }
+export interface MaterialPatternPlan {
+  key: string
+  patternName: string
+  productCode: string
+  frame: 'normal' | 'silver'
+  variant: string | null
+  detectedVariant: string | null
+  referenceCode: string | null
+  rowCount: number
+  source: 'master' | 'proposed' | 'manual' | 'conflict' | 'blocked'
+  customized: boolean
+  issues: string[]
+  warnings: string[]
+}
 export interface SharedLifecycleAnalysis {
   workItemId: string
   title: string
+  sourceWorkflow: LifecycleSource
   version: number
   revision: number
   rows: LifecycleRow[]
   warnings: string[]
   materialCodePreviews: LifecycleRowPreview[]
+  patternVariants: Record<string, string>
+  patternPlans: MaterialPatternPlan[]
   barcodePlan: BarcodeAllocationPlan
 }
 export interface ApplySharedLifecycleInput {
   workItemId: string
   title: string
+  sourceWorkflow: LifecycleSource
   expectedVersion: number
   expectedRevision: number
   monthPrefix: string
   fillBarcodes: boolean
   fillMaterialCodes: boolean
   patternVariants: Record<string, string>
+  patternOverrideEnabled?: boolean
+  patternOverrideReason?: string
   openOnlineAfterSave?: boolean
 }
 export interface SharedLifecycleWriteResult {
@@ -94,6 +114,6 @@ export interface LifecycleApi {
   get(id: string): Promise<LifecycleDraft>
   save(input: { id: string; expectedVersion: number; barcodeSource: BarcodeSource | null; patternVariants: Record<string, string> }): Promise<LifecycleDraft>
   preview(id: string): Promise<LifecycleRowPreview[]>
-  analyzeShared(input: { workItemId: string; title: string; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string> }): Promise<SharedLifecycleAnalysis>
+  analyzeShared(input: { workItemId: string; title: string; sourceWorkflow: LifecycleSource; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string>; patternOverrideEnabled?: boolean; patternOverrideReason?: string }): Promise<SharedLifecycleAnalysis>
   applyShared(input: ApplySharedLifecycleInput): Promise<SharedLifecycleWriteResult>
 }

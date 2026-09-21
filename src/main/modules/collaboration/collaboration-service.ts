@@ -70,6 +70,8 @@ interface WorkbookUploadMetadata {
   targetWorkItemId?: string
   expectedVersion?: number
   expectedRevision?: number
+  changeReason?: string
+  patternOverrides?: Array<{ key: string; detectedVariant: string | null; finalVariant: string }>
 }
 interface WebOfficeSessionResponse { editorUrl?: string }
 interface RequestTiming { timeoutMs?: number; timeoutMessage?: string }
@@ -176,17 +178,26 @@ export class CollaborationService {
 
   async saveWorkbookRevision(input: {
     workItemId: string; title: string; expectedVersion: number; expectedRevision: number; bytes: Buffer
+    changeReason?: string
+    patternOverrides?: Array<{ key: string; detectedVariant: string | null; finalVariant: string }>
   }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
     const value = z.object({
       workItemId: z.string().uuid(), title: z.string().trim().min(1).max(240),
-      expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive()
-    }).strict().parse({ workItemId: input.workItemId, title: input.title, expectedVersion: input.expectedVersion, expectedRevision: input.expectedRevision })
+      expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive(),
+      changeReason: z.string().trim().min(1).max(500).optional(),
+      patternOverrides: z.array(z.object({ key: z.string().max(1000), detectedVariant: z.string().regex(/^[A-Z0-9]{2}$/).nullable(), finalVariant: z.string().regex(/^[A-Z0-9]{2}$/) }).strict()).max(200).optional()
+    }).strict().parse({
+      workItemId: input.workItemId, title: input.title, expectedVersion: input.expectedVersion, expectedRevision: input.expectedRevision,
+      changeReason: input.changeReason, patternOverrides: input.patternOverrides
+    })
     if (!input.bytes.length || input.bytes.length > MAX_WORKBOOK_SIZE) throw new Error('要保存的共享工作簿为空或超过 64 MB。')
     const sha256 = createHash('sha256').update(input.bytes).digest('hex')
     return this.uploadWorkbook(input.bytes, {
       sourceWorkflow: 'manual', sourceId: value.workItemId, title: value.title,
       sha256, requestKey: randomUUID(), targetWorkItemId: value.workItemId,
-      expectedVersion: value.expectedVersion, expectedRevision: value.expectedRevision
+      expectedVersion: value.expectedVersion, expectedRevision: value.expectedRevision,
+      ...(value.changeReason ? { changeReason: value.changeReason } : {}),
+      ...(value.patternOverrides?.length ? { patternOverrides: value.patternOverrides } : {})
     }, value.title)
   }
 

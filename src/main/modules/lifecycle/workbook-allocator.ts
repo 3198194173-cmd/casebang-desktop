@@ -1,6 +1,8 @@
 import { basename, posix } from 'node:path'
 import { XMLParser } from 'fast-xml-parser'
 import { findPackageText, readOoxmlPackage, replacePackageText, writeOoxmlPackage, type PackageEntryRecord } from '../spreadsheet/ooxml-package'
+import type { LifecycleRow } from '../../../shared/lifecycle-contracts'
+import { parseMaterialIdentity } from '../../../shared/material-coding'
 
 type Xml = Record<string, any>
 type CellWrite = { address: string; value: string }
@@ -76,6 +78,45 @@ export async function inspectBarcodeSequence(path: string, monthPrefix: string):
     }
   }
   return { previousCode: maximumSequence ? `${monthPrefix}${String(maximumSequence).padStart(7, '0')}` : null, maximumSequence, masterFileName: basename(path) }
+}
+
+/** Reads only the three master columns needed for pattern lookup; the material master is not subject to task row limits. */
+export async function inspectMaterialMappingRows(path: string): Promise<LifecycleRow[]> {
+  const entries = await readOoxmlPackage(path, { skipMedia: true })
+  const shared = sharedStrings(entries)
+  const result: LifecycleRow[] = []
+  for (const sheet of sheetParts(entries)) {
+    if (sheet.name.startsWith('WpsReserved_')) continue
+    const rows = array(xml(required(entries, sheet.path)).worksheet?.sheetData?.row)
+    let columns: { item: string; code: string; name: string } | null = null
+    for (const row of rows) {
+      const cells = array(row.c)
+      const values = new Map(cells.map(cell => [String(cell['@r'] ?? '').replace(/\d/g, ''), decodedCell(cell, shared)]))
+      if (!columns) {
+        const find = (labels: string[]): string => [...values].find(([, value]) => labels.includes(normalizedHeader(value)))?.[0] ?? ''
+        const candidate = {
+          item: find(['类目', '物料类别']),
+          code: find(['物料编码(工厂)', '物料编码', '物料代码']),
+          name: find(['物料名称'])
+        }
+        if (candidate.code && candidate.name) columns = candidate
+        continue
+      }
+      const materialCode = values.get(columns.code)?.trim() ?? ''
+      const materialName = values.get(columns.name)?.trim() ?? ''
+      if (!materialCode || !materialName) continue
+      const itemClass = values.get(columns.item)?.trim() ?? ''
+      const rowNumber = Number(row['@r'])
+      if (!Number.isInteger(rowNumber) || rowNumber < 1) continue
+      result.push({
+        id: `${sheet.name}:${rowNumber}`, sheet: sheet.name, row: rowNumber,
+        nameAddress: `${columns.name}${rowNumber}`, barcodeAddress: '', materialCodeAddress: `${columns.code}${rowNumber}`,
+        itemClass, materialName, barcode: '', materialCode, material: '', domesticPrice: '', overseasPrice: '', remark: '',
+        identity: parseMaterialIdentity(materialName, itemClass), issues: []
+      })
+    }
+  }
+  return result
 }
 
 export async function writeLifecycleCells(

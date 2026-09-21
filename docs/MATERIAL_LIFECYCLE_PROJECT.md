@@ -706,6 +706,7 @@ patternVariantOverride / overrideReason / overriddenBy / overriddenAt
 - `collaboration/revisions`：文件版本与行差异。
 - `material-coding`：编码规则、机型字典、号码账本。
 - `artwork-review`：图档候选、预览入口、证据与审核。
+- 个人钉盘采用两级绑定：下游账号在资料管理中绑定长期固定的父目录；每个共享工作簿在物料编码之后单独选择本系列子目录。系列目录不得作为账号级固定来源，也不得位于父目录之外。
 - `workbook-sync`：本地关联、监听、三方差异与写回。
 - `master-materials`：总表发布、合并计划、历史版本。
 - `integrations/dingtalk-*`：身份、通知、钉盘、在线表格分别适配。

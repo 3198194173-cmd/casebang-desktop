@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { desktopApi } from '../../app/desktop-api'
-import type { CollaborationWorkItem } from '@shared/contracts'
+import type { CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkSource, DingTalkArtworkTarget } from '@shared/contracts'
 import type { SharedLifecycleAnalysis } from '@shared/lifecycle-contracts'
 import { previewMaterialCodes } from '@shared/material-coding'
 import '../../styles/lifecycle.css'
@@ -19,7 +19,11 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const [variants, setVariants] = useState<Record<string, string>>({})
   const [patternOverrideEnabled, setPatternOverrideEnabled] = useState(false)
   const [patternOverrideReason, setPatternOverrideReason] = useState('')
-  const [tab, setTab] = useState<'barcode' | 'material'>('barcode')
+  const [tab, setTab] = useState<'barcode' | 'material' | 'artwork'>('barcode')
+  const [artworkSource, setArtworkSource] = useState<DingTalkArtworkSource | null>(null)
+  const [artworkTarget, setArtworkTarget] = useState<DingTalkArtworkTarget | null>(null)
+  const [artworkTargetUrl, setArtworkTargetUrl] = useState('')
+  const [artworkEntries, setArtworkEntries] = useState<DingTalkArtworkEntry[]>([])
   const [page, setPage] = useState(0)
   const [masterPath, setMasterPath] = useState<string | null>(null)
   const [openAfterSave, setOpenAfterSave] = useState(true)
@@ -49,6 +53,9 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     })
     setMasterPath(await desktopApi.supplement.getMaster())
     setSelectedItem(item); setAnalysis(value); setVariants(value.patternVariants); setPatternOverrideEnabled(false); setPatternOverrideReason(''); setPage(0)
+    const [source, target] = await Promise.all([desktopApi.collaboration.artworkSource(), desktopApi.collaboration.artworkTarget({ workItemId: item.id })])
+    setArtworkSource(source); setArtworkTarget(target); setArtworkTargetUrl(target?.folderUrl ?? '')
+    setArtworkEntries(target ? await desktopApi.collaboration.searchArtworkEntries({ workItemId: item.id, limit: 100 }) : [])
   }
   const materialResults = useMemo(() => analysis ? previewMaterialCodes({ rows: analysis.rows, patternVariants: variants, sourceWorkflow: analysis.sourceWorkflow }) : [], [analysis, variants])
   const resultIndex = useMemo(() => new Map(materialResults.map(result => [result.rowId, result])), [materialResults])
@@ -57,6 +64,12 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const patternOverrideAllowed = selectedItem?.sourceWorkflow === 'new-series' || selectedItem?.sourceWorkflow === 'new-products'
   const hasPatternOverrides = Boolean(analysis && Object.entries(variants).some(([key, value]) => analysis.patternVariants[key] !== value))
   const overrideReady = !hasPatternOverrides || Boolean(patternOverrideReason.trim())
+  const materialCodesReady = Boolean(analysis?.rows.filter(row => row.materialName.trim()).every(row => row.materialCode.trim()))
+  const artworkNameChecks = useMemo(() => (analysis?.patternPlans ?? []).map(plan => {
+    const keys = [plan.patternName, plan.productCode].map(value => value.trim().toLowerCase()).filter(Boolean)
+    const matches = artworkEntries.filter(entry => keys.some(key => entry.name.toLowerCase().includes(key)))
+    return { key: plan.key, patternName: plan.patternName || plan.productCode || '图案名称待核实', matches }
+  }), [analysis, artworkEntries])
 
   const loginAccount = async (): Promise<void> => {
     setError(''); setMessage('已打开钉钉登录页面，正在等待确认…')
@@ -87,6 +100,13 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     const updated = values.find(item => item.id === result.item.id) ?? result.item
     await analyze(updated)
   }
+  const bindArtworkTarget = async (): Promise<void> => {
+    if (!selectedItem) return
+    const target = await desktopApi.collaboration.bindArtworkTarget({ workItemId: selectedItem.id, folderUrl: artworkTargetUrl.trim() })
+    setArtworkTarget(target)
+    setArtworkEntries(await desktopApi.collaboration.searchArtworkEntries({ workItemId: selectedItem.id, limit: 100 }))
+    setMessage(`当前工作簿已选择系列图档目录“${target.folderName}”。`)
+  }
 
   return <div className="lifecycle-page">
     <header className="lc-intro"><div><small>下游业务</small><h2>共享工作表编码</h2><p>读取物料总表占用，按选定年月连续填写 69 码；物料编码可单独填写，也可与 69 码一起保存。</p></div>
@@ -99,14 +119,14 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     </aside><section className="lc-workbench">
       {!analysis || !selectedItem ? <div className="lc-empty"><h3>选择一份共享工作簿</h3><p>软件会下载中央最新版本进行计算；只有点击保存后才建立新修订，不会覆盖历史版本。</p></div>
       : <><div className="lc-task-heading"><div><h3>{analysis.title}</h3><small>中央版本 {analysis.revision} · 共 {analysis.rows.length} 条物料</small></div><button disabled={busy} onClick={() => void run(async () => { await desktopApi.collaboration.openOnlineWorkbook({ workItemId: selectedItem.id }); setMessage('已打开 WPS 在线工作簿。') })}>打开 WPS 检查</button></div>
-        <section className="lc-choice"><div><span className="lc-step-label">步骤 2</span><h3>选择填写内容</h3><p>69 码和物料编码可以分开保存，也可以在预览确认后一起保存。</p></div><nav className="lc-tabs" aria-label="编码步骤">{([['barcode', '填写 69 码'], ['material', '填写物料编码']] as const).map(([id, title]) => <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setPage(0) }}>{title}</button>)}</nav></section>
-        <section className="lc-stage"><span className="lc-step-label">步骤 3</span><h3>{tab === 'barcode' ? '确认 69 码预览' : '确认每个图案的物料编码'}</h3></section>
+        <section className="lc-choice"><div><span className="lc-step-label">加工流程</span><h3>依次完成编码与图档核验</h3><p>先填写 69 码和物料编码，保存中央版本后再选择本系列印刷图档。</p></div><nav className="lc-tabs" aria-label="编码步骤">{([['barcode', '2. 填写 69 码'], ['material', '3. 填写物料编码'], ['artwork', '4. 核验印刷图档']] as const).map(([id, title]) => <button key={id} disabled={id === 'artwork' && !materialCodesReady} title={id === 'artwork' && !materialCodesReady ? '请先填写并保存物料编码' : ''} aria-pressed={tab === id} onClick={() => { setTab(id); setPage(0) }}>{title}</button>)}</nav></section>
+        <section className="lc-stage"><span className="lc-step-label">{tab === 'barcode' ? '步骤 2' : tab === 'material' ? '步骤 3' : '步骤 4'}</span><h3>{tab === 'barcode' ? '确认 69 码预览' : tab === 'material' ? '确认每个图案的物料编码' : '选择并核验本系列印刷图档'}</h3></section>
         <section className="lc-master-source"><div><strong>物料总表</strong><span>{masterPath ?? '尚未选择'}</span><small>{tab === 'material' ? '用于复用已有图案标识并检查新标识占用。' : '用于查找所选年月最后一个已用号码。'}</small></div><button disabled={busy} onClick={() => void run(chooseMaster)}>选择 / 更换物料总表</button></section>
         {tab === 'barcode' ? <><section className="lc-allocation-controls"><div><label>69 码年月前缀<input value={monthPrefix} maxLength={6} inputMode="numeric" onChange={event => setMonthPrefix(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><small>默认取当前年月；遇到上月设计图档可改回上月，例如 202609。</small></div>
           <button disabled={busy || !/^\d{6}$/.test(monthPrefix)} onClick={() => void run(async () => analyze(selectedItem, monthPrefix))}>重新计算起始号</button></section><div className="lc-number-card"><div><small>选定前缀</small><strong>{analysis.barcodePlan.monthPrefix}</strong></div><div><small>总表最后已用</small><strong>{analysis.barcodePlan.previousCode ?? '该年月尚无号码'}</strong></div><div><small>本次第一个号码</small><strong>{analysis.barcodePlan.nextCode}</strong></div><div><small>待填写</small><strong>{analysis.barcodePlan.pendingCount} 条</strong></div></div>
           <p>系统只扫描中央总表“{analysis.barcodePlan.masterFileName}”中该年月的最大流水；未合并的共享工作簿不会改变基底。并行加工多份工作簿可能预览相同号码，请先合并一份并更新中央总表，再处理下一份。</p>
           <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存后自动打开 WPS 检查</label><button disabled={busy || !analysis.barcodePlan.pendingCount} onClick={() => void run(async () => saveAllocation(true, false))}>填写 69 码并保存</button><button disabled={busy || !analysis.barcodePlan.pendingCount || !candidateCount} onClick={() => void run(async () => saveAllocation(true, true))}>两项一起填写并保存</button></div>
-        </> : <><div className="lc-pattern-heading"><div><strong>图案编码识别结果</strong><small>系统已先完成图案分组、历史映射和占用检查。示例统一使用 iPhone 13 Pro，机型码为 53；保存时会替换为各行实际机型码。</small></div>
+        </> : tab === 'material' ? <><div className="lc-pattern-heading"><div><strong>图案编码识别结果</strong><small>系统已先完成图案分组、历史映射和占用检查。示例统一使用 iPhone 13 Pro，机型码为 53；保存时会替换为各行实际机型码。</small></div>
           {patternOverrideAllowed
             ? <button className={patternOverrideEnabled ? 'active' : ''} onClick={() => { if (patternOverrideEnabled) setVariants(analysis.patternVariants); setPatternOverrideEnabled(value => !value); setPatternOverrideReason('') }}>{patternOverrideEnabled ? '关闭自定义并恢复识别值' : '开启自定义图案标识'}</button>
             : <span className="lc-locked-note">{selectedItem.sourceWorkflow === 'new-models' ? '产品补机型：图案标识已锁定，仅替换末两位机型码' : '此来源不开放图案标识自定义'}</span>}
@@ -125,7 +145,13 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
             return <article key={plan.key} className={plan.issues.length ? 'warning' : ''}><div><strong>{plan.patternName || '图案名称待核实'}</strong><span>{plan.productCode || '无产品图案号'} · {plan.frame === 'silver' ? '银框' : '普通款'} · {plan.rowCount} 行</span></div><label>最终两位图案标识<input disabled={!patternOverrideEnabled || !patternOverrideAllowed} maxLength={2} value={current} placeholder="例如 A0" onChange={event => { const value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 2); setVariants(previous => { const next = { ...previous }; if (value) next[plan.key] = value; else delete next[plan.key]; return next }) }} /></label><div className="lc-reference-code"><small>iPhone 13 Pro 预览</small><code>{preview ?? '确认标识后生成'}</code></div><small>自动识别：{plan.detectedVariant ?? '未识别'} · 最终采用：{current || '待确认'} · {customized ? '已自定义' : '未自定义'}{plan.source === 'master' ? ' · 历史复用' : plan.source === 'proposed' ? ' · 新图案候选' : ''}</small>{patternOverrideEnabled && customized && <button className="lc-restore" onClick={restore}>恢复自动值</button>}{Boolean(plan.issues.length || plan.warnings.length) && <small className="lc-plan-issues">{[...plan.issues, ...plan.warnings].join('；')}</small>}</article>
           })}</div>
           <div className="lc-summary">可填写 {candidateCount} 条 · 已有编码 {materialResults.filter(row => row.status === 'existing').length} 条 · 待核实 {blockedCount} 条<small>物料编码和 69 码互不作为前置条件；已有值不会覆盖。修改两位标识后，下方逐行预览会立即更新。</small></div>
-          <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存后自动打开 WPS 检查</label><button disabled={busy || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(false, true))}>填写物料编码并保存</button><button disabled={busy || !analysis.barcodePlan.pendingCount || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(true, true))}>两项一起填写并保存</button></div></>}
+          <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存后自动打开 WPS 检查</label><button disabled={busy || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(false, true))}>填写物料编码并保存</button><button disabled={busy || !analysis.barcodePlan.pendingCount || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(true, true))}>两项一起填写并保存</button></div></> : <section className="lc-artwork-step">
+            {!artworkSource ? <div className="lc-artwork-blocked"><strong>尚未配置固定父目录</strong><p>请先在“资料管理 → 印刷图档”绑定第一个长期不变的父目录链接，再回来选择本系列目录。</p></div> : <>
+              <div className="lc-artwork-parent"><div><small>当前账号固定父目录</small><strong>{artworkSource.folderName}</strong><span>{artworkSource.folderUrl}</span></div><button disabled={busy} onClick={() => void run(async () => { const source = await desktopApi.collaboration.syncArtworkSource(); setArtworkSource(source); setMessage('固定父目录索引已同步。') })}>同步父目录索引</button></div>
+              <form className="lc-artwork-target" onSubmit={event => { event.preventDefault(); void run(bindArtworkTarget) }}><label>当前工作簿对应的系列印刷图档链接<input value={artworkTargetUrl} onChange={event => setArtworkTargetUrl(event.target.value)} placeholder="https://alidocs.dingtalk.com/i/nodes/..." /></label><button disabled={busy || !artworkTargetUrl.trim()}>{artworkTarget ? '更换系列目录' : '选择系列目录'}</button></form>
+              {artworkTarget ? <><div className="lc-artwork-selected"><div><small>本工作簿系列目录</small><strong>{artworkTarget.folderName}</strong></div><a href={artworkTarget.folderUrl} target="_blank" rel="noreferrer">打开钉盘检查</a></div><div className="lc-artwork-checks">{artworkNameChecks.map(check => <article key={check.key} className={check.matches.length ? 'matched' : 'missing'}><div><strong>{check.patternName}</strong><small>{check.matches.length ? `找到 ${check.matches.length} 个同名候选` : '没有找到同名文件'}</small></div>{check.matches[0] ? <a href={check.matches[0].nodeUrl} target="_blank" rel="noreferrer">打开候选</a> : <span>待处理</span>}</article>)}</div><div className="lc-artwork-files"><header><strong>远程目录索引</strong><span>{artworkEntries.length} 项 · 只读取元数据，不下载整个文件夹</span></header>{artworkEntries.map(entry => <article key={entry.id}><div><strong>{entry.name}</strong><small>{entry.path || entry.extension || entry.type}</small></div><a href={entry.nodeUrl} target="_blank" rel="noreferrer">按需打开</a></article>)}</div><div className="lc-artwork-pending"><strong>图片一致性仍需核验</strong><p>同名仅代表名称初筛通过；必须再按需打开缩略图或原图，确认图案一致后才算完成。当前版本不会因为名称相同就把工作簿误标记为加工完成。</p></div></> : <div className="lc-artwork-blocked"><strong>请选择本系列目录</strong><p>这里填写第二个会随系列变化的链接；系统会验证它必须位于上面的固定父目录之内。</p></div>}
+            </>}
+          </section>}
         {!!analysis.warnings.length && <details className="lc-warnings"><summary>工作簿提醒（{analysis.warnings.length}）</summary>{analysis.warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}
         <div className="lc-table-wrap"><table><thead><tr><th>原始位置</th><th>物料名称</th><th>69 码 / 本次预览</th><th>物料编码 / 候选</th><th>核对结果</th></tr></thead><tbody>{analysis.rows.slice(page * 40, (page + 1) * 40).map((row, offset) => { const result = resultIndex.get(row.id)!; const eligible = row.materialName.trim() && !row.issues.some(issue => issue.includes('业务字段含公式')); const pendingBefore = analysis.rows.slice(0, page * 40 + offset).filter(item => !item.barcode.trim() && item.materialName.trim() && !item.issues.some(issue => issue.includes('业务字段含公式'))).length; const barcodePreview = row.barcode || (eligible ? `${monthPrefix}${String(Number(analysis.barcodePlan.nextCode.slice(6)) + pendingBefore).padStart(7, '0')}` : '需人工核实'); return <tr key={row.id}><td>{row.sheet}<br />第 {row.row} 行</td><td>{row.materialName || '待补充：名称缺失'}</td><td>{barcodePreview}</td><td>{result.candidate || '暂不生成'}</td><td>{result.issues.join('；') || (result.status === 'existing' ? '已有编码，保留' : '可以写入')}</td></tr> })}</tbody></table></div>
         <div className="lc-pagination"><button disabled={!page} onClick={() => setPage(page - 1)}>上一页</button><span>{page + 1} / {Math.max(1, Math.ceil(analysis.rows.length / 40))}</span><button disabled={(page + 1) * 40 >= analysis.rows.length} onClick={() => setPage(page + 1)}>下一页</button></div>

@@ -35,6 +35,8 @@ export const IPC_CHANNELS = {
   collaborationBindArtworkSource: 'collaboration:bind-artwork-source',
   collaborationSyncArtworkSource: 'collaboration:sync-artwork-source',
   collaborationSearchArtworkEntries: 'collaboration:search-artwork-entries',
+  collaborationArtworkTarget: 'collaboration:artwork-target',
+  collaborationBindArtworkTarget: 'collaboration:bind-artwork-target',
   baseFilesSelect: 'base-files:select',
   baseFilesPreview: 'base-files:preview',
   baseFilesHistory: 'base-files:history',

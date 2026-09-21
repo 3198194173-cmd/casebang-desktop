@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkSource } from '@shared/contracts'
+import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkSource, DingTalkArtworkTarget } from '@shared/contracts'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service'
 import { logger } from '@main/infrastructure/logger'
@@ -43,6 +43,7 @@ interface WorkItemsResponse { items?: CollaborationWorkItem[] }
 interface MaterialMasterResponse { item?: CollaborationWorkItem | null }
 interface ArtworkSourceResponse { source?: DingTalkArtworkSource | null }
 interface ArtworkEntriesResponse { entries?: DingTalkArtworkEntry[] }
+interface ArtworkTargetResponse { target?: DingTalkArtworkTarget | null }
 interface SubmitResponse { item?: CollaborationWorkItem; duplicate?: boolean; error?: string }
 interface UploadPrepareResponse {
   uploadId?: string
@@ -123,10 +124,26 @@ export class CollaborationService {
   }
 
   async searchArtworkEntries(input: unknown): Promise<DingTalkArtworkEntry[]> {
-    const value = z.object({ query: z.string().trim().max(200).optional(), limit: z.number().int().min(1).max(100).optional() }).strict().parse(input)
-    const query = new URLSearchParams({ ...(value.query ? { query: value.query } : {}), ...(value.limit ? { limit: String(value.limit) } : {}) })
+    const value = z.object({ query: z.string().trim().max(200).optional(), limit: z.number().int().min(1).max(100).optional(), workItemId: z.string().uuid().optional() }).strict().parse(input)
+    const query = new URLSearchParams({ ...(value.query ? { query: value.query } : {}), ...(value.limit ? { limit: String(value.limit) } : {}), ...(value.workItemId ? { workItemId: value.workItemId } : {}) })
     const response = await this.request(`/api/v1/dingtalk/artwork-source/entries?${query}`)
     return ((await response.json()) as ArtworkEntriesResponse).entries ?? []
+  }
+
+  async artworkTarget(input: unknown): Promise<DingTalkArtworkTarget | null> {
+    const value = z.object({ workItemId: z.string().uuid() }).strict().parse(input)
+    const response = await this.request(`/api/v1/dingtalk/artwork-targets/${encodeURIComponent(value.workItemId)}`)
+    return ((await response.json()) as ArtworkTargetResponse).target ?? null
+  }
+
+  async bindArtworkTarget(input: unknown): Promise<DingTalkArtworkTarget> {
+    const value = z.object({ workItemId: z.string().uuid(), folderUrl: z.string().url().max(1000) }).strict().parse(input)
+    const response = await this.request(`/api/v1/dingtalk/artwork-targets/${encodeURIComponent(value.workItemId)}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folderUrl: value.folderUrl })
+    })
+    const target = ((await response.json()) as ArtworkTargetResponse).target
+    if (!target) throw new Error('钉盘没有返回系列目录绑定结果。')
+    return target
   }
 
   async publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
@@ -436,7 +453,13 @@ function serverError(code?: string, status?: number): string {
     artwork_source_not_bound: '当前下游账号尚未绑定印刷图档目录。',
     dingtalk_identity_incomplete: '当前登录会话缺少钉钉用户标识，请退出后重新登录。',
     dingtalk_drive_failure: '钉盘接口调用失败，请检查应用的钉盘读取权限。',
-    dingtalk_token_missing: '钉钉应用访问令牌获取失败。'
+    dingtalk_drive_permission_denied: '钉钉拒绝读取个人空间：请在开发者后台为企业内部应用开通“钉盘应用盘空间读权限”和“企业存储文件读权限”。',
+    dingtalk_drive_request_invalid: '钉盘个人空间请求参数不兼容，请先更新中央服务后重试。',
+    dingtalk_token_missing: '钉钉应用访问令牌获取失败。',
+    invalid_artwork_target: '请输入当前系列印刷图档文件夹的有效钉盘链接。',
+    artwork_target_not_bound: '当前共享工作簿尚未选择系列印刷图档目录。',
+    artwork_target_outside_source: '该系列目录不在当前账号绑定的固定父目录中，请先同步父目录索引。',
+    artwork_target_not_folder: '当前系列链接对应的不是文件夹。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`
 }

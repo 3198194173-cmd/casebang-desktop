@@ -32,6 +32,7 @@ export class DingTalkDriveClient {
   async resolvePersonalFolder(unionId: string, nodeId: string): Promise<ResolvedArtworkFolder> {
     const token = await this.appToken()
     const spaces = await this.listSpaces(token, unionId)
+    let lastFailure: DingTalkDriveError | null = null
     for (const space of spaces) {
       try {
         const entries = await this.listAll(token, unionId, space.id)
@@ -49,8 +50,10 @@ export class DingTalkDriveClient {
         return { spaceId: space.id, folder, descendants: entries.filter(entry => entry.id !== folder.id && included.has(entry.id)) }
       } catch (error) {
         if (error instanceof DingTalkDriveError && error.code === 'artwork_source_not_folder') throw error
+        if (error instanceof DingTalkDriveError) lastFailure = error
       }
     }
+    if (lastFailure) throw lastFailure
     throw new DingTalkDriveError('artwork_source_unreadable', '当前钉钉账号无法读取该个人目录，请确认链接属于当前登录账号并已申请钉盘读取权限。')
   }
 
@@ -69,7 +72,9 @@ export class DingTalkDriveClient {
     do {
       const url = new URL(SPACES_ENDPOINT)
       url.searchParams.set('unionId', unionId); url.searchParams.set('maxResults', '50')
-      url.searchParams.set('spaceType', 'mySpace')
+      // DingTalk's public API calls the user's "My Documents" space `personal`.
+      // `mySpace` is a product/CLI term and is rejected by this endpoint.
+      url.searchParams.set('spaceType', 'personal')
       if (nextToken) url.searchParams.set('nextToken', nextToken)
       const body = await this.json<{ spaces?: Array<{ spaceId?: string }>; nextToken?: string }>(url, { headers: authHeaders(token) })
       values.push(...(body.spaces ?? []).flatMap(space => space.spaceId ? [{ id: space.spaceId }] : []))
@@ -100,7 +105,13 @@ export class DingTalkDriveClient {
   private async json<T>(url: string | URL, init: RequestInit): Promise<T> {
     const response = await this.fetcher(url, { ...init, signal: AbortSignal.timeout(30_000) })
     const body = await response.json().catch(() => undefined) as (T & { code?: string; message?: string }) | undefined
-    if (!response.ok || !body) throw new DingTalkDriveError('dingtalk_drive_failure', body?.message || `钉盘接口调用失败（HTTP ${response.status}）。`)
+    if (!response.ok || !body) {
+      const remoteCode = body?.code ?? ''
+      const code = ['permissionDenied', 'no.priviledge'].includes(remoteCode)
+        ? 'dingtalk_drive_permission_denied'
+        : remoteCode.toLowerCase().includes('param') ? 'dingtalk_drive_request_invalid' : 'dingtalk_drive_failure'
+      throw new DingTalkDriveError(code, body?.message || `钉盘接口调用失败（HTTP ${response.status}）。`)
+    }
     return body
   }
 }

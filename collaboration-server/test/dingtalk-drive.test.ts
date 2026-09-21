@@ -13,7 +13,7 @@ describe('personal DingTalk artwork drive', () => {
       if (url.endsWith('/oauth2/accessToken')) return Response.json({ accessToken: 'app-token' })
       if (url.includes('/v1.0/drive/spaces?')) {
         expect(url).toContain('unionId=union-1')
-        expect(url).toContain('spaceType=mySpace')
+        expect(url).toContain('spaceType=personal')
         return Response.json({ spaces: [{ spaceId: 'personal-space' }] })
       }
       if (url.includes('/dentries/listAll')) return Response.json({ dentries: [

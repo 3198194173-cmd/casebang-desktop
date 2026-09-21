@@ -211,6 +211,14 @@ export interface DingTalkArtworkEntry {
   modifiedAt: string | null
 }
 
+export interface DingTalkArtworkTarget {
+  workItemId: string
+  folderUrl: string
+  nodeId: string
+  folderName: string
+  boundAt: string
+}
+
 export type CollaborationWorkAction = 'claim' | 'return-source' | 'update-stage'
 
 export interface SaveAiSettingsInput {
@@ -313,7 +321,9 @@ export interface CasebangDesktopApi {
     artworkSource(): Promise<DingTalkArtworkSource | null>
     bindArtworkSource(input: { folderUrl: string }): Promise<DingTalkArtworkSource>
     syncArtworkSource(): Promise<DingTalkArtworkSource>
-    searchArtworkEntries(input: { query?: string; limit?: number }): Promise<DingTalkArtworkEntry[]>
+    searchArtworkEntries(input: { query?: string; limit?: number; workItemId?: string }): Promise<DingTalkArtworkEntry[]>
+    artworkTarget(input: { workItemId: string }): Promise<DingTalkArtworkTarget | null>
+    bindArtworkTarget(input: { workItemId: string; folderUrl: string }): Promise<DingTalkArtworkTarget>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

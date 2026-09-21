@@ -42,6 +42,14 @@ describe('material coding preparation', () => {
     expect(row('iP14 Pro', '', '', 'Little Bear').identity.patternName).toBe('Little Bear')
     expect(parseMaterialIdentity('CASEBANG 磁吸气囊支架-Tsumtsum Series#J7系列-Bear', '支架').domain).toBeNull()
   })
+  it('uses a managed model mapping when parsing downstream material names', () => {
+    const identity = parseMaterialIdentity(
+      'CASEBANG 出镜壳-Tsumtsum Series#J7系列-Bear BG00736 iP Future Pro',
+      '一体壳',
+      [{ brand: 'AP', code: '98', name: 'iP Future Pro', aliases: ['Future Pro'] }]
+    )
+    expect(identity).toMatchObject({ brand: 'AP', modelName: 'iP Future Pro', modelCode: '98' })
+  })
   it('parses entire two-character variant, never consumes model code as variant', () => {
     expect(parsePhoneMaterialCode('C.K.CA.AP.J7.AC57')).toMatchObject({ patternVariant: 'AC', modelCode: '57' })
     expect(parsePhoneMaterialCode('C.K.CA.AP.J7.A057')).toMatchObject({ patternVariant: 'A0', modelCode: '57' })
@@ -87,6 +95,27 @@ describe('material coding preparation', () => {
     const manual = planMaterialPatterns([silver], [], { [patternVariantKey(silver.identity)]: 'AC' })
     expect(manual.patternVariants[patternVariantKey(silver.identity)]).toBe('AC')
     expect(manual.plans[0]).toMatchObject({ source: 'manual', referenceCode: 'C.K.CA.AP.J7.AC53' })
+  })
+  it('pairs 出镜壳 and 出彩壳 silver markers from the same normal pattern', () => {
+    const normal = row('iP13 Pro', '', '', 'Rabbit BG00737')
+    const silver = row('iP13 Pro', '（银框）', '', 'Rabbit BG00737')
+    const plan = planMaterialPatterns([silver, normal], [], {}, 'new-series')
+    expect(plan.patternVariants[patternVariantKey(normal.identity)]).toBe('A0')
+    expect(plan.patternVariants[patternVariantKey(silver.identity)]).toBe('AC')
+    expect(plan.plans.find(item => item.key === patternVariantKey(silver.identity))).toMatchObject({ detectedVariant: 'AC', referenceCode: 'C.K.CA.AP.J7.AC53' })
+    const colorNormal = row('iP13 Pro', '', '', 'Color BG00738')
+    colorNormal.materialName = colorNormal.materialName.replace('出镜壳', '出彩壳')
+    colorNormal.identity = parseMaterialIdentity(colorNormal.materialName, colorNormal.itemClass)
+    const colorSilver = { ...colorNormal, id: randomUUID(), materialName: `${colorNormal.materialName}（银框）` }
+    colorSilver.identity = parseMaterialIdentity(colorSilver.materialName, colorSilver.itemClass)
+    const colorPlan = planMaterialPatterns([colorNormal, colorSilver], [], {}, 'new-series')
+    expect(colorPlan.patternVariants[patternVariantKey(colorSilver.identity)]).toBe('AC')
+  })
+  it.each([['A0', 'AC'], ['B0', 'BC'], ['C0', 'CC'], ['D0', 'DC']])('pairs confirmed normal marker %s with silver marker %s', (normalMarker, silverMarker) => {
+    const master = row('iP13 Pro', '', `C.K.CA.AP.J7.${normalMarker}53`, `Pattern-${normalMarker} BG00736`)
+    const silver = row('iP13 Pro', '（银框）', '', `Pattern-${normalMarker} BG00736`)
+    const plan = planMaterialPatterns([silver], [master], {}, 'new-products')
+    expect(plan.patternVariants[patternVariantKey(silver.identity)]).toBe(silverMarker)
   })
   it('applies post-recognition overrides by pattern group and rejects occupied markers', () => {
     const existing = row('iP14 Pro', '', 'C.K.CA.AP.J7.A057', 'Bear BG00736')

@@ -54,7 +54,7 @@ const actionSchema = z.object({
   expectedVersion: z.number().int().positive(),
   revision: z.number().int().positive(),
   requestKey: z.string().uuid(),
-  state: z.enum(['PENDING_PROCESSING', 'PROCESSING', 'PENDING_ORIGIN_REVIEW', 'NEEDS_SOURCE_FIX', 'READY_TO_MERGE', 'COMPLETED']).optional(),
+  state: z.enum(['PENDING_PROCESSING', 'PROCESSING', 'PENDING_ORIGIN_REVIEW', 'NEEDS_SOURCE_FIX', 'READY_TO_MERGE', 'COMPLETED', 'CANCELLED']).optional(),
   reason: z.string().trim().max(1_000).optional()
 }).strict()
 
@@ -63,6 +63,7 @@ interface WorkItemRow {
   title: string
   state: string
   source_workflow: string
+  source_id?: string
   version: number
   revision: number
   created_at: Date
@@ -76,7 +77,10 @@ interface WorkItemRow {
   last_action?: string | null
   last_reason?: string | null
   last_event_at?: Date | null
+  activities?: ActivityRow[]
 }
+
+interface ActivityRow { id: string; work_item_id: string; actor_id: string; actor_name: string; action: string; created_at: Date }
 
 export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool, storage: PrivateStorage): void {
   if (!app.hasContentTypeParser(XLSX_CONTENT_TYPE)) {
@@ -112,7 +116,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
     const result = await pool.query<WorkItemRow>(
-      `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
+      `SELECT w.id,w.title,w.state,w.source_workflow,w.source_id,w.version,w.revision,w.created_at,
               w.origin_id,origin.display_name AS origin_name,
               w.assignee_id,assignee.display_name AS assignee_name,
               revision.created_by AS modifier_id,modifier.display_name AS modifier_name,
@@ -132,10 +136,23 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
          ORDER BY event.version DESC LIMIT 1
        ) latest ON true
        WHERE w.organization_id=$1 AND (w.origin_id=$2 OR w.assignee_id=$2)
+         AND NOT (w.source_workflow='manual' AND w.source_id='material-master')
        ORDER BY w.created_at DESC LIMIT 200`,
       [actor.organization_id, actor.id]
     )
-    return reply.header('cache-control', 'no-store').send({ items: result.rows.map(publicWorkItem) })
+    const activities = await loadActivities(pool, actor.organization_id, result.rows.map(row => row.id))
+    return reply.header('cache-control', 'no-store').send({ items: result.rows.map(row => publicWorkItem({ ...row, activities: activities.get(row.id) ?? [] })) })
+  })
+
+  app.get('/api/v1/collaboration/material-master', async (request, reply) => {
+    const actor = await authenticatedUser(request, reply, pool)
+    if (!actor) return
+    const found = await pool.query<{ id: string }>(
+      `SELECT id FROM work_items WHERE organization_id=$1 AND source_workflow='manual' AND source_id='material-master'`,
+      [actor.organization_id]
+    )
+    if (!found.rows[0]) return reply.header('cache-control', 'no-store').send({ item: null })
+    return reply.header('cache-control', 'no-store').send({ item: publicWorkItem(await loadWorkItem(pool, actor.organization_id, found.rows[0].id)) })
   })
 
   app.post('/api/v1/collaboration/workbook-uploads', async (request, reply) => {
@@ -272,7 +289,8 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     const result = await pool.query<{ object_key: string; title: string }>(
       `SELECT r.object_key,w.title FROM work_items w
        JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id AND r.revision=w.revision
-       WHERE w.organization_id=$1 AND w.id=$2 AND (w.origin_id=$3 OR w.assignee_id=$3)`,
+       WHERE w.organization_id=$1 AND w.id=$2
+         AND (w.origin_id=$3 OR w.assignee_id=$3 OR (w.source_workflow='manual' AND w.source_id='material-master'))`,
       [actor.organization_id, id.data, actor.id]
     )
     const row = result.rows[0]
@@ -298,6 +316,9 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     }
     if (input.data.action === 'update-stage' && !input.data.state) {
       return reply.code(400).send({ error: 'stage_required' })
+    }
+    if (input.data.action === 'update-stage' && input.data.state === 'COMPLETED' && actor.business_role !== 'upstream') {
+      return reply.code(403).send({ error: 'business_role_forbidden' })
     }
 
     const client = await pool.connect()
@@ -541,7 +562,7 @@ async function saveWorkbookRevision(
   try {
     await client.query('BEGIN')
     const found = await client.query<WorkItemRow & { current_sha256: string }>(
-      `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
+      `SELECT w.id,w.title,w.state,w.source_workflow,w.source_id,w.version,w.revision,w.created_at,
               w.origin_id,origin.display_name AS origin_name,w.assignee_id,assignee.display_name AS assignee_name,
               r.sha256 AS current_sha256
        FROM work_items w
@@ -553,8 +574,12 @@ async function saveWorkbookRevision(
     )
     const current = found.rows[0]
     if (!current) { await client.query('ROLLBACK'); return { status: 404, body: { error: 'work_item_not_found' } } }
-    if (current.origin_id !== actor.id && current.assignee_id !== actor.id) {
+    const isSharedMaster = current.source_workflow === 'manual' && current.source_id === 'material-master'
+    if (!isSharedMaster && current.origin_id !== actor.id && current.assignee_id !== actor.id) {
       await client.query('ROLLBACK'); return { status: 403, body: { error: 'forbidden_action' } }
+    }
+    if (!isSharedMaster && ['COMPLETED', 'CANCELLED'].includes(current.state)) {
+      await client.query('ROLLBACK'); return { status: 409, body: { error: 'state_conflict' } }
     }
     if (current.current_sha256 === metadata.sha256) {
       await client.query('COMMIT')
@@ -604,6 +629,31 @@ async function saveWorkbookRevision(
   }
 }
 
+async function loadActivities(pool: pg.Pool, organizationId: string, workItemIds: string[]): Promise<Map<string, ActivityRow[]>> {
+  const grouped = new Map<string, ActivityRow[]>()
+  if (!workItemIds.length) return grouped
+  const result = await pool.query<ActivityRow>(
+    `SELECT event.id,event.work_item_id,event.actor_id,actor.display_name AS actor_name,event.action,event.created_at
+     FROM (
+       SELECT id,organization_id,work_item_id,actor_id,action,created_at,
+              row_number() OVER (PARTITION BY work_item_id ORDER BY created_at DESC) AS position
+       FROM work_item_events
+       WHERE organization_id=$1 AND work_item_id=ANY($2::uuid[])
+         AND action IN ('submit','save-workbook','weboffice-save')
+     ) event
+     JOIN app_users actor ON actor.organization_id=event.organization_id AND actor.id=event.actor_id
+     WHERE event.position<=12
+     ORDER BY event.created_at DESC`,
+    [organizationId, workItemIds]
+  )
+  for (const activity of result.rows) {
+    const values = grouped.get(activity.work_item_id) ?? []
+    if (values.length < 12) values.push(activity)
+    grouped.set(activity.work_item_id, values)
+  }
+  return grouped
+}
+
 async function loadWorkItem(pool: pg.Pool, organizationId: string, id: string): Promise<WorkItemRow> {
   const result = await pool.query<WorkItemRow>(
     `SELECT w.id,w.title,w.state,w.source_workflow,w.version,w.revision,w.created_at,
@@ -647,6 +697,12 @@ function publicWorkItem(row: WorkItemRow): object {
     origin: { id: row.origin_id, displayName: row.origin_name },
     assignee: { id: row.assignee_id, displayName: row.assignee_name },
     lastEditor: { id: row.modifier_id ?? row.origin_id, displayName: row.modifier_name ?? row.origin_name },
-    lastEditedAt: (row.revision_created_at ?? row.created_at).toISOString()
+    lastEditedAt: (row.revision_created_at ?? row.created_at).toISOString(),
+    activities: (row.activities ?? []).map(activity => ({
+      id: activity.id,
+      actor: { id: activity.actor_id, displayName: activity.actor_name },
+      occurredAt: activity.created_at instanceof Date ? activity.created_at.toISOString() : String(activity.created_at),
+      kind: activity.action === 'weboffice-save' ? 'manual' : 'software'
+    }))
   }
 }

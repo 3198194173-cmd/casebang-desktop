@@ -176,6 +176,14 @@ export interface CollaborationWorkItem {
   assignee: { id: string; displayName: string }
   lastEditor: { id: string; displayName: string }
   lastEditedAt: string
+  activities: CollaborationActivity[]
+}
+
+export interface CollaborationActivity {
+  id: string
+  actor: { id: string; displayName: string }
+  occurredAt: string
+  kind: 'software' | 'manual'
 }
 
 export type CollaborationWorkAction = 'claim' | 'return-source' | 'update-stage'
@@ -274,6 +282,9 @@ export interface CasebangDesktopApi {
     act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; state?: string; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     openWorkbook(input: { workItemId: string; title: string; revision: number }): Promise<{ path: string }>
     openOnlineWorkbook(input: { workItemId: string }): Promise<{ opened: true }>
+    materialMaster(): Promise<CollaborationWorkItem | null>
+    publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
+    syncMaterialMaster(): Promise<{ item: CollaborationWorkItem; path: string }>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

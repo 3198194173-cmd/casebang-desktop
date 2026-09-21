@@ -2,6 +2,7 @@ import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { AiSettingsSummary, ApplicationSettings, BaseFileKind, BaseFileUpdateRecord, CollaborationUser, SaveAiSettingsInput } from '@shared/contracts'
+import { MATERIAL_MODELS, type MaterialModel } from '@shared/material-model-dictionary'
 
 export interface CloudAiSettings {
   provider: 'aliyun'
@@ -23,6 +24,7 @@ interface PersistedSettings {
   baseFileUpdates: BaseFileUpdateRecord[]
   lastMasterImageDirectory: string | null
   materialMasterPath?: string | null
+  materialModels?: MaterialModel[]
   application: ApplicationSettings
   cloudAi: PersistedCloudAiSettings
   collaboration: PersistedCollaborationSession
@@ -72,6 +74,15 @@ const EMPTY_SETTINGS: PersistedSettings = {
 export class SettingsRepository {
   async getMaterialMasterPath(): Promise<string | null> { return (await this.read()).materialMasterPath ?? null }
   async setMaterialMasterPath(path: string): Promise<void> { const settings = await this.read(); settings.materialMasterPath = path; await this.write(settings) }
+  async getMaterialModels(): Promise<MaterialModel[]> {
+    const values = (await this.read()).materialModels
+    return structuredClone(values?.length ? values : MATERIAL_MODELS)
+  }
+  async setMaterialModels(models: MaterialModel[]): Promise<void> {
+    const settings = await this.read()
+    settings.materialModels = structuredClone(models)
+    await this.write(settings)
+  }
   private readonly filePath: string
 
   constructor(filePath = join(app.getPath('userData'), 'settings.json')) {
@@ -201,6 +212,7 @@ export class SettingsRepository {
         baseFileUpdates: parsed.baseFileUpdates ?? [],
         lastMasterImageDirectory: parsed.lastMasterImageDirectory ?? null,
         materialMasterPath: parsed.materialMasterPath ?? null,
+        materialModels: Array.isArray(parsed.materialModels) ? parsed.materialModels : undefined,
         application: { ...DEFAULT_APPLICATION_SETTINGS, ...(parsed.application ?? {}) },
         cloudAi: { ...DEFAULT_CLOUD_AI, ...(parsed.cloudAi ?? {}) },
         collaboration: { ...DEFAULT_COLLABORATION, ...(parsed.collaboration ?? {}) }

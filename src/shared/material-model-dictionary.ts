@@ -24,7 +24,7 @@ export const MATERIAL_MODELS: MaterialModel[] = [
   ])
 ]
 export const normalizeModel = (name: string): string => name.normalize('NFKC').replace(/\s+/g, '').toUpperCase()
-export function findMaterialModel(name: string): MaterialModel | null {
+export function findMaterialModel(name: string, dictionary: readonly MaterialModel[] = MATERIAL_MODELS): MaterialModel | null {
   const key = normalizeModel(name)
-  return MATERIAL_MODELS.find(model => [model.name, ...model.aliases, ...(model.brand === 'HW' && !model.name.startsWith('HW ') ? [`HW ${model.name}`] : [])].some(alias => normalizeModel(alias) === key)) ?? null
+  return dictionary.find(model => [model.name, ...model.aliases, ...(model.brand === 'HW' && !model.name.startsWith('HW ') ? [`HW ${model.name}`] : [])].some(alias => normalizeModel(alias) === key)) ?? null
 }

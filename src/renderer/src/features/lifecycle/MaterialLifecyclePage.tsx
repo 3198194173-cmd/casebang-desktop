@@ -32,7 +32,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     try { await operation() } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) } finally { setBusy(false) }
   }
   const refreshItems = async (): Promise<CollaborationWorkItem[]> => {
-    const values = await desktopApi.collaboration.workItems()
+    const values = (await desktopApi.collaboration.workItems()).filter(item => !['COMPLETED', 'CANCELLED'].includes(item.state))
     setItems(values)
     return values
   }
@@ -47,6 +47,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
       workItemId: item.id, title: item.title, sourceWorkflow: item.sourceWorkflow, version: item.version, revision: item.revision,
       monthPrefix: prefix, patternVariants: nextVariants
     })
+    setMasterPath(await desktopApi.supplement.getMaster())
     setSelectedItem(item); setAnalysis(value); setVariants(value.patternVariants); setPatternOverrideEnabled(false); setPatternOverrideReason(''); setPage(0)
   }
   const materialResults = useMemo(() => analysis ? previewMaterialCodes({ rows: analysis.rows, patternVariants: variants, sourceWorkflow: analysis.sourceWorkflow }) : [], [analysis, variants])
@@ -103,7 +104,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
         <section className="lc-master-source"><div><strong>物料总表</strong><span>{masterPath ?? '尚未选择'}</span><small>{tab === 'material' ? '用于复用已有图案标识并检查新标识占用。' : '用于查找所选年月最后一个已用号码。'}</small></div><button disabled={busy} onClick={() => void run(chooseMaster)}>选择 / 更换物料总表</button></section>
         {tab === 'barcode' ? <><section className="lc-allocation-controls"><div><label>69 码年月前缀<input value={monthPrefix} maxLength={6} inputMode="numeric" onChange={event => setMonthPrefix(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><small>默认取当前年月；遇到上月设计图档可改回上月，例如 202609。</small></div>
           <button disabled={busy || !/^\d{6}$/.test(monthPrefix)} onClick={() => void run(async () => analyze(selectedItem, monthPrefix))}>重新计算起始号</button></section><div className="lc-number-card"><div><small>选定前缀</small><strong>{analysis.barcodePlan.monthPrefix}</strong></div><div><small>总表最后已用</small><strong>{analysis.barcodePlan.previousCode ?? '该年月尚无号码'}</strong></div><div><small>本次第一个号码</small><strong>{analysis.barcodePlan.nextCode}</strong></div><div><small>待填写</small><strong>{analysis.barcodePlan.pendingCount} 条</strong></div></div>
-          <p>系统扫描“{analysis.barcodePlan.masterFileName}”中该年月的最大流水；其他格式号码不会干扰。已有 69 码保留不变。</p>
+          <p>系统只扫描中央总表“{analysis.barcodePlan.masterFileName}”中该年月的最大流水；未合并的共享工作簿不会改变基底。并行加工多份工作簿可能预览相同号码，请先合并一份并更新中央总表，再处理下一份。</p>
           <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存后自动打开 WPS 检查</label><button disabled={busy || !analysis.barcodePlan.pendingCount} onClick={() => void run(async () => saveAllocation(true, false))}>填写 69 码并保存</button><button disabled={busy || !analysis.barcodePlan.pendingCount || !candidateCount} onClick={() => void run(async () => saveAllocation(true, true))}>两项一起填写并保存</button></div>
         </> : <><div className="lc-pattern-heading"><div><strong>图案编码识别结果</strong><small>系统已先完成图案分组、历史映射和占用检查。示例统一使用 iPhone 13 Pro，机型码为 53；保存时会替换为各行实际机型码。</small></div>
           {patternOverrideAllowed

@@ -60,6 +60,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.lifecycleGet, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.get(input) })
   ipcMain.handle(IPC_CHANNELS.lifecycleSave, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.save(input) })
   ipcMain.handle(IPC_CHANNELS.lifecyclePreview, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.preview(input) })
+  ipcMain.handle(IPC_CHANNELS.lifecyclePreviewMaterialMaster, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.previewMaterialMaster(input) })
+  ipcMain.handle(IPC_CHANNELS.lifecycleListMaterialModels, event => { assertTrustedSender(event.senderFrame); return lifecycle.listMaterialModels() })
+  ipcMain.handle(IPC_CHANNELS.lifecycleSaveMaterialModel, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.saveMaterialModel(input) })
   const sharedAnalysisSchema = z.object({
     workItemId: z.string().uuid(), title: z.string().trim().min(1).max(240),
     sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models', 'manual']),
@@ -72,6 +75,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.lifecycleAnalyzeShared, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     const request = sharedAnalysisSchema.parse(input)
+    await dependencies.collaboration.syncMaterialMaster()
     const workItem = (await dependencies.collaboration.workItems()).find(item => item.id === request.workItemId)
     if (!workItem) throw new Error('共享工作簿不存在或当前账号无权访问。')
     if (workItem.sourceWorkflow !== request.sourceWorkflow || workItem.version !== request.version || workItem.revision !== request.revision) throw new Error('共享工作簿来源或版本已变化，请刷新后重试。')
@@ -90,6 +94,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
       expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive(),
       fillBarcodes: z.boolean(), fillMaterialCodes: z.boolean(), openOnlineAfterSave: z.boolean().optional()
     }).strict().parse(input)
+    await dependencies.collaboration.syncMaterialMaster()
     const workItem = (await dependencies.collaboration.workItems()).find(item => item.id === request.workItemId)
     if (!workItem) throw new Error('共享工作簿不存在或当前账号无权访问。')
     if (workItem.sourceWorkflow !== request.sourceWorkflow || workItem.version !== request.expectedVersion || workItem.revision !== request.expectedRevision) throw new Error('共享工作簿来源或版本已变化，请刷新后重试。')
@@ -216,6 +221,21 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.collaborationOpenOnlineWorkbook, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.openOnlineWorkbook(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationMaterialMaster, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.materialMaster()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationPublishMaterialMaster, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.publishMaterialMaster()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationSyncMaterialMaster, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.syncMaterialMaster()
   })
 
   ipcMain.handle(IPC_CHANNELS.baseFilesSelect, async (event, input: unknown) => {

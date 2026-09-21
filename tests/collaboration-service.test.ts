@@ -47,6 +47,13 @@ describe('desktop collaboration service', () => {
     expect(value.clearCollaborationSession).toHaveBeenCalledOnce()
   })
 
+  it('loads the organization shared material master and normalizes an older response without activities', async () => {
+    const item = { id: '30000000-0000-4000-8000-000000000001', title: '物料总表.xlsx', state: 'PENDING_PROCESSING', sourceWorkflow: 'manual', version: 1, revision: 3, createdAt: '2026-09-21T00:00:00.000Z', origin: { id: 'user-1', displayName: '卓志' }, assignee: { id: 'user-1', displayName: '卓志' }, lastEditor: { id: 'user-1', displayName: '卓志' }, lastEditedAt: '2026-09-21T01:00:00.000Z' }
+    vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ item }), { status: 200 }))
+    await expect(new CollaborationService(settings()).materialMaster()).resolves.toMatchObject({ id: item.id, revision: 3, activities: [] })
+    expect(net.fetch).toHaveBeenCalledWith(expect.stringContaining('/collaboration/material-master'), expect.any(Object))
+  })
+
   it('updates the shared workbook stage without an inbox or outbox parameter', async () => {
     const item = { id: '30000000-0000-4000-8000-000000000001', title: '测试工作簿', state: 'PENDING_ORIGIN_REVIEW', sourceWorkflow: 'manual', version: 3, revision: 1, createdAt: '2026-09-17T00:00:00.000Z', origin: { id: 'user-1', displayName: '建表人' }, assignee: { id: 'user-2', displayName: '处理人' } }
     vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ item, duplicate: false }), { status: 200 }))

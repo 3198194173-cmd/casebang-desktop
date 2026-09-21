@@ -10,7 +10,10 @@ const api: CasebangDesktopApi = {
     save: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleSave, input),
     preview: (id) => ipcRenderer.invoke(IPC_CHANNELS.lifecyclePreview, id),
     analyzeShared: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleAnalyzeShared, input),
-    applyShared: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleApplyShared, input)
+    applyShared: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleApplyShared, input),
+    previewMaterialMaster: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecyclePreviewMaterialMaster, input),
+    listMaterialModels: () => ipcRenderer.invoke(IPC_CHANNELS.lifecycleListMaterialModels),
+    saveMaterialModel: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleSaveMaterialModel, input)
   },
   supplement: {
     getMaster: () => ipcRenderer.invoke(IPC_CHANNELS.supplementGetMaster),
@@ -39,7 +42,10 @@ const api: CasebangDesktopApi = {
     submitLifecycle: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationSubmitLifecycle, input),
     act: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationAct, input),
     openWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenWorkbook, input),
-    openOnlineWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenOnlineWorkbook, input)
+    openOnlineWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenOnlineWorkbook, input),
+    materialMaster: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationMaterialMaster),
+    publishMaterialMaster: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationPublishMaterialMaster),
+    syncMaterialMaster: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationSyncMaterialMaster)
   },
   baseFiles: {
     select: (kind) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesSelect, kind),

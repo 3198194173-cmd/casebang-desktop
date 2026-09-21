@@ -108,6 +108,22 @@ export interface SharedLifecycleWriteResult {
   materialCodeFilled: number
   openedOnline: boolean
 }
+export interface MaterialMasterPreview {
+  path: string
+  fileName: string
+  totalRows: number
+  page: number
+  pageSize: number
+  rows: LifecycleRow[]
+}
+export interface SaveMaterialModelInput {
+  originalBrand?: MaterialBrand
+  originalCode?: string
+  brand: MaterialBrand
+  code: string
+  name: string
+  aliases: string[]
+}
 export interface LifecycleApi {
   list(): Promise<LifecycleDraftSummary[]>
   importWorkbook(): Promise<LifecycleDraft | null>
@@ -116,4 +132,7 @@ export interface LifecycleApi {
   preview(id: string): Promise<LifecycleRowPreview[]>
   analyzeShared(input: { workItemId: string; title: string; sourceWorkflow: LifecycleSource; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string>; patternOverrideEnabled?: boolean; patternOverrideReason?: string }): Promise<SharedLifecycleAnalysis>
   applyShared(input: ApplySharedLifecycleInput): Promise<SharedLifecycleWriteResult>
+  previewMaterialMaster(input: { page: number; pageSize: number; query?: string }): Promise<MaterialMasterPreview>
+  listMaterialModels(): Promise<import('./material-model-dictionary').MaterialModel[]>
+  saveMaterialModel(input: SaveMaterialModelInput): Promise<import('./material-model-dictionary').MaterialModel[]>
 }

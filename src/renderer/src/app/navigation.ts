@@ -1,4 +1,4 @@
-export type PageId = 'dashboard' | 'base-files' | 'new-task' | 'integrations' | 'settings' | 'supplement' | 'existing-products' | 'collaboration-tasks' | 'material-lifecycle'
+export type PageId = 'dashboard' | 'base-files' | 'new-task' | 'integrations' | 'settings' | 'supplement' | 'existing-products' | 'collaboration-tasks' | 'material-lifecycle' | 'material-data'
 
 export interface NavigationItem {
   id: PageId
@@ -16,7 +16,7 @@ export const NAV_GROUPS: NavigationGroup[] = [
   { id: 'overview', label: '工作台', items: [{ id: 'dashboard', label: '业务总览', icon: '⌂' }] },
   { id: 'workflows', label: '上游建表', items: [{ id: 'new-task', label: '新系列建表', icon: '▦' }, { id: 'existing-products', label: '系列补产品', icon: '⊞' }, { id: 'supplement', label: '产品补机型', icon: '＋' }] },
   { id: 'processing', label: '下游加工', items: [{ id: 'material-lifecycle', label: '新建表加工', icon: '⊞' }] },
-  { id: 'records', label: '共享记录', items: [{ id: 'collaboration-tasks', label: '工作簿记录', icon: '⇅' }] },
+  { id: 'records', label: '共享记录', items: [{ id: 'material-data', label: '资料管理', icon: '▤' }, { id: 'collaboration-tasks', label: '工作簿记录', icon: '⇅' }] },
   {
     id: 'resources',
     label: '资料与配置',

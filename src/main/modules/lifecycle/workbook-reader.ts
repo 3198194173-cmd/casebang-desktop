@@ -4,6 +4,7 @@ import { XMLParser } from 'fast-xml-parser'
 import { findPackageText, readOoxmlPackage } from '../spreadsheet/ooxml-package'
 import type { LifecycleRow } from '../../../shared/lifecycle-contracts'
 import { parseMaterialIdentity, rowIdentityIssues } from '../../../shared/material-coding'
+import type { MaterialModel } from '../../../shared/material-model-dictionary'
 
 type Xml = Record<string, any>
 const array = (value: any): Xml[] => value == null ? [] : Array.isArray(value) ? value : [value]
@@ -25,7 +26,7 @@ const aliases: Record<string, string[]> = {
   item: ['类目', '物料类别'], material: ['材质', '颜色', '备注/材质'], domestic: ['建议零售价', '建议零售价(元)'],
   overseas: ['海外零售价', '海外零售价(美元)'], remark: ['备注(IP)', 'IP备注']
 }
-export async function readLifecycleWorkbook(path: string): Promise<{ rows: LifecycleRow[]; warnings: string[] }> {
+export async function readLifecycleWorkbook(path: string, modelDictionary?: readonly MaterialModel[]): Promise<{ rows: LifecycleRow[]; warnings: string[] }> {
   const entries = await readOoxmlPackage(path, { skipMedia: true })
   const required = (name: string): string => { const value = findPackageText(entries, name); if (!value) throw new Error(`不是完整的 xlsx 工作簿：缺少 ${name}`); return value }
   const workbook = xml(required('xl/workbook.xml'))
@@ -70,7 +71,7 @@ export async function readLifecycleWorkbook(path: string): Promise<{ rows: Lifec
         nameAddress: `${columns.name}${rowNumber}`, barcodeAddress: `${columns.barcode}${rowNumber}`, materialCodeAddress: `${columns.code}${rowNumber}`,
         materialName: value('name'), barcode: value('barcode'), materialCode: value('code'), itemClass: value('item'), material: value('material'),
         domesticPrice: value('domestic'), overseasPrice: value('overseas'), remark: value('remark'),
-        identity: parseMaterialIdentity(value('name'), value('item')), issues: []
+        identity: parseMaterialIdentity(value('name'), value('item'), modelDictionary), issues: []
       }
       item.issues = rowIdentityIssues(item)
       if (Object.values(columns).some(column => formulas.has(column))) item.issues.push('业务字段含公式：仅显示缓存值，须人工确认，未执行公式')

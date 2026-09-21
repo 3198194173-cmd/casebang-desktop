@@ -54,6 +54,26 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
+  it('returns the single organization material master independently of the series work list', async () => {
+    const item = {
+      id: '30000000-0000-4000-8000-000000000009', title: 'CASEBANG物料总表.xlsx', state: 'PENDING_PROCESSING',
+      source_workflow: 'manual', version: 3, revision: 3, created_at: new Date('2026-09-21T00:00:00Z'),
+      origin_id: '10000000-0000-4000-8000-000000000001', origin_name: '卓志',
+      assignee_id: '10000000-0000-4000-8000-000000000001', assignee_name: '卓志',
+      modifier_id: '10000000-0000-4000-8000-000000000001', modifier_name: '卓志', revision_created_at: new Date('2026-09-21T01:00:00Z')
+    }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([{ id: item.origin_id, display_name: '卓志', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
+      .mockResolvedValueOnce(queryResult([{ id: item.id }]))
+      .mockResolvedValueOnce(queryResult([item]))
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, {} as PrivateStorage)
+    const response = await app.inject({ method: 'GET', url: '/api/v1/collaboration/material-master', headers: { authorization: `Bearer ${'x'.repeat(40)}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ item: expect.objectContaining({ id: item.id, sourceWorkflow: 'manual', revision: 3, activities: [] }) })
+    await app.close()
+  })
+
   it('accepts the workbook media type but requires bounded metadata before storage', async () => {
     const query = vi.fn().mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
     const pool = { query } as unknown as pg.Pool
@@ -422,6 +442,32 @@ describe('collaboration identity boundaries', () => {
     const outboxCall = clientQuery.mock.calls.find(call => String(call[0]).includes('INSERT INTO outbox_events'))
     expect(outboxCall?.[1]?.[3]).toBe(workItem.assignee_id)
     expect(outboxCall?.[1]?.[4]).toEqual(expect.objectContaining({ type: 'work-item-stage-updated', state: 'PENDING_ORIGIN_REVIEW' }))
+    await app.close()
+  })
+
+  it('rejects completion and archival from a downstream account', async () => {
+    const actor = {
+      id: '10000000-0000-4000-8000-000000000002', display_name: '加工人', avatar_url: null,
+      organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'downstream'
+    }
+    const query = vi.fn().mockResolvedValueOnce(queryResult([actor]))
+    const connect = vi.fn()
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query, connect } as unknown as pg.Pool, {} as PrivateStorage)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/collaboration/work-items/30000000-0000-4000-8000-000000000001/actions',
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/json' },
+      payload: {
+        action: 'update-stage', state: 'COMPLETED', expectedVersion: 2, revision: 1,
+        requestKey: '40000000-0000-4000-8000-000000000003'
+      }
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'business_role_forbidden' })
+    expect(connect).not.toHaveBeenCalled()
     await app.close()
   })
 })

@@ -3,6 +3,7 @@ import { XMLParser } from 'fast-xml-parser'
 import { findPackageText, readOoxmlPackage, replacePackageText, writeOoxmlPackage, type PackageEntryRecord } from '../spreadsheet/ooxml-package'
 import type { LifecycleRow } from '../../../shared/lifecycle-contracts'
 import { parseMaterialIdentity } from '../../../shared/material-coding'
+import type { MaterialModel } from '../../../shared/material-model-dictionary'
 
 type Xml = Record<string, any>
 type CellWrite = { address: string; value: string }
@@ -81,7 +82,7 @@ export async function inspectBarcodeSequence(path: string, monthPrefix: string):
 }
 
 /** Reads only the three master columns needed for pattern lookup; the material master is not subject to task row limits. */
-export async function inspectMaterialMappingRows(path: string): Promise<LifecycleRow[]> {
+export async function inspectMaterialMappingRows(path: string, modelDictionary?: readonly MaterialModel[]): Promise<LifecycleRow[]> {
   const entries = await readOoxmlPackage(path, { skipMedia: true })
   const shared = sharedStrings(entries)
   const result: LifecycleRow[] = []
@@ -112,7 +113,7 @@ export async function inspectMaterialMappingRows(path: string): Promise<Lifecycl
         id: `${sheet.name}:${rowNumber}`, sheet: sheet.name, row: rowNumber,
         nameAddress: `${columns.name}${rowNumber}`, barcodeAddress: '', materialCodeAddress: `${columns.code}${rowNumber}`,
         itemClass, materialName, barcode: '', materialCode, material: '', domesticPrice: '', overseasPrice: '', remark: '',
-        identity: parseMaterialIdentity(materialName, itemClass), issues: []
+        identity: parseMaterialIdentity(materialName, itemClass, modelDictionary), issues: []
       })
     }
   }

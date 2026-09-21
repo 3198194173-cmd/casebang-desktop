@@ -3,19 +3,13 @@ import type { CollaborationWorkItem } from '@shared/contracts'
 import { desktopApi } from '../../app/desktop-api'
 import { accountError, useAccount } from '../../app/account-context'
 
-const STAGES = [
-  ['PENDING_PROCESSING', '已建表，待下游加工'],
-  ['PROCESSING', '下游加工中'],
-  ['PENDING_ORIGIN_REVIEW', '待上游审核'],
-  ['NEEDS_SOURCE_FIX', '需要修改'],
-  ['READY_TO_MERGE', '审核通过，待合并'],
-  ['COMPLETED', '已合并完成']
-] as const
+type RecordFilter = 'active' | 'completed' | 'cancelled'
 
 export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React.JSX.Element {
   const { account } = useAccount()
+  const canArchive = account?.status === 'signed-in' && account.user?.businessRole === 'upstream'
   const [items, setItems] = useState<CollaborationWorkItem[]>([])
-  const [selectedStages, setSelectedStages] = useState<Record<string, string>>({})
+  const [filter, setFilter] = useState<RecordFilter>('active')
   const [busy, setBusy] = useState(false)
   const [activeItemId, setActiveItemId] = useState('')
   const [error, setError] = useState('')
@@ -24,70 +18,60 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
   const load = async (): Promise<void> => {
     if (account?.status !== 'signed-in') { setItems([]); return }
     setBusy(true); setError('')
-    try {
-      const next = await desktopApi.collaboration.workItems()
-      setItems(next)
-      setSelectedStages(Object.fromEntries(next.map(item => [item.id, item.state])))
-    } catch (reason) {
-      setError(accountError(reason, '工作簿记录读取失败'))
-    } finally {
-      setBusy(false)
-    }
+    try { setItems(await desktopApi.collaboration.workItems()) }
+    catch (reason) { setError(accountError(reason, '工作簿记录读取失败')) }
+    finally { setBusy(false) }
   }
 
   useEffect(() => { if (enabled) void load() }, [enabled, account?.status, account?.user?.id])
 
-  const updateStage = async (item: CollaborationWorkItem): Promise<void> => {
-    const state = selectedStages[item.id]
-    if (!state || state === item.state) return
+  const updateState = async (item: CollaborationWorkItem, state: 'COMPLETED' | 'CANCELLED'): Promise<void> => {
+    const label = state === 'COMPLETED' ? '完成并归档' : '作废并停止后续加工'
+    if (!window.confirm(`确认将“${item.title}”${label}？工作簿和编辑记录会保留。`)) return
     setActiveItemId(item.id); setError(''); setMessage('')
     try {
       const result = await desktopApi.collaboration.act({ workItemId: item.id, action: 'update-stage', state, expectedVersion: item.version, revision: item.revision })
       setItems(current => current.map(entry => entry.id === result.item.id ? result.item : entry))
-      setSelectedStages(current => ({ ...current, [result.item.id]: result.item.state }))
-      setMessage('当前阶段已保存，通知事件已进入中央服务。')
-    } catch (reason) {
-      setError(accountError(reason, '阶段更新失败'))
-    } finally {
-      setActiveItemId('')
-    }
+      setMessage(state === 'COMPLETED' ? '工作簿已完成并归档。' : '工作簿已作废；历史文件与编辑记录仍保留。')
+    } catch (reason) { setError(accountError(reason, '工作簿状态更新失败')) }
+    finally { setActiveItemId('') }
   }
 
   const openOnline = async (item: CollaborationWorkItem): Promise<void> => {
     setActiveItemId(item.id); setError(''); setMessage('')
     try {
       await desktopApi.collaboration.openOnlineWorkbook({ workItemId: item.id })
-      setMessage('已在浏览器打开同一份 WPS 共享工作簿；双方修改将保存为中央修订。')
-    } catch (reason) {
-      setError(accountError(reason, 'WPS 在线工作簿打开失败'))
-    } finally {
-      setActiveItemId('')
-    }
+      setMessage('已在浏览器打开同一份 WPS 共享工作簿；保存后会形成“手动修改”记录。')
+    } catch (reason) { setError(accountError(reason, 'WPS 在线工作簿打开失败')) }
+    finally { setActiveItemId('') }
   }
 
+  const visibleItems = items.filter(item => filter === 'completed'
+    ? item.state === 'COMPLETED'
+    : filter === 'cancelled' ? item.state === 'CANCELLED' : !['COMPLETED', 'CANCELLED'].includes(item.state))
+
   return <div className="collaboration-page">
-    <header className="collaboration-hero"><div><span className="eyebrow">共享工作簿</span><h2>工作簿记录</h2><p>上下游同步查看工作簿修订和当前阶段。</p></div><button className="secondary-button" disabled={busy} onClick={() => void load()}>{busy ? '刷新中…' : '刷新记录'}</button></header>
+    <header className="collaboration-hero"><div><span className="eyebrow">共享工作簿</span><h2>工作簿记录</h2><p>管理系列工作簿，并查看谁在何时通过软件加工或 WPS 手动修改。</p></div><button className="secondary-button" disabled={busy} onClick={() => void load()}>{busy ? '刷新中…' : '刷新记录'}</button></header>
     {account?.status === 'signed-in' && <section className="collaboration-account-strip"><span className="status-dot" /><strong>{account.user?.displayName}</strong><span>{account.user?.businessRole === 'upstream' ? '上游建表' : '下游加工'} · 中央记录已连接</span></section>}
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert success">{message}</div>}
+    <nav className="collaboration-tabs"><button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>进行中</button><button aria-pressed={filter === 'completed'} onClick={() => setFilter('completed')}>已完成</button><button aria-pressed={filter === 'cancelled'} onClick={() => setFilter('cancelled')}>已作废</button></nav>
     <section className="collaboration-list">
-      {!busy && !items.length ? <div className="collaboration-empty"><strong>暂无工作簿记录</strong><p>建立共享工作簿后，上游或下游身份都可以从这里打开并编辑。</p></div> : items.map(item => {
-        const selectedStage = selectedStages[item.id] ?? item.state
-        return <article key={item.id} className="collaboration-task-card">
-          <div className="collaboration-state">{stateLabel(item.state)}</div>
-          <div className="collaboration-task-copy"><strong>{item.title}</strong><p>创建人：{item.origin.displayName} · 最后编辑：{item.lastEditor?.displayName ?? item.origin.displayName} · {formatEditTime(item.lastEditedAt ?? item.createdAt)} · 修订 {item.revision}</p></div>
-          <span>记录版本 {item.version}</span>
-          {item.lastReason && <div className="collaboration-return-reason"><strong>阶段备注</strong><span>{item.lastReason}</span></div>}
-          <div className="collaboration-stage-editor"><button className="secondary-button" disabled={activeItemId === item.id} onClick={() => void openOnline(item)}>{activeItemId === item.id ? '正在打开…' : 'WPS 在线编辑'}</button><label>当前进度<select value={selectedStage} onChange={event => setSelectedStages(current => ({ ...current, [item.id]: event.target.value }))}>{STAGES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="primary-button" disabled={activeItemId === item.id || selectedStage === item.state} onClick={() => void updateStage(item)}>{activeItemId === item.id ? '保存中…' : '保存阶段'}</button></div>
-          <small className="collaboration-online-note">双方从这里打开同一个中央 file_id；WPS 保存后自动形成新的工作簿修订。</small>
-        </article>
-      })}
+      {!busy && !visibleItems.length ? <div className="collaboration-empty"><strong>当前分类暂无记录</strong><p>完成和作废的工作簿会保留文件与时间轴，但不再占用进行中列表。</p></div> : visibleItems.map(item => <article key={item.id} className="collaboration-task-card">
+        <div className="collaboration-state">{stateLabel(item.state)}</div>
+        <div className="collaboration-task-copy"><strong>{item.title}</strong><p>创建人：{item.origin.displayName} · 中央修订 {item.revision}</p></div>
+        <span>记录版本 {item.version}</span>
+        <div className="collaboration-task-actions">{filter === 'active' ? <><button className="secondary-button" disabled={activeItemId === item.id} onClick={() => void openOnline(item)}>{activeItemId === item.id ? '正在处理…' : 'WPS 在线编辑'}</button>{canArchive && <button className="primary-button" disabled={activeItemId === item.id} onClick={() => void updateState(item, 'COMPLETED')}>完成并归档</button>}<button className="danger" disabled={activeItemId === item.id} onClick={() => void updateState(item, 'CANCELLED')}>作废</button></> : <small>归档记录只用于追溯，不再进入加工和编辑流程。</small>}</div>
+        <aside className="collaboration-timeline"><strong>编辑时间轴</strong>{item.activities.length ? item.activities.map(activity => <div key={activity.id}><span className={activity.kind}>{activity.kind === 'manual' ? '手动修改' : '软件加工'}</span><p>{activity.actor.displayName}<time>{formatEditTime(activity.occurredAt)}</time></p></div>) : <small>暂无编辑记录</small>}</aside>
+      </article>)}
     </section>
   </div>
 }
 
 function stateLabel(state: string): string {
-  return STAGES.find(([value]) => value === state)?.[1] ?? state
+  if (state === 'COMPLETED') return '已完成'
+  if (state === 'CANCELLED') return '已作废'
+  return '进行中'
 }
 
 function formatEditTime(value: string): string {

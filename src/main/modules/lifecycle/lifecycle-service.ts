@@ -4,8 +4,9 @@ import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, stat, unlink } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview, LifecycleSource, SharedLifecycleAnalysis } from '../../../shared/lifecycle-contracts'
+import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview, LifecycleSource, MaterialMasterPreview, SaveMaterialModelInput, SharedLifecycleAnalysis } from '../../../shared/lifecycle-contracts'
 import { internalBarcodeCandidate, parsePhoneMaterialCodePrefix, patternVariantKey, planMaterialPatterns, previewMaterialCodes } from '../../../shared/material-coding'
+import { normalizeModel, type MaterialModel } from '../../../shared/material-model-dictionary'
 import { readLifecycleWorkbook } from './workbook-reader'
 import { inspectBarcodeSequence, inspectMaterialMappingRows, writeLifecycleCells } from './workbook-allocator'
 import type { LifecycleRepository } from './lifecycle-repository'
@@ -13,6 +14,7 @@ import type { SettingsRepository } from '@main/infrastructure/settings-repositor
 
 export class LifecycleService {
   private repository: Promise<LifecycleRepository> | null = null
+  private materialMasterCache: { key: string; rows: LifecycleDraft['rows'] } | null = null
   private busy = false
   constructor(private readonly settings: SettingsRepository) {}
   private root(): string { return join(app.getPath('userData'), 'material-lifecycle') }
@@ -28,16 +30,50 @@ export class LifecycleService {
   async list(): Promise<LifecycleDraftSummary[]> { return (await this.repo()).list() }
   async get(input: unknown): Promise<LifecycleDraft> { return (await this.repo()).get(z.string().uuid().parse(input)) }
   async preview(input: unknown): Promise<LifecycleRowPreview[]> { return previewMaterialCodes(await this.get(input)) }
+  async listMaterialModels(): Promise<MaterialModel[]> { return this.settings.getMaterialModels() }
+  async saveMaterialModel(input: unknown): Promise<MaterialModel[]> {
+    const value = z.object({
+      originalBrand: z.enum(['AP', 'SA', 'HW']).optional(), originalCode: z.string().regex(/^\d{2}$/).optional(),
+      brand: z.enum(['AP', 'SA', 'HW']), code: z.string().regex(/^\d{2}$/), name: z.string().trim().min(1).max(100),
+      aliases: z.array(z.string().trim().min(1).max(100)).max(20)
+    }).strict().refine(item => Boolean(item.originalBrand) === Boolean(item.originalCode), '原机型定位字段必须同时提供').parse(input) satisfies SaveMaterialModelInput
+    const models = await this.settings.getMaterialModels()
+    const editing = value.originalBrand && value.originalCode
+      ? models.findIndex(model => model.brand === value.originalBrand && model.code === value.originalCode)
+      : -1
+    if (value.originalBrand && editing < 0) throw new Error('要修改的机型记录不存在，请刷新后重试。')
+    if (models.some((model, index) => index !== editing && model.code === value.code)) throw new Error(`机型编码 ${value.code} 已被其他机型使用。`)
+    const aliases = [...new Set(value.aliases.map(alias => alias.trim()).filter(alias => normalizeModel(alias) !== normalizeModel(value.name)))]
+    const next: MaterialModel = { brand: value.brand, code: value.code, name: value.name.trim(), aliases }
+    const names = new Set([next.name, ...next.aliases].map(normalizeModel))
+    if (models.some((model, index) => index !== editing && [model.name, ...model.aliases].some(name => names.has(normalizeModel(name))))) throw new Error('机型名称或别名已被其他机型使用。')
+    if (editing >= 0) models[editing] = next
+    else models.push(next)
+    models.sort((left, right) => left.brand.localeCompare(right.brand) || left.code.localeCompare(right.code))
+    await this.settings.setMaterialModels(models)
+    return models
+  }
+  async previewMaterialMaster(input: unknown): Promise<MaterialMasterPreview> {
+    const value = z.object({ page: z.number().int().nonnegative(), pageSize: z.number().int().min(10).max(100), query: z.string().trim().max(100).optional() }).strict().parse(input)
+    const masterPath = await this.settings.getMaterialMasterPath()
+    if (!masterPath) throw new Error('尚未配置物料总表。')
+    const rows = await this.loadMaterialMasterRows(masterPath, await this.settings.getMaterialModels())
+    const query = value.query?.normalize('NFKC').toUpperCase() ?? ''
+    const filtered = query ? rows.filter(row => [row.sheet, row.itemClass, row.materialCode, row.materialName].some(field => field.normalize('NFKC').toUpperCase().includes(query))) : rows
+    const start = value.page * value.pageSize
+    return { path: masterPath, fileName: basename(masterPath), totalRows: filtered.length, page: value.page, pageSize: value.pageSize, rows: filtered.slice(start, start + value.pageSize) }
+  }
   async analyzeSharedFile(
     input: { workItemId: string; title: string; sourceWorkflow: LifecycleSource; version: number; revision: number; monthPrefix: string; patternVariants?: Record<string, string>; patternOverrideEnabled?: boolean; patternOverrideReason?: string },
     workbookPath: string
   ): Promise<SharedLifecycleAnalysis> {
     const masterPath = await this.settings.getMaterialMasterPath()
     if (!masterPath) throw new Error('请先选择最新的物料总表，再计算 69 码起始号码。')
-    const parsed = await readLifecycleWorkbook(workbookPath)
+    const modelDictionary = await this.settings.getMaterialModels()
+    const parsed = await readLifecycleWorkbook(workbookPath, modelDictionary)
     const variants = input.patternVariants ?? {}
     const [masterRows, master] = await Promise.all([
-      inspectMaterialMappingRows(masterPath),
+      this.loadMaterialMasterRows(masterPath, modelDictionary),
       inspectBarcodeSequence(masterPath, input.monthPrefix)
     ])
     const referenceRows = [...masterRows, ...parsed.rows]
@@ -50,11 +86,9 @@ export class LifecycleService {
     if (overrides.length && !input.patternOverrideReason?.trim()) throw new Error('自定义图案标识后必须填写修改原因。')
     const patternPlan = planMaterialPatterns(parsed.rows, referenceRows, variants, input.sourceWorkflow)
     const materialCodePreviews = previewMaterialCodes({ rows: parsed.rows, patternVariants: patternPlan.patternVariants, sourceWorkflow: input.sourceWorkflow })
-    let maximumSequence = master.maximumSequence
-    for (const row of parsed.rows) {
-      const match = new RegExp(`^${input.monthPrefix}(\\d{7})$`).exec(row.barcode.trim())
-      if (match) maximumSequence = Math.max(maximumSequence, Number(match[1]))
-    }
+    // The master workbook is the only committed allocation ledger. Numbers written
+    // into an unmerged shared series workbook must not advance this baseline.
+    const maximumSequence = master.maximumSequence
     return {
       workItemId: input.workItemId,
       title: input.title,
@@ -150,7 +184,7 @@ export class LifecycleService {
       await copyFile(source, snapshot, 1)
       const hash = await hashFile(snapshot)
       if (hash !== before || await hashFile(source) !== before) throw new Error('Excel 正在保存或文件已变化，请保存完成后重试')
-      const parsed = await readLifecycleWorkbook(snapshot)
+      const parsed = await readLifecycleWorkbook(snapshot, await this.settings.getMaterialModels())
       const owner = await this.settings.getCollaborationSession()
       const draft = repo.insert({ id, title: basename(source), source: 'manual', sourcePath: source, sourceHash: hash, createdAt: new Date().toISOString(), ownerUserId: owner?.user.id ?? null, version: 1,
         rows: parsed.rows, warnings: parsed.warnings, barcodeSource: null, patternVariants: {} })
@@ -161,6 +195,15 @@ export class LifecycleService {
       if (snapshot) await unlink(snapshot).catch(() => undefined)
       this.busy = false
     }
+  }
+
+  private async loadMaterialMasterRows(masterPath: string, models: readonly MaterialModel[]): Promise<LifecycleDraft['rows']> {
+    const file = await stat(masterPath)
+    const key = JSON.stringify([masterPath, file.size, file.mtimeMs, models])
+    if (this.materialMasterCache?.key === key) return this.materialMasterCache.rows
+    const rows = await inspectMaterialMappingRows(masterPath, models)
+    this.materialMasterCache = { key, rows }
+    return rows
   }
 }
 async function hashFile(path: string): Promise<string> {

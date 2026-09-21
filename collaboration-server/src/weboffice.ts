@@ -84,7 +84,9 @@ export function registerWebOfficeRoutes(app: FastifyInstance, config: ServerConf
     if (!parsedId.success) return reply.code(400).send({ error: 'invalid_work_item' })
     const allowed = await pool.query<{ id: string }>(
       `SELECT id FROM work_items
-       WHERE organization_id=$1 AND id=$2 AND (origin_id=$3 OR assignee_id=$3)`,
+       WHERE organization_id=$1 AND id=$2
+         AND (state NOT IN ('COMPLETED','CANCELLED') OR (source_workflow='manual' AND source_id='material-master'))
+         AND ((origin_id=$3 OR assignee_id=$3) OR (source_workflow='manual' AND source_id='material-master'))`,
       [actor.organization_id, parsedId.data, actor.id]
     )
     if (!allowed.rowCount) return reply.code(404).send({ error: 'work_item_not_found' })

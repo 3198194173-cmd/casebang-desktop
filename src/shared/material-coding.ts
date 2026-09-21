@@ -1,8 +1,8 @@
 import type { LifecycleDraft, LifecycleRow, LifecycleRowPreview, LifecycleSource, MaterialIdentity, MaterialPatternPlan } from './lifecycle-contracts'
-import { findMaterialModel, MATERIAL_MODELS } from './material-model-dictionary'
+import { findMaterialModel, MATERIAL_MODELS, type MaterialModel } from './material-model-dictionary'
 
 const normalize = (value: string): string => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toUpperCase()
-export function parseMaterialIdentity(name: string, itemClass: string): MaterialIdentity {
+export function parseMaterialIdentity(name: string, itemClass: string, modelDictionary: readonly MaterialModel[] = MATERIAL_MODELS): MaterialIdentity {
   const normalized = name.normalize('NFKC').trim()
   const seriesMatch = /#([A-Z0-9]{1,8})系列[-－]?/i.exec(normalized)
   const category = ['磁吸支架背盖', '磁吸气囊支架', '磁吸背盖', '出镜壳', '出片壳', '出彩壳'].find(value => normalized.includes(value)) ?? ''
@@ -11,10 +11,10 @@ export function parseMaterialIdentity(name: string, itemClass: string): Material
   const frame = variantTags.includes('银框') ? 'silver' : 'normal'
   const variant = variantTags.filter(tag => tag !== '银框').join('|')
   const withoutTags = normalized.replace(/\([^()]*\)/g, '').trim()
-  const modelNames = MATERIAL_MODELS.flatMap(model => [model.name, ...model.aliases, ...(model.brand === 'HW' && !model.name.startsWith('HW ') ? [`HW ${model.name}`] : [])]).sort((a, b) => b.length - a.length)
+  const modelNames = modelDictionary.flatMap(model => [model.name, ...model.aliases, ...(model.brand === 'HW' && !model.name.startsWith('HW ') ? [`HW ${model.name}`] : [])]).sort((a, b) => b.length - a.length)
   // Match the whole suffix with a boundary; Pro must never steal Pro Max.
   const modelName = modelNames.find(candidate => withoutTags.toUpperCase().endsWith(candidate.toUpperCase()) && /\s/.test(withoutTags[withoutTags.length - candidate.length - 1] ?? '')) ?? ''
-  const model = domain ? findMaterialModel(modelName) : null
+  const model = domain ? findMaterialModel(modelName, modelDictionary) : null
   const tail = seriesMatch ? normalized.slice(seriesMatch.index + seriesMatch[0].length).trim() : ''
   const productMatch = /\b([A-Z]{2,6}\d{5})\b/i.exec(tail)
   let patternName = productMatch ? tail.slice(0, productMatch.index).trim() : ''
@@ -138,7 +138,8 @@ export function planMaterialPatterns(
     new Map([...variants].map(([variant, owners]) => [variant, new Set(owners)]))
   ]))
   const automatic = new Map<string, { variant: string | null; source: MaterialPatternPlan['source']; issues: string[] }>()
-  for (const [key, value] of identities) {
+  const orderedIdentities = [...identities].sort(([, left], [, right]) => Number(left.identity.frame === 'silver') - Number(right.identity.frame === 'silver'))
+  for (const [key, value] of orderedIdentities) {
     const identity = value.identity
     const issues: string[] = []
     const history = historical.get(key)
@@ -167,6 +168,15 @@ export function planMaterialPatterns(
     } else if (history && history.size > 1) {
       source = 'conflict'
       issues.push(`物料总表存在多个标识：${[...history].sort().join('、')}`)
+    } else if (identity.frame === 'silver' && ['出镜壳', '出彩壳'].includes(identity.category)) {
+      const normalKey = patternVariantKey({ ...identity, frame: 'normal' })
+      const normalHistory = historical.get(normalKey)
+      const normalVariant = automatic.get(normalKey)?.variant ?? (normalHistory?.size === 1 ? [...normalHistory][0]! : null)
+      const paired = /^([A-D])0$/.exec(normalVariant ?? '')
+      if (paired) {
+        variant = `${paired[1]}C`
+        source = automatic.get(normalKey)?.source === 'proposed' ? 'proposed' : 'master'
+      } else issues.push('银框未找到可按 A0→AC 规则配对的普通款图案标识')
     } else if (identity.frame === 'silver') {
       issues.push('银框没有历史映射，需人工确认两位标识')
     } else {
@@ -185,7 +195,7 @@ export function planMaterialPatterns(
     finalOwners.set(namespace, new Map([...variants].map(([variant, owners]) => [variant, new Set(owners)])))
   }
   const finalValues = new Map<string, string | null>()
-  for (const [key, value] of identities) {
+  for (const [key, value] of orderedIdentities) {
     const detected = automatic.get(key)?.variant ?? null
     const requested = manualVariants[key]
     const finalValue = requested && sourceWorkflow !== 'new-models' ? requested : detected
@@ -199,14 +209,14 @@ export function planMaterialPatterns(
 
   const resolved: Record<string, string> = {}
   const plans: MaterialPatternPlan[] = []
-  for (const [key, value] of identities) {
+  for (const [key, value] of orderedIdentities) {
     const identity = value.identity
     const detected = automatic.get(key)!
     const requested = manualVariants[key]
     const customized = Boolean(requested && requested !== detected.variant)
     const warnings: string[] = []
     const issues = requested && sourceWorkflow !== 'new-models'
-      ? detected.issues.filter(issue => !issue.startsWith('银框没有历史映射') && !issue.startsWith('该系列没有可用') && !issue.startsWith('物料总表存在多个标识'))
+      ? detected.issues.filter(issue => !issue.startsWith('银框没有历史映射') && !issue.startsWith('银框未找到可按') && !issue.startsWith('该系列没有可用') && !issue.startsWith('物料总表存在多个标识'))
       : [...detected.issues]
     let variant = finalValues.get(key) ?? null
     let source = customized ? 'manual' as const : detected.source

@@ -13,6 +13,7 @@ import { MaterialLifecyclePage } from '../features/lifecycle/MaterialLifecyclePa
 import { useAccount } from './account-context'
 import { CollaborationTasksPage } from '../features/collaboration/CollaborationTasksPage'
 import { LoginGate } from './LoginGate'
+import { MaterialDataPage } from '../features/material-data/MaterialDataPage'
 
 export function App(): React.JSX.Element {
   const [page, setPage] = useState<PageId>('dashboard')
@@ -50,7 +51,7 @@ export function App(): React.JSX.Element {
 
   const renderPage = (): React.JSX.Element => {
     if (!snapshot) return <div className="loading-card">正在初始化应用…</div>
-    if (page === 'existing-products' || page === 'supplement' || page === 'new-task' || page === 'material-lifecycle' || page === 'collaboration-tasks') return <></>
+    if (page === 'existing-products' || page === 'supplement' || page === 'new-task' || page === 'material-lifecycle' || page === 'material-data' || page === 'collaboration-tasks') return <></>
     if (page === 'base-files') return <BaseFilesPage snapshot={snapshot} onChanged={refresh} />
 
     if (page === 'integrations') return <IntegrationsPage connectors={snapshot.connectors} />
@@ -110,6 +111,7 @@ export function App(): React.JSX.Element {
           {snapshot && businessRole === 'upstream' && <><div hidden={page !== 'existing-products'}><NewTaskPage existingSeries snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'new-task'}><NewTaskPage snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'supplement'}><SupplementPage active={page === 'supplement'} onOpenBaseFiles={() => setPage('base-files')} /></div></>}
           {renderPage()}
           {snapshot && businessRole === 'downstream' && <div hidden={page !== 'material-lifecycle'}><MaterialLifecyclePage enabled={page === 'material-lifecycle'} /></div>}
+          {snapshot && businessRole && <div hidden={page !== 'material-data'}><MaterialDataPage enabled={page === 'material-data'} /></div>}
           {businessRole && <div hidden={page !== 'collaboration-tasks'}><CollaborationTasksPage enabled={page === 'collaboration-tasks'} /></div>}
         </section>
       </main>

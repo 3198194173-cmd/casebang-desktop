@@ -28,7 +28,7 @@ const actionSchema = z.object({
   action: z.enum(['claim', 'return-source', 'update-stage']),
   expectedVersion: z.number().int().positive(),
   revision: z.number().int().positive(),
-  state: z.enum(['PENDING_PROCESSING', 'PROCESSING', 'PENDING_ORIGIN_REVIEW', 'NEEDS_SOURCE_FIX', 'READY_TO_MERGE', 'COMPLETED']).optional(),
+  state: z.enum(['PENDING_PROCESSING', 'PROCESSING', 'PENDING_ORIGIN_REVIEW', 'NEEDS_SOURCE_FIX', 'READY_TO_MERGE', 'COMPLETED', 'CANCELLED']).optional(),
   reason: z.string().trim().max(1_000).optional()
 }).strict()
 const openSchema = z.object({
@@ -40,6 +40,7 @@ const openOnlineSchema = z.object({ workItemId: z.string().uuid() }).strict()
 
 interface MembersResponse { members?: CollaborationMember[] }
 interface WorkItemsResponse { items?: CollaborationWorkItem[] }
+interface MaterialMasterResponse { item?: CollaborationWorkItem | null }
 interface SubmitResponse { item?: CollaborationWorkItem; duplicate?: boolean; error?: string }
 interface UploadPrepareResponse {
   uploadId?: string
@@ -88,7 +89,40 @@ export class CollaborationService {
   async workItems(): Promise<CollaborationWorkItem[]> {
     const response = await this.request('/api/v1/collaboration/work-items')
     const body = await response.json() as WorkItemsResponse
-    return body.items ?? []
+    return (body.items ?? []).map(item => ({ ...item, activities: item.activities ?? [] }))
+  }
+
+  async materialMaster(): Promise<CollaborationWorkItem | null> {
+    const response = await this.request('/api/v1/collaboration/material-master')
+    const body = await response.json() as MaterialMasterResponse
+    return body.item ? { ...body.item, activities: body.item.activities ?? [] } : null
+  }
+
+  async publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
+    const masterPath = await this.settings.getMaterialMasterPath()
+    if (!masterPath) throw new Error('请先在资料管理中选择物料总表。')
+    const details = await stat(masterPath)
+    if (!details.isFile() || details.size === 0 || details.size > MAX_WORKBOOK_SIZE) throw new Error('物料总表不存在、为空或超过 64 MB。')
+    const bytes = await readFile(masterPath)
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    const current = await this.materialMaster()
+    return this.uploadWorkbook(bytes, {
+      sourceWorkflow: 'manual', sourceId: 'material-master', title: path.basename(masterPath), sha256, requestKey: randomUUID(),
+      ...(current ? { targetWorkItemId: current.id, expectedVersion: current.version, expectedRevision: current.revision, changeReason: '软件同步物料总表' } : {})
+    }, path.basename(masterPath))
+  }
+
+  async syncMaterialMaster(): Promise<{ item: CollaborationWorkItem; path: string }> {
+    const item = await this.materialMaster()
+    if (!item) throw new Error('中央尚未建立共享物料总表，请先在资料管理中上传。')
+    const bytes = await this.downloadWorkbook({ workItemId: item.id })
+    const directory = path.join(app.getPath('userData'), 'shared-material-master')
+    const safeTitle = item.title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    const destination = path.join(directory, `revision-${item.revision}-${safeTitle.toLowerCase().endsWith('.xlsx') ? safeTitle : `${safeTitle}.xlsx`}`)
+    await mkdir(directory, { recursive: true })
+    if (!await access(destination).then(() => true).catch(() => false)) await writeFile(destination, bytes, { flag: 'wx' })
+    await this.settings.setMaterialMasterPath(destination)
+    return { item, path: destination }
   }
 
   async publishWorkbook(input: unknown): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {

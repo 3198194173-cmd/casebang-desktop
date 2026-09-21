@@ -23,7 +23,11 @@ export interface ResolvedArtworkFolder {
 }
 
 export class DingTalkDriveError extends Error {
-  constructor(readonly code: string, message: string) { super(message); this.name = 'DingTalkDriveError' }
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly details: { operation?: string; httpStatus?: number; remoteCode?: string } = {}
+  ) { super(message); this.name = 'DingTalkDriveError' }
 }
 
 export class DingTalkDriveClient {
@@ -76,7 +80,7 @@ export class DingTalkDriveClient {
       // `mySpace` is a product/CLI term and is rejected by this endpoint.
       url.searchParams.set('spaceType', 'personal')
       if (nextToken) url.searchParams.set('nextToken', nextToken)
-      const body = await this.json<{ spaces?: Array<{ spaceId?: string }>; nextToken?: string }>(url, { headers: authHeaders(token) })
+      const body = await this.json<{ spaces?: Array<{ spaceId?: string }>; nextToken?: string }>(url, { headers: authHeaders(token) }, 'list_personal_spaces')
       values.push(...(body.spaces ?? []).flatMap(space => space.spaceId ? [{ id: space.spaceId }] : []))
       nextToken = body.nextToken ?? ''
     } while (nextToken)
@@ -84,6 +88,17 @@ export class DingTalkDriveClient {
   }
 
   private async listAll(token: string, unionId: string, spaceId: string): Promise<DingTalkDentry[]> {
+    try {
+      return await this.listAllFlat(token, unionId, spaceId)
+    } catch (error) {
+      if (error instanceof DingTalkDriveError && error.code === 'dingtalk_drive_permission_denied') throw error
+      // Some DingTalk tenants do not expose listAll even though the ordinary
+      // dentry-list API is available. Fall back to walking the folder tree.
+      return this.listAllRecursively(token, unionId, spaceId)
+    }
+  }
+
+  private async listAllFlat(token: string, unionId: string, spaceId: string): Promise<DingTalkDentry[]> {
     const values: DingTalkDentry[] = []
     let nextToken = ''
     do {
@@ -91,8 +106,8 @@ export class DingTalkDriveClient {
       url.searchParams.set('unionId', unionId)
       const body = await this.json<{ dentries?: unknown; nextToken?: string }>(url, {
         method: 'POST', headers: { ...authHeaders(token), 'content-type': 'application/json' },
-        body: JSON.stringify({ option: { maxResults: 100, ...(nextToken ? { nextToken } : {}), withThumbnail: false } })
-      })
+        body: JSON.stringify({ option: { maxResults: 50, ...(nextToken ? { nextToken } : {}), withThumbnail: false } })
+      }, 'list_all_dentries')
       for (const raw of asArray(body.dentries)) {
         const entry = normalizeDentry(raw)
         if (entry) values.push(entry)
@@ -102,15 +117,46 @@ export class DingTalkDriveClient {
     return values
   }
 
-  private async json<T>(url: string | URL, init: RequestInit): Promise<T> {
+  private async listAllRecursively(token: string, unionId: string, spaceId: string): Promise<DingTalkDentry[]> {
+    const values: DingTalkDentry[] = []
+    const pendingParents = ['0']
+    while (pendingParents.length) {
+      const parentId = pendingParents.shift()!
+      let nextToken = ''
+      do {
+        const url = new URL(`https://api.dingtalk.com/v1.0/storage/spaces/${encodeURIComponent(spaceId)}/dentries`)
+        url.searchParams.set('unionId', unionId)
+        url.searchParams.set('parentId', parentId)
+        url.searchParams.set('maxResults', '50')
+        url.searchParams.set('withThumbnail', 'false')
+        if (nextToken) url.searchParams.set('nextToken', nextToken)
+        const body = await this.json<{ dentries?: unknown; nextToken?: string }>(url, { headers: authHeaders(token) }, 'list_dentries')
+        for (const raw of asArray(body.dentries)) {
+          const entry = normalizeDentry(raw)
+          if (!entry) continue
+          values.push(entry)
+          if (isFolder(entry.type)) pendingParents.push(entry.id)
+        }
+        nextToken = body.nextToken ?? ''
+      } while (nextToken)
+    }
+    return values
+  }
+
+  private async json<T>(url: string | URL, init: RequestInit, operation = 'request'): Promise<T> {
     const response = await this.fetcher(url, { ...init, signal: AbortSignal.timeout(30_000) })
     const body = await response.json().catch(() => undefined) as (T & { code?: string; message?: string }) | undefined
     if (!response.ok || !body) {
       const remoteCode = body?.code ?? ''
-      const code = ['permissionDenied', 'no.priviledge'].includes(remoteCode)
+      const normalized = remoteCode.toLowerCase()
+      const code = response.status === 401 || response.status === 403 || /permission|priviledge|privilege|forbidden|access.?denied/.test(normalized)
         ? 'dingtalk_drive_permission_denied'
-        : remoteCode.toLowerCase().includes('param') ? 'dingtalk_drive_request_invalid' : 'dingtalk_drive_failure'
-      throw new DingTalkDriveError(code, body?.message || `钉盘接口调用失败（HTTP ${response.status}）。`)
+        : response.status === 400 || /param|invalid/.test(normalized) ? 'dingtalk_drive_request_invalid' : 'dingtalk_drive_failure'
+      throw new DingTalkDriveError(code, body?.message || `钉盘接口调用失败（HTTP ${response.status}）。`, {
+        operation,
+        httpStatus: response.status,
+        remoteCode: remoteCode || undefined
+      })
     }
     return body
   }

@@ -32,7 +32,13 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
       return reply.header('cache-control', 'no-store').send({ source: publicSource(indexed) })
     } catch (error) {
       const code = error instanceof DingTalkDriveError ? error.code : 'dingtalk_drive_failure'
-      request.log.warn({ code }, 'Personal artwork source binding failed')
+      request.log.warn({
+        code,
+        operation: error instanceof DingTalkDriveError ? error.details.operation : undefined,
+        httpStatus: error instanceof DingTalkDriveError ? error.details.httpStatus : undefined,
+        remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined,
+        detail: error instanceof Error ? error.message : String(error)
+      }, 'Personal artwork source binding failed')
       return reply.code(code === 'artwork_source_not_folder' ? 400 : 502).send({ error: code })
     }
   })
@@ -47,6 +53,13 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
     } catch (error) {
       const code = error instanceof DingTalkDriveError ? error.code : 'dingtalk_drive_failure'
       await pool.query(`UPDATE artwork_sources SET status='error',last_error=$3,updated_at=now() WHERE organization_id=$1 AND user_id=$2`, [actor.organization_id, actor.id, code])
+      request.log.warn({
+        code,
+        operation: error instanceof DingTalkDriveError ? error.details.operation : undefined,
+        httpStatus: error instanceof DingTalkDriveError ? error.details.httpStatus : undefined,
+        remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined,
+        detail: error instanceof Error ? error.message : String(error)
+      }, 'Personal artwork source sync failed')
       return reply.code(502).send({ error: code })
     }
   })

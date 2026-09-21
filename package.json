@@ -1,6 +1,6 @@
 {
   "name": "casebang-desktop",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "private": true,
   "description": "CASEBANG 表格编码自动化 Windows 桌面应用",
   "main": "./out/main/index.js",

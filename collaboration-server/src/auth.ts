@@ -25,6 +25,7 @@ export interface SessionUserRow {
   organization_id: string
   corp_id: string
   business_role: 'upstream' | 'downstream' | null
+  dingtalk_union_id?: string | null
 }
 
 function hash(value: string): string {
@@ -255,7 +256,7 @@ export async function authenticatedUser(request: FastifyRequest, reply: FastifyR
      WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now()
        AND u.organization_id=s.organization_id AND u.id=s.user_id AND u.active=true
        AND o.id=s.organization_id
-     RETURNING u.id,u.display_name,u.avatar_url,u.organization_id,o.corp_id,u.business_role`,
+     RETURNING u.id,u.display_name,u.avatar_url,u.organization_id,o.corp_id,u.business_role,u.dingtalk_union_id`,
     [hash(token)]
   )
   const user = result.rows[0]

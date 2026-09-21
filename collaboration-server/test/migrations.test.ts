@@ -6,7 +6,7 @@ describe('database migration files', () => {
   it('are ordered, transaction-runner compatible, and contain the central ledger safeguards', async () => {
     const root = resolve(import.meta.dirname, '../migrations')
     const names = (await readdir(root)).filter(name => name.endsWith('.sql')).sort()
-    expect(names).toEqual(['001_foundation.sql', '002_stream_events.sql', '003_dingtalk_auth.sql', '004_business_roles.sql', '005_weboffice.sql', '006_relaxed_workbook_participants.sql'])
+    expect(names).toEqual(['001_foundation.sql', '002_stream_events.sql', '003_dingtalk_auth.sql', '004_business_roles.sql', '005_weboffice.sql', '006_relaxed_workbook_participants.sql', '007_personal_artwork_sources.sql'])
     const sql = (await Promise.all(names.map(name => readFile(resolve(root, name), 'utf8')))).join('\n')
     expect(sql).not.toMatch(/^\s*(BEGIN|COMMIT)\s*;/m)
     expect(sql).toContain('UNIQUE(organization_id,kind,code)')
@@ -19,5 +19,7 @@ describe('database migration files', () => {
     expect(sql).toContain("CHECK(business_role IN ('upstream','downstream'))")
     expect(sql).toContain("CHECK(requested_business_role IN ('upstream','downstream'))")
     expect(sql).toContain('May equal origin_id for single-account testing')
+    expect(sql).toContain('CREATE TABLE artwork_sources')
+    expect(sql).toContain('UNIQUE(organization_id,user_id)')
   })
 })

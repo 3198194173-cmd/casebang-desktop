@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem } from '@shared/contracts'
+import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkSource } from '@shared/contracts'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service'
 import { logger } from '@main/infrastructure/logger'
@@ -41,6 +41,8 @@ const openOnlineSchema = z.object({ workItemId: z.string().uuid() }).strict()
 interface MembersResponse { members?: CollaborationMember[] }
 interface WorkItemsResponse { items?: CollaborationWorkItem[] }
 interface MaterialMasterResponse { item?: CollaborationWorkItem | null }
+interface ArtworkSourceResponse { source?: DingTalkArtworkSource | null }
+interface ArtworkEntriesResponse { entries?: DingTalkArtworkEntry[] }
 interface SubmitResponse { item?: CollaborationWorkItem; duplicate?: boolean; error?: string }
 interface UploadPrepareResponse {
   uploadId?: string
@@ -96,6 +98,35 @@ export class CollaborationService {
     const response = await this.request('/api/v1/collaboration/material-master')
     const body = await response.json() as MaterialMasterResponse
     return body.item ? { ...body.item, activities: body.item.activities ?? [] } : null
+  }
+
+  async artworkSource(): Promise<DingTalkArtworkSource | null> {
+    const response = await this.request('/api/v1/dingtalk/artwork-source')
+    return ((await response.json()) as ArtworkSourceResponse).source ?? null
+  }
+
+  async bindArtworkSource(input: unknown): Promise<DingTalkArtworkSource> {
+    const value = z.object({ folderUrl: z.string().url().max(1000) }).strict().parse(input)
+    const response = await this.request('/api/v1/dingtalk/artwork-source', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value)
+    }, { timeoutMs: 120_000, timeoutMessage: '钉盘个人目录索引超时，请稍后重试。' })
+    const source = ((await response.json()) as ArtworkSourceResponse).source
+    if (!source) throw new Error('钉盘没有返回目录绑定结果。')
+    return source
+  }
+
+  async syncArtworkSource(): Promise<DingTalkArtworkSource> {
+    const response = await this.request('/api/v1/dingtalk/artwork-source/sync', { method: 'POST' }, { timeoutMs: 120_000, timeoutMessage: '钉盘个人目录同步超时，请稍后重试。' })
+    const source = ((await response.json()) as ArtworkSourceResponse).source
+    if (!source) throw new Error('钉盘没有返回目录同步结果。')
+    return source
+  }
+
+  async searchArtworkEntries(input: unknown): Promise<DingTalkArtworkEntry[]> {
+    const value = z.object({ query: z.string().trim().max(200).optional(), limit: z.number().int().min(1).max(100).optional() }).strict().parse(input)
+    const query = new URLSearchParams({ ...(value.query ? { query: value.query } : {}), ...(value.limit ? { limit: String(value.limit) } : {}) })
+    const response = await this.request(`/api/v1/dingtalk/artwork-source/entries?${query}`)
+    return ((await response.json()) as ArtworkEntriesResponse).entries ?? []
   }
 
   async publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
@@ -398,7 +429,14 @@ function serverError(code?: string, status?: number): string {
     idempotency_conflict: '任务操作标识冲突，请刷新后重新操作。',
     work_item_not_found: '没有找到该工作簿记录。',
     business_role_forbidden: '当前账号不能执行此操作。',
-    weboffice_disabled: 'WPS 在线编辑尚未启用，请先完成服务端回调配置。'
+    weboffice_disabled: 'WPS 在线编辑尚未启用，请先完成服务端回调配置。',
+    invalid_artwork_source: '请输入有效的钉盘“我的文档”文件夹链接。',
+    artwork_source_not_folder: '该链接对应的不是钉盘文件夹。',
+    artwork_source_unreadable: '当前登录账号无法读取该个人目录，请确认链接属于此账号并检查钉盘读取权限。',
+    artwork_source_not_bound: '当前下游账号尚未绑定印刷图档目录。',
+    dingtalk_identity_incomplete: '当前登录会话缺少钉钉用户标识，请退出后重新登录。',
+    dingtalk_drive_failure: '钉盘接口调用失败，请检查应用的钉盘读取权限。',
+    dingtalk_token_missing: '钉钉应用访问令牌获取失败。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`
 }

@@ -186,6 +186,31 @@ export interface CollaborationActivity {
   kind: 'software' | 'manual'
 }
 
+export interface DingTalkArtworkSource {
+  folderUrl: string
+  nodeId: string
+  spaceId: string
+  folderName: string
+  status: 'ready' | 'error'
+  fileCount: number
+  folderCount: number
+  lastError: string | null
+  indexedAt: string | null
+}
+
+export interface DingTalkArtworkEntry {
+  id: string
+  nodeUrl: string
+  parentId: string | null
+  name: string
+  type: string
+  extension: string | null
+  sizeBytes: number | null
+  version: number | null
+  path: string | null
+  modifiedAt: string | null
+}
+
 export type CollaborationWorkAction = 'claim' | 'return-source' | 'update-stage'
 
 export interface SaveAiSettingsInput {
@@ -285,6 +310,10 @@ export interface CasebangDesktopApi {
     materialMaster(): Promise<CollaborationWorkItem | null>
     publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     syncMaterialMaster(): Promise<{ item: CollaborationWorkItem; path: string }>
+    artworkSource(): Promise<DingTalkArtworkSource | null>
+    bindArtworkSource(input: { folderUrl: string }): Promise<DingTalkArtworkSource>
+    syncArtworkSource(): Promise<DingTalkArtworkSource>
+    searchArtworkEntries(input: { query?: string; limit?: number }): Promise<DingTalkArtworkEntry[]>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

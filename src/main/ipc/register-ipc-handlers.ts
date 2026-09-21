@@ -228,6 +228,26 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.materialMaster()
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationArtworkSource, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.artworkSource()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationBindArtworkSource, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.bindArtworkSource(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationSyncArtworkSource, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.syncArtworkSource()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationSearchArtworkEntries, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.searchArtworkEntries(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.collaborationPublishMaterialMaster, async (event) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.publishMaterialMaster()

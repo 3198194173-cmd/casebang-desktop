@@ -7,6 +7,8 @@ import { DingTalkStreamBridge } from './stream-bridge.js'
 import { registerAuthRoutes } from './auth.js'
 import { registerCollaborationRoutes } from './collaboration.js'
 import { registerWebOfficeRoutes } from './weboffice.js'
+import { registerArtworkRoutes } from './artwork.js'
+import { DingTalkDriveClient } from './dingtalk-drive.js'
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -24,6 +26,7 @@ async function main(): Promise<void> {
   registerAuthRoutes(app, config, pool)
   registerCollaborationRoutes(app, pool, storage)
   registerWebOfficeRoutes(app, config, pool, storage)
+  registerArtworkRoutes(app, pool, new DingTalkDriveClient(config))
   const close = async (signal: string): Promise<void> => {
     app.log.info({ signal }, '正在停止中央协同服务')
     stream.stop()

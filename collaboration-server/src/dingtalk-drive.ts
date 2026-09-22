@@ -132,7 +132,11 @@ export class DingTalkDriveClient {
       // spaces. Preserve permission failures so the caller can report them.
       if (error instanceof DingTalkDriveError && error.details.httpStatus === 404) return null
       if (error instanceof DingTalkDriveError && error.code === 'dingtalk_drive_request_invalid') return null
-      if (error instanceof DingTalkDriveError && /unsupported|not.?support/i.test(error.details.remoteCode ?? '')) return null
+      // Some DingTalk tenants return HTTP 500/unknownError for a valid
+      // desktop-folder node instead of returning a dentry. Treat that API
+      // variant as “query unavailable” and use the existing listing fallback,
+      // which can still resolve the folder by id/uuid.
+      if (error instanceof DingTalkDriveError && /unsupported|not.?support|unknown.?error/i.test(`${error.details.remoteCode ?? ''} ${error.message}`)) return null
       throw error
     }
   }

@@ -111,4 +111,24 @@ describe('personal DingTalk artwork drive', () => {
       details: { operation: 'list_org_spaces', httpStatus: 403, remoteCode: 'Forbidden.AccessDenied' }
     })
   })
+
+  it('falls back when DingTalk query_dentry returns an opaque 500', async () => {
+    const fetcher = vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/oauth2/accessToken')) return Response.json({ accessToken: 'app-token' })
+      if (url.includes('/v1.0/drive/spaces?')) return Response.json({ spaces: [{ spaceId: 'org-space' }] })
+      if (url.includes('/v1.0/storage/spaces/org-space/dentries/query')) return Response.json({ code: 'unknownError', message: 'Unknown Error' }, { status: 500 })
+      if (url.includes('/dentries/listAll')) return Response.json({ dentries: [
+        { id: 'folder-id', uuid: 'folder-node-from-url', parentId: '0', name: 'J7系列-印刷图档', type: 'FOLDER' },
+        { id: 'pdf-id', parentId: 'folder-id', name: 'CHARACTERCIRCLE.pdf', type: 'FILE', extension: 'pdf' }
+      ] })
+      return new Response(null, { status: 404 })
+    })
+    const client = new DingTalkDriveClient(config, fetcher as typeof fetch)
+
+    const result = await client.resolvePersonalFolder('union-1', 'folder-node-from-url')
+
+    expect(result.folder.name).toBe('J7系列-印刷图档')
+    expect(result.descendants.map(entry => entry.name)).toEqual(['CHARACTERCIRCLE.pdf'])
+  })
 })

@@ -16,7 +16,7 @@ const DIRECT_UPLOAD_TIMEOUT_MS = 15 * 60 * 1000
 const publishSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1).max(240),
-  sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models'])
+  sourceWorkflow: z.enum(['new-series', 'new-products', 'new-models', 'manual'])
 }).strict()
 const submitSchema = z.object({
   draftId: z.string().uuid(),
@@ -248,6 +248,15 @@ export class CollaborationService {
     const openError = await shell.openPath(destination)
     if (openError) throw new Error(`无法打开工作簿：${openError}`)
     return { path: destination }
+  }
+
+  async openLocalWorkbook(input: unknown): Promise<{ path: string }> {
+    const value = z.object({ path: z.string().trim().min(1) }).strict().parse(input)
+    const details = await stat(value.path)
+    if (!details.isFile() || !value.path.toLowerCase().endsWith('.xlsx')) throw new Error('请选择有效的 .xlsx 工作簿。')
+    const openError = await shell.openPath(value.path)
+    if (openError) throw new Error(`无法打开工作簿：${openError}`)
+    return { path: value.path }
   }
 
   async downloadWorkbook(input: { workItemId: string }): Promise<Buffer> {

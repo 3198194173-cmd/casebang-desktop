@@ -62,6 +62,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .collaboration-login, .collaboration-account-strip { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 20px; border: 1px solid #d8e2df; border-radius: 12px; background: #f8fbfa; }
 .collaboration-account-strip { justify-content: flex-start; }
 .collaboration-account-strip > span:last-child { color: #758480; font-size: 10px; }
+.collaboration-import-panel { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:17px 20px; border:1px solid #c9ded8; border-radius:12px; background:#f1f8f5; }
+.collaboration-import-panel > div:first-child { min-width:0; display:grid; gap:5px; }
+.collaboration-import-panel p,.collaboration-import-panel small { margin:0; color:#657873; font-size:10px; line-height:1.55; overflow-wrap:anywhere; }
+.collaboration-import-panel > div:last-child { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; flex-shrink:0; }
 .collaboration-tabs { display: flex; align-items: center; gap: 8px; padding: 7px; border: 1px solid #dde5e3; border-radius: 11px; background: white; }
 .collaboration-tabs button { min-height: 36px; padding: 0 13px; border: 0; border-radius: 8px; color: #62726e; background: transparent; font-size: 11px; font-weight: 750; }
 .collaboration-tabs button[aria-pressed="true"] { color: white; background: #245f51; }

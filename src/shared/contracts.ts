@@ -316,6 +316,7 @@ export interface CasebangDesktopApi {
     submitLifecycle(input: { draftId: string; expectedVersion: number; assigneeId: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; state?: string; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     openWorkbook(input: { workItemId: string; title: string; revision: number }): Promise<{ path: string }>
+    openLocalWorkbook(input: { path: string }): Promise<{ path: string }>
     openOnlineWorkbook(input: { workItemId: string }): Promise<{ opened: true }>
     materialMaster(): Promise<CollaborationWorkItem | null>
     publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>

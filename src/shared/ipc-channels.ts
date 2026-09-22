@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
   collaborationSubmitLifecycle: 'collaboration:submit-lifecycle',
   collaborationAct: 'collaboration:act',
   collaborationOpenWorkbook: 'collaboration:open-workbook',
+  collaborationOpenLocalWorkbook: 'collaboration:open-local-workbook',
   collaborationOpenOnlineWorkbook: 'collaboration:open-online-workbook',
   collaborationMaterialMaster: 'collaboration:material-master',
   collaborationPublishMaterialMaster: 'collaboration:publish-material-master',

@@ -218,6 +218,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.openWorkbook(input)
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationOpenLocalWorkbook, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.openLocalWorkbook(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.collaborationOpenOnlineWorkbook, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.openOnlineWorkbook(input)

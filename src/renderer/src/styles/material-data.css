@@ -1,13 +1,4 @@
 .material-data-page { display:grid; gap:18px; color:#253c45; }
-.md-artwork-source { display:grid; gap:18px; }
-.md-artwork-bind { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; }
-.md-artwork-bind label { display:grid; gap:7px; font-weight:700; }
-.md-artwork-bind input { width:100%; }
-.md-artwork-summary { display:grid; grid-template-columns:2fr repeat(3,1fr) auto; gap:10px; align-items:stretch; }
-.md-artwork-summary > div { display:grid; gap:5px; padding:14px; border:1px solid #d9e5e5; border-radius:12px; background:#f2f8f6; }
-.md-artwork-summary small { color:#65777c; }
-.md-artwork-empty { padding:28px; text-align:center; border:1px dashed #bfcece; border-radius:14px; background:#fafcfb; }
-@media (max-width: 980px) { .md-artwork-bind,.md-artwork-summary { grid-template-columns:1fr; } }
 .md-intro,.md-panel { border:1px solid #d9e0e3; border-radius:14px; background:#fff; }
 .md-intro { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px; }
 .md-intro h2,.md-panel h3 { margin:4px 0 8px; }

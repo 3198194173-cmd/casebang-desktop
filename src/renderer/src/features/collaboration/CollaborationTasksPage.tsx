@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CollaborationWorkItem } from '@shared/contracts'
+import type { LifecycleDraft } from '@shared/lifecycle-contracts'
 import { desktopApi } from '../../app/desktop-api'
 import { accountError, useAccount } from '../../app/account-context'
 
@@ -14,6 +15,7 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
   const [activeItemId, setActiveItemId] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [externalDraft, setExternalDraft] = useState<LifecycleDraft | null>(null)
 
   const load = async (): Promise<void> => {
     if (account?.status !== 'signed-in') { setItems([]); return }
@@ -46,6 +48,37 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
     finally { setActiveItemId('') }
   }
 
+  const importExternalWorkbook = async (): Promise<void> => {
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const draft = await desktopApi.lifecycle.importWorkbook()
+      if (!draft) return
+      setExternalDraft(draft)
+      setMessage('外部工作簿已导入。请先打开并整理工作表名称，保存后再上传为共享表。')
+    } catch (reason) { setError(accountError(reason, '外部共享表导入失败')) }
+    finally { setBusy(false) }
+  }
+
+  const openExternalDraft = async (): Promise<void> => {
+    if (!externalDraft) return
+    setActiveItemId('external'); setError('')
+    try { await desktopApi.collaboration.openLocalWorkbook({ path: externalDraft.sourcePath }); setMessage('已打开外部工作簿，请整理工作表名称并保存。图片工作表用于后续印刷图档对比。') }
+    catch (reason) { setError(accountError(reason, '外部工作簿打开失败')) }
+    finally { setActiveItemId('') }
+  }
+
+  const publishExternalDraft = async (): Promise<void> => {
+    if (!externalDraft) return
+    setActiveItemId('external'); setError(''); setMessage('')
+    try {
+      const result = await desktopApi.collaboration.publishWorkbook({ path: externalDraft.sourcePath, title: externalDraft.title, sourceWorkflow: 'manual' })
+      setExternalDraft(null)
+      await load()
+      setMessage(result.duplicate ? '该外部工作簿已经存在共享记录。' : `外部工作簿已建立为共享表，中央版本 ${result.item.revision}。`)
+    } catch (reason) { setError(accountError(reason, '外部共享表上传失败')) }
+    finally { setActiveItemId('') }
+  }
+
   const visibleItems = items.filter(item => filter === 'completed'
     ? item.state === 'COMPLETED'
     : filter === 'cancelled' ? item.state === 'CANCELLED' : !['COMPLETED', 'CANCELLED'].includes(item.state))
@@ -53,6 +86,7 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
   return <div className="collaboration-page">
     <header className="collaboration-hero"><div><span className="eyebrow">共享工作簿</span><h2>工作簿记录</h2><p>管理系列工作簿，并查看谁在何时通过软件加工或 WPS 手动修改。</p></div><button className="secondary-button" disabled={busy} onClick={() => void load()}>{busy ? '刷新中…' : '刷新记录'}</button></header>
     {account?.status === 'signed-in' && <section className="collaboration-account-strip"><span className="status-dot" /><strong>{account.user?.displayName}</strong><span>{account.user?.businessRole === 'upstream' ? '上游建表' : '下游加工'} · 中央记录已连接</span></section>}
+    {account?.status === 'signed-in' && <section className="collaboration-import-panel"><div><strong>外部导入共享表</strong><p>当上游未能生成标准工作簿时，可直接导入外部 .xlsx。导入后先整理工作表名称并保存，再建立共享表；图片工作表用于印刷图档图案对比。</p>{externalDraft && <small>当前文件：{externalDraft.title} · {externalDraft.warnings.length ? `有 ${externalDraft.warnings.length} 条结构提醒` : '结构已读取'}</small>}</div><div>{!externalDraft ? <button className="secondary-button" disabled={busy} onClick={() => void importExternalWorkbook()}>{busy ? '导入中…' : '选择外部工作簿'}</button> : <><button className="secondary-button" disabled={activeItemId === 'external'} onClick={() => void openExternalDraft()}>打开并整理工作表</button><button className="primary-button" disabled={activeItemId === 'external'} onClick={() => void publishExternalDraft()}>上传为共享表</button></>}</div></section>}
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert success">{message}</div>}
     <nav className="collaboration-tabs"><button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>进行中</button><button aria-pressed={filter === 'completed'} onClick={() => setFilter('completed')}>已完成</button><button aria-pressed={filter === 'cancelled'} onClick={() => setFilter('cancelled')}>已作废</button></nav>

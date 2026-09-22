@@ -76,7 +76,7 @@ describe('personal DingTalk artwork drive', () => {
     expect(result.descendants.map(entry => entry.name)).toEqual(['Heart Hat Cat.png'])
   })
 
-  it('resolves a desktop folder link through the direct file metadata endpoint when bulk ids differ', async () => {
+  it('resolves a desktop folder link through the storage dentry query when bulk ids differ', async () => {
     const fetcher = vi.fn(async (input: string | URL) => {
       const url = String(input)
       if (url.endsWith('/oauth2/accessToken')) return Response.json({ accessToken: 'app-token' })
@@ -84,9 +84,9 @@ describe('personal DingTalk artwork drive', () => {
       if (url.includes('/dentries/listAll')) return Response.json({ dentries: [
         { id: 'child-id', parentId: 'desktop-folder-id', name: 'Heart Hat Cat.png', type: 'FILE', extension: 'png' }
       ] })
-      if (url.includes('/v1.0/drive/spaces/org-space/files/desktop-folder-id')) return Response.json({
-        fileId: 'desktop-folder-id', fileName: 'J7系列-印刷图档', fileType: 'folder', parentId: '0', filePath: '/J7系列-印刷图档'
-      })
+      if (url.includes('/v1.0/storage/spaces/org-space/dentries/query')) return Response.json({ resultItems: [{
+        dentryId: 'desktop-folder-id', success: true, dentry: { id: 'desktop-folder-id', uuid: 'desktop-folder-uuid', parentId: '0', name: 'J7系列-印刷图档', type: 'FOLDER', path: '/J7系列-印刷图档' }
+      }] })
       return new Response(null, { status: 404 })
     })
     const client = new DingTalkDriveClient(config, fetcher as typeof fetch)

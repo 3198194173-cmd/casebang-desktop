@@ -48,11 +48,11 @@ export class DingTalkDriveClient {
     for (const space of spaces) {
       try {
         const entries = await this.listAll(token, unionId, space.id)
-        // The `/i/desktop/folders/<id>` web link may carry a Drive fileId that
-        // is not exposed as either `id` or `uuid` by the bulk dentry listing.
-        // Resolve it directly before concluding that the folder is missing.
+        // The `/i/desktop/folders/<id>` web link may carry a dentry id that is
+        // not exposed by the bulk listing. Resolve it through the storage
+        // dentry query API before concluding that the folder is missing.
         const folder = entries.find(entry => entry.id === nodeId || entry.uuid === nodeId)
-          ?? await this.getFile(token, unionId, space.id, nodeId)
+          ?? await this.queryDentry(token, unionId, space.id, nodeId)
         if (!folder) continue
         if (!isFolder(folder.type)) throw new DingTalkDriveError('artwork_source_not_folder', '链接对应的不是钉盘文件夹。')
         const included = new Set([folder.id])
@@ -73,12 +73,25 @@ export class DingTalkDriveClient {
     throw new DingTalkDriveError('artwork_source_unreadable', '当前钉钉账号无法读取该钉盘目录，请确认链接属于可访问的组织空间并已申请钉盘读取权限。')
   }
 
-  private async getFile(token: string, unionId: string, spaceId: string, fileId: string): Promise<DingTalkDentry | null> {
-    const url = new URL(`https://api.dingtalk.com/v1.0/drive/spaces/${encodeURIComponent(spaceId)}/files/${encodeURIComponent(fileId)}`)
+  private async queryDentry(token: string, unionId: string, spaceId: string, dentryId: string): Promise<DingTalkDentry | null> {
+    const url = new URL(`https://api.dingtalk.com/v1.0/storage/spaces/${encodeURIComponent(spaceId)}/dentries/query`)
     url.searchParams.set('unionId', unionId)
     try {
-      const body = await this.json<Record<string, unknown>>(url, { headers: authHeaders(token) }, 'get_file')
-      return normalizeDriveFile(body)
+      const body = await this.json<{ resultItems?: unknown[] }>(url, {
+        method: 'POST',
+        headers: { ...authHeaders(token), 'content-type': 'application/json' },
+        body: JSON.stringify({ dentryIds: [dentryId], option: { withThumbnail: false } })
+      }, 'query_dentry')
+      const result = (body.resultItems ?? []).find(item => {
+        if (!item || typeof item !== 'object') return false
+        const raw = item as Record<string, unknown>
+        return raw.dentryId === dentryId || raw.success === true
+      })
+      if (!result || typeof result !== 'object') return null
+      const raw = result as Record<string, unknown>
+      const nested = raw.dentry
+      if (nested && typeof nested === 'object' && 'dentry' in nested) return normalizeDentry((nested as Record<string, unknown>).dentry)
+      return normalizeDentry(nested ?? raw)
     } catch (error) {
       // A file that is not in this space is expected while trying multiple
       // spaces. Preserve permission failures so the caller can report them.
@@ -213,31 +226,11 @@ function isFolder(value: string): boolean { return ['folder', 'FOLDER'].includes
 function normalizeDentry(value: unknown): DingTalkDentry | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
-  const id = text(raw.id) ?? text(raw.uuid)
+  const id = text(raw.id) ?? text(raw.dentryId) ?? text(raw.fileId) ?? text(raw.uuid)
   const name = text(raw.name)
   if (!id || !name) return null
   return {
-    id, uuid: text(raw.uuid), parentId: text(raw.parentId), name, type: text(raw.type) ?? '', extension: text(raw.extension),
+    id, uuid: text(raw.uuid) ?? text(raw.dentryUuid), parentId: text(raw.parentId), name, type: text(raw.type) ?? '', extension: text(raw.extension),
     size: number(raw.size), version: number(raw.version), path: text(raw.path), modifiedTime: text(raw.modifiedTime)
-  }
-}
-
-function normalizeDriveFile(value: unknown): DingTalkDentry | null {
-  if (!value || typeof value !== 'object') return null
-  const raw = value as Record<string, unknown>
-  const id = text(raw.fileId) ?? text(raw.id)
-  const name = text(raw.fileName) ?? text(raw.name)
-  if (!id || !name) return null
-  return {
-    id,
-    uuid: text(raw.dentryUuid) ?? text(raw.uuid),
-    parentId: text(raw.parentId),
-    name,
-    type: text(raw.fileType) ?? text(raw.type) ?? '',
-    extension: text(raw.fileExtension) ?? text(raw.extension),
-    size: number(raw.fileSize) ?? number(raw.size),
-    version: number(raw.version),
-    path: text(raw.filePath) ?? text(raw.path),
-    modifiedTime: text(raw.modifyTime) ?? text(raw.modifiedTime)
   }
 }

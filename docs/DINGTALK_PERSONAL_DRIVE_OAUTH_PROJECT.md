@@ -40,7 +40,7 @@
    ```
 
 4. 对该企业空间只读平铺索引得到 13 个节点；用户提供的父目录节点 `6LeBq413JALdPe1ZizrKbYRxVDOnGvpb` 不在其中，名称中也没有印刷图档、TSUM、J7 等候选。
-5. 图档链接可以来自当前登录账号的“我的文档”，也可以来自“团队文件 → 组织空间”。旧链接格式为 `https://alidocs.dingtalk.com/i/nodes/{dentryUuid}`；组织空间网页通常复制为 `https://alidocs.dingtalk.com/i/desktop/folders/{id}`。后者的 URL ID 不一定出现在批量 dentries 列表中，服务端需要用钉钉“查询文件（夹）信息”接口直接解析，再用返回的 `fileId`/`parentId` 建立索引；不能简单把它当作个人空间 UUID 或用同名目录猜测。
+5. 图档链接可以来自当前登录账号的“我的文档”，也可以来自“团队文件 → 组织空间”。旧链接格式为 `https://alidocs.dingtalk.com/i/nodes/{dentryUuid}`；组织空间网页通常复制为 `https://alidocs.dingtalk.com/i/desktop/folders/{id}`。后者的 URL ID 不一定出现在批量 dentries 列表中，服务端先通过同权限的 `storage/spaces/{spaceId}/dentries/query` 查询，再用返回的 dentry `id/uuid/parentId` 建立索引；不能调用需要额外 `Drive.File.Read` 的 `/drive/spaces/.../files/{fileId}` 接口。
 
 因此，当前 `artwork_source_unreadable` 的准确含义是“App Token 可访问的空间中不存在该个人节点”，不是“目录为空”。
 

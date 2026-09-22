@@ -76,6 +76,27 @@ describe('personal DingTalk artwork drive', () => {
     expect(result.descendants.map(entry => entry.name)).toEqual(['Heart Hat Cat.png'])
   })
 
+  it('resolves a desktop folder link through the direct file metadata endpoint when bulk ids differ', async () => {
+    const fetcher = vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/oauth2/accessToken')) return Response.json({ accessToken: 'app-token' })
+      if (url.includes('/v1.0/drive/spaces?')) return Response.json({ spaces: [{ spaceId: 'org-space' }] })
+      if (url.includes('/dentries/listAll')) return Response.json({ dentries: [
+        { id: 'child-id', parentId: 'desktop-folder-id', name: 'Heart Hat Cat.png', type: 'FILE', extension: 'png' }
+      ] })
+      if (url.includes('/v1.0/drive/spaces/org-space/files/desktop-folder-id')) return Response.json({
+        fileId: 'desktop-folder-id', fileName: 'J7系列-印刷图档', fileType: 'folder', parentId: '0', filePath: '/J7系列-印刷图档'
+      })
+      return new Response(null, { status: 404 })
+    })
+    const client = new DingTalkDriveClient(config, fetcher as typeof fetch)
+
+    const result = await client.resolvePersonalFolder('union-1', 'desktop-folder-id')
+
+    expect(result.folder.name).toBe('J7系列-印刷图档')
+    expect(result.descendants.map(entry => entry.name)).toEqual(['Heart Hat Cat.png'])
+  })
+
   it('classifies alternate DingTalk permission errors', async () => {
     const fetcher = vi.fn(async (input: string | URL) => {
       const url = String(input)

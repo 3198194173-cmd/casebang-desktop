@@ -48,7 +48,11 @@ export class DingTalkDriveClient {
     for (const space of spaces) {
       try {
         const entries = await this.listAll(token, unionId, space.id)
+        // The `/i/desktop/folders/<id>` web link may carry a Drive fileId that
+        // is not exposed as either `id` or `uuid` by the bulk dentry listing.
+        // Resolve it directly before concluding that the folder is missing.
         const folder = entries.find(entry => entry.id === nodeId || entry.uuid === nodeId)
+          ?? await this.getFile(token, unionId, space.id, nodeId)
         if (!folder) continue
         if (!isFolder(folder.type)) throw new DingTalkDriveError('artwork_source_not_folder', '链接对应的不是钉盘文件夹。')
         const included = new Set([folder.id])
@@ -67,6 +71,22 @@ export class DingTalkDriveClient {
     }
     if (lastFailure) throw lastFailure
     throw new DingTalkDriveError('artwork_source_unreadable', '当前钉钉账号无法读取该钉盘目录，请确认链接属于可访问的组织空间并已申请钉盘读取权限。')
+  }
+
+  private async getFile(token: string, unionId: string, spaceId: string, fileId: string): Promise<DingTalkDentry | null> {
+    const url = new URL(`https://api.dingtalk.com/v1.0/drive/spaces/${encodeURIComponent(spaceId)}/files/${encodeURIComponent(fileId)}`)
+    url.searchParams.set('unionId', unionId)
+    try {
+      const body = await this.json<Record<string, unknown>>(url, { headers: authHeaders(token) }, 'get_file')
+      return normalizeDriveFile(body)
+    } catch (error) {
+      // A file that is not in this space is expected while trying multiple
+      // spaces. Preserve permission failures so the caller can report them.
+      if (error instanceof DingTalkDriveError && error.details.httpStatus === 404) return null
+      if (error instanceof DingTalkDriveError && error.code === 'dingtalk_drive_request_invalid') return null
+      if (error instanceof DingTalkDriveError && /unsupported|not.?support/i.test(error.details.remoteCode ?? '')) return null
+      throw error
+    }
   }
 
   private async appToken(): Promise<string> {
@@ -199,5 +219,25 @@ function normalizeDentry(value: unknown): DingTalkDentry | null {
   return {
     id, uuid: text(raw.uuid), parentId: text(raw.parentId), name, type: text(raw.type) ?? '', extension: text(raw.extension),
     size: number(raw.size), version: number(raw.version), path: text(raw.path), modifiedTime: text(raw.modifiedTime)
+  }
+}
+
+function normalizeDriveFile(value: unknown): DingTalkDentry | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  const id = text(raw.fileId) ?? text(raw.id)
+  const name = text(raw.fileName) ?? text(raw.name)
+  if (!id || !name) return null
+  return {
+    id,
+    uuid: text(raw.dentryUuid) ?? text(raw.uuid),
+    parentId: text(raw.parentId),
+    name,
+    type: text(raw.fileType) ?? text(raw.type) ?? '',
+    extension: text(raw.fileExtension) ?? text(raw.extension),
+    size: number(raw.fileSize) ?? number(raw.size),
+    version: number(raw.version),
+    path: text(raw.filePath) ?? text(raw.path),
+    modifiedTime: text(raw.modifyTime) ?? text(raw.modifiedTime)
   }
 }

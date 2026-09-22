@@ -19,6 +19,27 @@ function artworkCategoryMatches(row: { sheet: string; barcodeName: string }, cat
   return value.includes(categoryName.toLowerCase())
 }
 
+function isPdfArtworkEntry(entry: DingTalkArtworkEntry): boolean {
+  const extension = (entry.extension ?? '').trim().toLowerCase().replace(/^\./, '')
+  if (extension === 'pdf') return true
+  return /\.pdf$/i.test(entry.name.trim())
+}
+
+function descendantEntryIds(entries: DingTalkArtworkEntry[], rootId: string): Set<string> {
+  const ids = new Set<string>([rootId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const entry of entries) {
+      if (entry.parentId && ids.has(entry.parentId) && !ids.has(entry.id)) {
+        ids.add(entry.id)
+        changed = true
+      }
+    }
+  }
+  return ids
+}
+
 export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.JSX.Element {
   const [items, setItems] = useState<CollaborationWorkItem[]>([])
   const [selectedItem, setSelectedItem] = useState<CollaborationWorkItem | null>(null)
@@ -102,11 +123,18 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     return path.includes(selectedArtworkCategory.name.toLowerCase()) && /苹果|iphone|pro|max|plus/i.test(entry.name)
   }), [artworkFolders, selectedArtworkCategory])
   const selectedArtworkModel = artworkModels.find(entry => entry.id === artworkModelId) ?? null
+  const artworkModelEntryIds = useMemo(() => {
+    if (!selectedArtworkModel) return new Set<string>()
+    return descendantEntryIds(artworkEntries, selectedArtworkModel.id)
+  }, [artworkEntries, selectedArtworkModel])
   const artworkPdfEntries = useMemo(() => artworkEntries.filter(entry => {
-    if (!selectedArtworkModel) return false
-    const path = `${entry.path ?? ''}/${entry.name}`
-    return entry.extension?.toLowerCase() === '.pdf' && path.includes(selectedArtworkModel.name)
-  }), [artworkEntries, selectedArtworkModel])
+    if (!selectedArtworkModel || !isPdfArtworkEntry(entry)) return false
+    if (artworkModelEntryIds.has(entry.id)) return true
+    // Older indexes may not have parentId links; retain a path-based fallback.
+    const path = `${entry.path ?? ''}/${entry.name}`.toLocaleLowerCase()
+    return path.includes(selectedArtworkModel.name.toLocaleLowerCase())
+  }), [artworkEntries, artworkModelEntryIds, selectedArtworkModel])
+  const indexedPdfCount = useMemo(() => artworkEntries.filter(isPdfArtworkEntry).length, [artworkEntries])
 
   const loginAccount = async (): Promise<void> => {
     setError(''); setMessage('已打开钉钉登录页面，正在等待确认…')
@@ -193,7 +221,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
             <form className="lc-artwork-target" onSubmit={event => { event.preventDefault(); void run(bindArtworkTarget) }}><label>当前工作簿系列印刷图档文件夹<input value={artworkTargetUrl} onChange={event => setArtworkTargetUrl(event.target.value)} placeholder="https://alidocs.dingtalk.com/i/desktop/folders/..." /></label><button disabled={busy || !artworkTargetUrl.trim()}>{artworkTarget ? '重新读取系列目录' : '读取系列目录'}</button></form>
             <p className="lc-artwork-hint">每个系列使用自己的文件夹链接；读取后再选择产品类别和样本机型，不需要绑定固定父目录。</p>
             {artworkTarget ? <><div className="lc-artwork-selected"><div><small>当前系列目录</small><strong>{artworkTarget.folderName}</strong></div><a href={artworkTarget.folderUrl} target="_blank" rel="noreferrer">打开钉盘检查</a></div>
-              <div className="lc-artwork-selectors"><label>产品类别<select value={artworkCategoryId} onChange={event => { setArtworkCategoryId(event.target.value); setArtworkModelId('') }}><option value="">请选择类别目录</option>{artworkCategories.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><label>样本机型<select value={artworkModelId} onChange={event => setArtworkModelId(event.target.value)} disabled={!artworkCategoryId}><option value="">请选择机型目录</option>{artworkModels.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><small>{selectedArtworkModel ? `已定位 ${artworkPdfEntries.length} 个 PDF；共享表已筛选 ${selectedArtworkRows.length} 条图片数据（来源：条码名/图片分表）。` : '先选择类别和机型；可拆卸使用可拆卸/磁吸背盖图片分表，一体壳使用出镜壳/出片壳图片分表。'}</small><button disabled={busy || !artworkCategoryId || !artworkModelId} onClick={() => void run(saveArtworkSelection)}>保存类别和样本机型</button></div>
+              <div className="lc-artwork-selectors"><label>产品类别<select value={artworkCategoryId} onChange={event => { setArtworkCategoryId(event.target.value); setArtworkModelId('') }}><option value="">请选择类别目录</option>{artworkCategories.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><label>样本机型<select value={artworkModelId} onChange={event => setArtworkModelId(event.target.value)} disabled={!artworkCategoryId}><option value="">请选择机型目录</option>{artworkModels.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><small>{selectedArtworkModel ? `已定位 ${artworkPdfEntries.length} 个 PDF（远程索引共 ${indexedPdfCount} 个，按所选机型目录筛选）；共享表已筛选 ${selectedArtworkRows.length} 条图片数据（来源：条码名/图片分表）。` : '先选择类别和机型；可拆卸使用可拆卸/磁吸背盖图片分表，一体壳使用出镜壳/出片壳图片分表。'}</small><button disabled={busy || !artworkCategoryId || !artworkModelId} onClick={() => void run(saveArtworkSelection)}>保存类别和样本机型</button></div>
               <div className="lc-artwork-checks">{artworkNameChecks.map(check => <article key={check.key} className={check.matches.length ? 'matched' : 'missing'}><div><strong>{check.patternName}</strong><small>{check.matches.length ? `找到 ${check.matches.length} 个同名候选` : '没有找到同名文件'}</small></div>{check.matches[0] ? <a href={check.matches[0].nodeUrl} target="_blank" rel="noreferrer">打开候选</a> : <span>待处理</span>}</article>)}</div>
               <div className="lc-artwork-files"><header><strong>远程目录索引</strong><span>{artworkEntries.length} 项 · 只读取元数据，不下载整个文件夹</span></header>{(selectedArtworkModel ? artworkPdfEntries : artworkEntries).map(entry => { const parsed = parseArtworkFilename(entry.name); return <article key={entry.id}><div><strong>{entry.name}</strong><small>{parsed.productCode ? `${parsed.productCode} · ${parsed.normalizedPatternKey ?? '图案待解析'}` : (entry.path || entry.extension || entry.type)}</small></div><a href={entry.nodeUrl} target="_blank" rel="noreferrer">按需打开</a></article> })}</div><div className="lc-artwork-pending"><strong>下一步：PDF 图案 AI 核验</strong><p>文件名先与图片表“图片对应名称（大写）”匹配，再按需打开选定 PDF 的单页预览，与共享表截图交给视觉 AI 对比；名称相同不能直接判定图案一致。</p></div></> : <div className="lc-artwork-blocked"><strong>尚未读取本系列目录</strong><p>请粘贴当前系列的钉盘文件夹链接。读取成功后可以手工选择“可拆卸”等类别和具体机型。</p></div>}
           </section>}

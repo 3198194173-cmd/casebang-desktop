@@ -65,7 +65,7 @@ export class DingTalkOAuthClient {
       redirect_uri: `${this.config.publicOrigin}/api/v1/auth/dingtalk/callback`,
       response_type: 'code',
       client_id: this.config.dingtalk.clientId,
-      scope: 'openid',
+      scope: this.config.dingtalk.userScopes,
       state,
       prompt: 'consent'
     })

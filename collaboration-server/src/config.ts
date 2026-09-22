@@ -33,6 +33,7 @@ const environmentSchema = z.object({
   DINGTALK_CLIENT_SECRET_FILE: z.string().optional(),
   DINGTALK_USER_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   DINGTALK_USER_TOKEN_ENCRYPTION_KEY_FILE: z.string().optional(),
+  DINGTALK_USER_SCOPES: z.string().optional(),
   WPS_WEBOFFICE_ENABLED: booleanValue,
   WPS_APP_ID: z.string().optional(),
   WPS_APP_SECRET: z.string().optional(),
@@ -48,7 +49,7 @@ export interface ServerConfig {
   cos: { enabled: boolean; bucket: string; region: string; secretId: string; secretKey: string }
   migrationsRoot: string
   database: { host: string; port: number; name: string; user: string; password: string; ssl: boolean }
-  dingtalk: { enabled: boolean; corpId: string; clientId: string; agentId: string; clientSecret: string; userTokenEncryptionKey: string }
+  dingtalk: { enabled: boolean; corpId: string; clientId: string; agentId: string; clientSecret: string; userTokenEncryptionKey: string; userScopes: string }
   wps: { enabled: boolean; appId: string; appSecret: string }
 }
 
@@ -111,7 +112,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
       clientId: value.DINGTALK_CLIENT_ID ?? '',
       agentId: value.DINGTALK_AGENT_ID ?? '',
       clientSecret: dingtalkClientSecret,
-      userTokenEncryptionKey: dingtalkUserTokenEncryptionKey
+      userTokenEncryptionKey: dingtalkUserTokenEncryptionKey,
+      userScopes: value.DINGTALK_USER_SCOPES?.trim() || 'openid Storage.File.Read'
     },
     wps: {
       enabled: wpsRequired,

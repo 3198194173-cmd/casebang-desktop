@@ -20,7 +20,7 @@ describe('DingTalk OAuth client', () => {
     expect(url.origin + url.pathname).toBe('https://login.dingtalk.com/oauth2/auth')
     expect(url.searchParams.get('redirect_uri')).toBe('https://collab.casebang.tech/api/v1/auth/dingtalk/callback')
     expect(url.searchParams.get('client_id')).toBe('ding-client')
-    expect(url.searchParams.get('scope')).toBe('openid')
+    expect(url.searchParams.get('scope')).toBe('openid Storage.File.Read')
     expect(url.searchParams.get('state')).toBe('state-value')
   })
 

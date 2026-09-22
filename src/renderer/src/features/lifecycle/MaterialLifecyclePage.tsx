@@ -67,7 +67,6 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const patternOverrideAllowed = selectedItem?.sourceWorkflow === 'new-series' || selectedItem?.sourceWorkflow === 'new-products'
   const hasPatternOverrides = Boolean(analysis && Object.entries(variants).some(([key, value]) => analysis.patternVariants[key] !== value))
   const overrideReady = !hasPatternOverrides || Boolean(patternOverrideReason.trim())
-  const materialCodesReady = Boolean(analysis?.rows.filter(row => row.materialName.trim()).every(row => row.materialCode.trim()))
   const artworkNameChecks = useMemo(() => (analysis?.patternPlans ?? []).map(plan => {
     const keys = [plan.patternName, plan.productCode].map(value => normalizeArtworkKey(value.trim())).filter(Boolean)
     const matches = artworkEntries.filter(entry => {
@@ -148,7 +147,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     </aside><section className="lc-workbench">
       {!analysis || !selectedItem ? <div className="lc-empty"><h3>选择一份共享工作簿</h3><p>软件会下载中央最新版本进行计算；只有点击保存后才建立新修订，不会覆盖历史版本。</p></div>
       : <><div className="lc-task-heading"><div><h3>{analysis.title}</h3><small>中央版本 {analysis.revision} · 共 {analysis.rows.length} 条物料</small></div><button disabled={busy} onClick={() => void run(async () => { await desktopApi.collaboration.openOnlineWorkbook({ workItemId: selectedItem.id }); setMessage('已打开 WPS 在线工作簿。') })}>打开 WPS 检查</button></div>
-        <section className="lc-choice"><div><span className="lc-step-label">加工流程</span><h3>依次完成编码与图档核验</h3><p>先填写 69 码和物料编码，保存中央版本后再选择本系列印刷图档。</p></div><nav className="lc-tabs" aria-label="编码步骤">{([['barcode', '2. 填写 69 码'], ['material', '3. 填写物料编码'], ['artwork', '4. 核验印刷图档']] as const).map(([id, title]) => <button key={id} disabled={id === 'artwork' && !materialCodesReady} title={id === 'artwork' && !materialCodesReady ? '请先填写并保存物料编码' : ''} aria-pressed={tab === id} onClick={() => { setTab(id); setPage(0) }}>{title}</button>)}</nav></section>
+        <section className="lc-choice"><div><span className="lc-step-label">加工流程</span><h3>编码与图档核验分别进行</h3><p>69 码、物料编码和印刷图档核验互相独立；图档核验直接使用共享表图片表中的图案名称、产品编码和截图。</p></div><nav className="lc-tabs" aria-label="编码步骤">{([['barcode', '2. 填写 69 码'], ['material', '3. 填写物料编码'], ['artwork', '4. 核验印刷图档']] as const).map(([id, title]) => <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setPage(0) }}>{title}</button>)}</nav></section>
         <section className="lc-stage"><span className="lc-step-label">{tab === 'barcode' ? '步骤 2' : tab === 'material' ? '步骤 3' : '步骤 4'}</span><h3>{tab === 'barcode' ? '确认 69 码预览' : tab === 'material' ? '确认每个图案的物料编码' : '选择并核验本系列印刷图档'}</h3></section>
         <section className="lc-master-source"><div><strong>物料总表</strong><span>{masterPath ?? '尚未选择'}</span><small>{tab === 'material' ? '用于复用已有图案标识并检查新标识占用。' : '用于查找所选年月最后一个已用号码。'}</small></div><button disabled={busy} onClick={() => void run(chooseMaster)}>选择 / 更换物料总表</button></section>
         {tab === 'barcode' ? <><section className="lc-allocation-controls"><div><label>69 码年月前缀<input value={monthPrefix} maxLength={6} inputMode="numeric" onChange={event => setMonthPrefix(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><small>默认取当前年月；遇到上月设计图档可改回上月，例如 202609。</small></div>

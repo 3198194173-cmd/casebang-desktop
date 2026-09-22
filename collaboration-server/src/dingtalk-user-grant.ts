@@ -84,7 +84,9 @@ export class DingTalkUserGrantStore {
       refreshToken: body.refreshToken ?? refreshToken,
       expiresAt: typeof body.expireIn === 'number' ? new Date(Date.now() + body.expireIn * 1000) : null,
       tokenType: body.tokenType ?? null,
-      scopes: Array.isArray(body.scope) ? body.scope : typeof body.scope === 'string' ? body.scope.split(/[ ,]+/).filter(Boolean) : ['openid']
+      // The refresh response may omit scope too; do not turn that into a
+      // false claim that only openid was granted.
+      scopes: Array.isArray(body.scope) ? body.scope : typeof body.scope === 'string' ? body.scope.split(/[ ,]+/).filter(Boolean) : []
     }
     await this.save(userId, organizationId, grant)
     return grant.accessToken

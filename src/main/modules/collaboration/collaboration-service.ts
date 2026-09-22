@@ -110,14 +110,14 @@ export class CollaborationService {
     const value = z.object({ folderUrl: z.string().url().max(1000) }).strict().parse(input)
     const response = await this.request('/api/v1/dingtalk/artwork-source', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value)
-    }, { timeoutMs: 120_000, timeoutMessage: '钉盘个人目录索引超时，请稍后重试。' })
+    }, { timeoutMs: 120_000, timeoutMessage: '钉盘目录索引超时，请稍后重试。' })
     const source = ((await response.json()) as ArtworkSourceResponse).source
     if (!source) throw new Error('钉盘没有返回目录绑定结果。')
     return source
   }
 
   async syncArtworkSource(): Promise<DingTalkArtworkSource> {
-    const response = await this.request('/api/v1/dingtalk/artwork-source/sync', { method: 'POST' }, { timeoutMs: 120_000, timeoutMessage: '钉盘个人目录同步超时，请稍后重试。' })
+    const response = await this.request('/api/v1/dingtalk/artwork-source/sync', { method: 'POST' }, { timeoutMs: 120_000, timeoutMessage: '钉盘目录同步超时，请稍后重试。' })
     const source = ((await response.json()) as ArtworkSourceResponse).source
     if (!source) throw new Error('钉盘没有返回目录同步结果。')
     return source
@@ -447,13 +447,13 @@ function serverError(code?: string, status?: number): string {
     work_item_not_found: '没有找到该工作簿记录。',
     business_role_forbidden: '当前账号不能执行此操作。',
     weboffice_disabled: 'WPS 在线编辑尚未启用，请先完成服务端回调配置。',
-    invalid_artwork_source: '请输入有效的钉盘“我的文档”文件夹链接。',
+    invalid_artwork_source: '请输入有效的钉盘组织空间文件夹链接。',
     artwork_source_not_folder: '该链接对应的不是钉盘文件夹。',
-    artwork_source_unreadable: '当前登录账号无法读取该个人目录，请确认链接属于此账号并检查钉盘读取权限。',
+    artwork_source_unreadable: '当前登录账号无法读取该钉盘目录，请确认链接属于可访问的组织空间并检查读取权限。',
     artwork_source_not_bound: '当前下游账号尚未绑定印刷图档目录。',
     dingtalk_identity_incomplete: '当前登录会话缺少钉钉用户标识，请退出后重新登录。',
     dingtalk_drive_failure: '钉盘接口调用失败，请检查应用的钉盘读取权限。',
-  dingtalk_drive_permission_denied: '钉钉拒绝读取个人空间：当前使用的是用户 Access Token，请在开发者后台“个人权限/委托权限”开通 Files.Read，并退出 CASEBANG 后重新登录授权；应用权限 Storage.File.Read 不能替代它。',
+  dingtalk_drive_permission_denied: '钉钉拒绝读取文件列表：当前接口明确要求应用权限 Storage.File.Read。除了开发者后台申请并发布，还需要由组织管理员在钉钉应用管理中完成增量授权；完成后重启中央服务并重新登录下游账号。Files.Read 不能替代该接口的应用权限。',
   dingtalk_personal_grant_required: '当前下游账号尚未完成个人钉盘授权，请退出后重新登录钉钉。',
   dingtalk_personal_token_refresh_failed: '个人钉盘授权已失效，请退出后重新登录钉钉授权。',
   dingtalk_personal_grant_corrupt: '个人钉盘授权凭据异常，请退出后重新登录钉钉授权。',

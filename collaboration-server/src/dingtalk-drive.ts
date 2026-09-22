@@ -66,7 +66,7 @@ export class DingTalkDriveClient {
       }
     }
     if (lastFailure) throw lastFailure
-    throw new DingTalkDriveError('artwork_source_unreadable', '当前钉钉账号无法读取该个人目录，请确认链接属于当前登录账号并已申请钉盘读取权限。')
+    throw new DingTalkDriveError('artwork_source_unreadable', '当前钉钉账号无法读取该钉盘目录，请确认链接属于可访问的组织空间并已申请钉盘读取权限。')
   }
 
   private async appToken(): Promise<string> {

@@ -92,7 +92,7 @@ CASEBANG 自己的 `user_sessions` Token 只代表“已登录本软件”，不
 1. 桌面端发起登录，服务端创建带随机 `state`、过期时间和 PKCE（若钉钉当前流程支持）的授权尝试。
 2. 浏览器打开钉钉官方授权页，用户确认账号和组织。
 3. 钉钉回调服务端；服务端校验 `state`、一次性状态、回调时限和组织归属。
-4. 服务端用授权码换取用户 Access Token、Refresh Token、到期时间和实际授权范围；授权 URL 默认请求 `openid Files.Read`。`Files.Read` 是用户个人/委托文件读取权限；`Storage.File.Read` 只是应用级企业存储权限，不能替代用户委托权限。两者都必须以钉钉后台实际展示的权限编码为准。
+4. 服务端用授权码换取用户 Access Token、Refresh Token、到期时间和实际授权范围；授权 URL 默认请求 `openid Files.Read`。`Files.Read` 是用户个人/委托文件读取权限；当前钉盘文件列表 API 还明确要求应用权限 `Storage.File.Read`。新增应用权限后，组织管理员必须在应用管理中完成增量授权；开发者后台显示“已开通/已发布”不等于目标组织已经完成授权。
 5. 服务端读取用户资料并核对 unionId/userId/corpId，与当前 CASEBANG 账号建立唯一关联。
 6. Refresh Token 加密保存；Access Token 仅在服务端缓存或加密保存，不返回桌面端。
 7. 桌面端轮询授权结果，只取得 CASEBANG 会话状态和“个人钉盘已授权”布尔状态。

@@ -112,7 +112,11 @@ export function registerAuthRoutes(
     try {
       const authenticated = await oauth.authenticateWithGrant(authCode)
       const identity = authenticated.identity
-      request.log.info({ requestedScopes: config.dingtalk.userScopes.split(/[ ,]+/).filter(Boolean), grantedScopes: authenticated.grant.scopes }, '钉钉用户授权范围已确认')
+      request.log.info({
+        requestedScopes: config.dingtalk.userScopes.split(/[ ,]+/).filter(Boolean),
+        reportedScopes: authenticated.grant.scopes.length ? authenticated.grant.scopes : null,
+        scopeReportedByDingTalk: authenticated.grant.scopes.length > 0
+      }, '钉钉用户授权范围已确认')
       let savedOrganizationId = ''
       let savedUserId = ''
       const client = await pool.connect()

@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import type pg from 'pg'
 import { z } from 'zod'
 import { authenticatedUser, type SessionUserRow } from './auth.js'
-import { DingTalkDriveClient, DingTalkDriveError, type DingTalkDentry } from './dingtalk-drive.js'
+import { DingTalkDriveClient, DingTalkDriveError, type DingTalkDentry, type ResolvedArtworkFolder } from './dingtalk-drive.js'
 import { DingTalkUserGrantError, DingTalkUserGrantStore } from './dingtalk-user-grant.js'
 
 const bindSchema = z.object({ folderUrl: z.string().url().max(1000) }).strict()
@@ -152,7 +152,19 @@ async function downstreamUser(request: Parameters<typeof authenticatedUser>[0], 
 
 async function resolveAndStore(pool: pg.Pool, drive: DingTalkDriveClient, grants: DingTalkUserGrantStore, actor: SessionUserRow, folderUrl: string, nodeId: string): Promise<SourceRow> {
   const accessToken = await grants.accessToken(actor.id, actor.organization_id)
-  const resolved = await drive.resolvePersonalFolderForUser(accessToken, actor.dingtalk_union_id!, nodeId)
+  let resolved: ResolvedArtworkFolder
+  try {
+    // Keep the user token as the first choice so a personal delegated folder,
+    // when supported by DingTalk, remains scoped to the logged-in account.
+    resolved = await drive.resolvePersonalFolderForUser(accessToken, actor.dingtalk_union_id!, nodeId)
+  } catch (error) {
+    // Links copied from “团队文件 → 组织空间” are app-readable resources.
+    // DingTalk can reject the user-token dentry call even when the app's
+    // Storage.File.Read permission is enabled, so retry that path with the
+    // organization app token. Do not hide unrelated validation failures.
+    if (!(error instanceof DingTalkDriveError) || error.code !== 'dingtalk_drive_permission_denied') throw error
+    resolved = await drive.resolvePersonalFolder(actor.dingtalk_union_id!, nodeId)
+  }
   const sourceId = randomUUID()
   const files = resolved.descendants.filter(entry => !['folder', 'FOLDER'].includes(entry.type))
   const folders = resolved.descendants.length - files.length
@@ -199,7 +211,23 @@ async function ownsWorkItem(pool: pg.Pool, actor: SessionUserRow, workItemId: st
   return Boolean(found.rowCount)
 }
 
-function parseNodeId(value: string): string | null { try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'alidocs.dingtalk.com' && /^\/i\/nodes\/[^/]+\/?$/.test(url.pathname) ? decodeURIComponent(url.pathname.split('/').filter(Boolean).at(-1)!) : null } catch { return null } }
+/**
+ * Extract a DingTalk Docs folder/node id from either link format currently
+ * produced by the web UI.  Older links use `/i/nodes/<id>` while folders
+ * copied from “团队文件 → 组织空间” use `/i/desktop/folders/<id>`.
+ */
+export function parseNodeId(value: string): string | null {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.hostname !== 'alidocs.dingtalk.com') return null
+    const parts = url.pathname.split('/').filter(Boolean)
+    const isNodeLink = parts.length === 3 && parts[0] === 'i' && parts[1] === 'nodes'
+    const isDesktopFolderLink = parts.length === 4 && parts[0] === 'i' && parts[1] === 'desktop' && parts[2] === 'folders'
+    return isNodeLink || isDesktopFolderLink ? decodeURIComponent(parts.at(-1)!) : null
+  } catch {
+    return null
+  }
+}
 function publicSource(row: SourceRow): object { return { folderUrl: row.folder_url, nodeId: row.node_id, spaceId: row.space_id, folderName: row.folder_name, status: row.status, fileCount: row.file_count, folderCount: row.folder_count, lastError: row.last_error, indexedAt: row.indexed_at?.toISOString() ?? null } }
 function publicTarget(row: TargetRow): object { return { workItemId: row.work_item_id, folderUrl: row.folder_url, nodeId: row.node_id, folderName: row.folder_name, boundAt: row.bound_at.toISOString() } }
 function publicEntry(row: EntryRow): object { const nodeId = row.dentry_uuid || row.dentry_id; return { id: row.dentry_id, nodeUrl: `https://alidocs.dingtalk.com/i/nodes/${encodeURIComponent(nodeId)}`, parentId: row.parent_id, name: row.name, type: row.entry_type, extension: row.extension, sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes), version: row.version == null ? null : Number(row.version), path: row.path, modifiedAt: row.modified_at?.toISOString() ?? null } }

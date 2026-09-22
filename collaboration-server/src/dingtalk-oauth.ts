@@ -149,5 +149,7 @@ export class DingTalkOAuthClient {
 function normalizeScopes(value: string | string[] | undefined): string[] {
   if (Array.isArray(value)) return value.filter(Boolean)
   if (typeof value === 'string') return value.split(/[ ,]+/).map(item => item.trim()).filter(Boolean)
-  return ['openid']
+  // DingTalk's browser userAccessToken response normally omits the scope
+  // field. An empty list means "not reported", not "openid only".
+  return []
 }

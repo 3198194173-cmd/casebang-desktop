@@ -24,6 +24,9 @@
 .lc-stage h3 { margin-bottom:0; }
 .lc-tabs { display:flex; gap:8px; flex-wrap:wrap; padding-bottom:18px; border-bottom:1px solid #e1e8eb; }
 .lc-tabs [aria-pressed=true] { background:#235d65; color:white; }
+.lc-subtabs { display:flex; gap:6px; margin:14px 0 0; padding:5px; border:1px solid #d9e5e3; border-radius:9px; background:#f4f8f7; width:max-content; }
+.lc-subtabs button { min-height:32px; padding:6px 14px; border:0; background:transparent; font-size:12px; }
+.lc-subtabs button[aria-pressed=true] { background:#d8eee8; color:#185e51; }
 .lc-task-heading { padding:22px 0; overflow-wrap:anywhere; }
 .lc-task-heading button { flex-shrink:0; }
 .lc-summary { padding:14px; background:#eef7f6; border-radius:8px; line-height:1.8; }
@@ -35,7 +38,15 @@
 .lc-table-wrap td:nth-child(2) { min-width:220px; }
 .lc-table-wrap td:last-child { min-width:190px; }
 .lc-table-wrap .selected { background:#f0f8f6; }
-.lc-pagination { display:flex; justify-content:flex-end; align-items:center; gap:14px; padding:16px 0; }
+.lc-sheet-view { margin-top:16px; border:1px solid #d6e0e3; border-radius:10px; background:#fff; overflow:hidden; }
+.lc-sheet-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 16px 10px; }
+.lc-sheet-heading strong,.lc-sheet-heading small { display:block; }
+.lc-sheet-heading small { margin-top:5px; color:#687b80; font-size:11px; }
+.lc-sheet-heading > span { color:#56736e; font-size:12px; font-weight:700; }
+.lc-sheet-tabs { display:flex; gap:4px; overflow:auto; padding:0 12px; border-bottom:1px solid #d6e0e3; background:#f4f7f7; }
+.lc-sheet-tabs button { min-height:36px; padding:7px 16px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:#60777b; white-space:nowrap; font-size:12px; }
+.lc-sheet-tabs button.active { border-bottom-color:#258276; background:#fff; color:#185e51; font-weight:750; }
+.lc-sheet-empty { padding:28px; color:#71817e; text-align:center; font-size:12px; background:#fbfdfc; }
 .lc-row-editor { padding:18px; border:1px solid #c9dedc; background:#f6faf9; border-radius:10px; }
 .lc-row-editor label { display:grid; gap:8px; max-width:340px; }
 .lc-row-editor input { min-height:46px; padding:10px; border:1px solid #bacdd1; border-radius:8px; font-size:18px; }

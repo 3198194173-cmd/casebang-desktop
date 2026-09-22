@@ -96,6 +96,8 @@ export class LifecycleService {
       version: input.version,
       revision: input.revision,
       rows: parsed.rows,
+      sheetNames: parsed.sheetNames,
+      artworkRows: parsed.artworkRows,
       warnings: parsed.warnings,
       materialCodePreviews,
       patternVariants: patternPlan.patternVariants,
@@ -169,7 +171,7 @@ export class LifecycleService {
     this.busy = true
     let snapshot: string | null = null
     try {
-      const selection = await dialog.showOpenDialog({ title: '选择上游生成的新建表格（不修改原文件）', properties: ['openFile'], filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }] })
+      const selection = await dialog.showOpenDialog({ title: '选择外部共享工作簿（不修改原文件）', properties: ['openFile'], filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }] })
       const source = selection.filePaths[0]
       if (selection.canceled || !source) return null
       const info = await stat(source)
@@ -195,6 +197,14 @@ export class LifecycleService {
       if (snapshot) await unlink(snapshot).catch(() => undefined)
       this.busy = false
     }
+  }
+
+  async inspectWorkbook(input: unknown): Promise<{ warnings: string[]; sheetNames: string[] }> {
+    const value = z.object({ path: z.string().trim().min(1) }).strict().parse(input)
+    const info = await stat(value.path)
+    if (!info.isFile() || !value.path.toLowerCase().endsWith('.xlsx')) throw new Error('请选择有效的 .xlsx 工作簿。')
+    const parsed = await readLifecycleWorkbook(value.path, await this.settings.getMaterialModels())
+    return { warnings: parsed.warnings, sheetNames: parsed.sheetNames }
   }
 
   private async loadMaterialMasterRows(masterPath: string, models: readonly MaterialModel[]): Promise<LifecycleDraft['rows']> {

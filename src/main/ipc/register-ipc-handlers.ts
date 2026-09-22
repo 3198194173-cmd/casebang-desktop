@@ -57,6 +57,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   const lifecycle = new LifecycleService(dependencies.settings)
   ipcMain.handle(IPC_CHANNELS.lifecycleList, event => { assertTrustedSender(event.senderFrame); return lifecycle.list() })
   ipcMain.handle(IPC_CHANNELS.lifecycleImport, event => { assertTrustedSender(event.senderFrame); return lifecycle.importWorkbook() })
+  ipcMain.handle(IPC_CHANNELS.lifecycleInspectWorkbook, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.inspectWorkbook(input) })
   ipcMain.handle(IPC_CHANNELS.lifecycleGet, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.get(input) })
   ipcMain.handle(IPC_CHANNELS.lifecycleSave, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.save(input) })
   ipcMain.handle(IPC_CHANNELS.lifecyclePreview, (event, input: unknown) => { assertTrustedSender(event.senderFrame); return lifecycle.preview(input) })

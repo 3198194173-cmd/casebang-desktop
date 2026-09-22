@@ -31,6 +31,16 @@ export interface LifecycleRow {
   identity: MaterialIdentity
   issues: string[]
 }
+export interface ArtworkSheetRow {
+  id: string
+  sheet: string
+  row: number
+  productCode: string
+  barcodeName: string
+  patternName: string
+  patternNameUpper: string
+  artworkFileName: string
+}
 export interface LifecycleDraft {
   id: string
   title: string
@@ -82,6 +92,9 @@ export interface SharedLifecycleAnalysis {
   version: number
   revision: number
   rows: LifecycleRow[]
+  /** All user-facing sheets, including the 图片 sheet that is used for artwork comparison. */
+  sheetNames: string[]
+  artworkRows: ArtworkSheetRow[]
   warnings: string[]
   materialCodePreviews: LifecycleRowPreview[]
   patternVariants: Record<string, string>
@@ -127,6 +140,7 @@ export interface SaveMaterialModelInput {
 export interface LifecycleApi {
   list(): Promise<LifecycleDraftSummary[]>
   importWorkbook(): Promise<LifecycleDraft | null>
+  inspectWorkbook(input: { path: string }): Promise<{ warnings: string[]; sheetNames: string[] }>
   get(id: string): Promise<LifecycleDraft>
   save(input: { id: string; expectedVersion: number; barcodeSource: BarcodeSource | null; patternVariants: Record<string, string> }): Promise<LifecycleDraft>
   preview(id: string): Promise<LifecycleRowPreview[]>

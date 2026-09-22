@@ -1,6 +1,7 @@
 export const IPC_CHANNELS = {
   lifecycleList: 'lifecycle:list',
   lifecycleImport: 'lifecycle:import',
+  lifecycleInspectWorkbook: 'lifecycle:inspect-workbook',
   lifecycleGet: 'lifecycle:get',
   lifecycleSave: 'lifecycle:save',
   lifecyclePreview: 'lifecycle:preview',

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 import { XMLParser } from 'fast-xml-parser'
 import { findPackageText, readOoxmlPackage } from '../spreadsheet/ooxml-package'
-import type { LifecycleRow } from '../../../shared/lifecycle-contracts'
+import type { ArtworkSheetRow, LifecycleRow } from '../../../shared/lifecycle-contracts'
 import { parseMaterialIdentity, rowIdentityIssues } from '../../../shared/material-coding'
 import type { MaterialModel } from '../../../shared/material-model-dictionary'
 
@@ -26,7 +26,12 @@ const aliases: Record<string, string[]> = {
   item: ['类目', '物料类别'], material: ['材质', '颜色', '备注/材质'], domestic: ['建议零售价', '建议零售价(元)'],
   overseas: ['海外零售价', '海外零售价(美元)'], remark: ['备注(IP)', 'IP备注']
 }
-export async function readLifecycleWorkbook(path: string, modelDictionary?: readonly MaterialModel[]): Promise<{ rows: LifecycleRow[]; warnings: string[] }> {
+const artworkAliases: Record<string, string[]> = {
+  productCode: ['产品编码', '产品代码'], barcodeName: ['条码名', '条码名称'], patternName: ['图片对应名称', '图案名称', '图案名'],
+  patternNameUpper: ['图片对应名称（大写）', '图片对应名称(大写)', '图案名称（大写）', '图案名（大写）'],
+  artworkFileName: ['图档名', '印刷图档', '印刷图档名']
+}
+export async function readLifecycleWorkbook(path: string, modelDictionary?: readonly MaterialModel[]): Promise<{ rows: LifecycleRow[]; warnings: string[]; sheetNames: string[]; artworkRows: ArtworkSheetRow[] }> {
   const entries = await readOoxmlPackage(path, { skipMedia: true })
   const required = (name: string): string => { const value = findPackageText(entries, name); if (!value) throw new Error(`不是完整的 xlsx 工作簿：缺少 ${name}`); return value }
   const workbook = xml(required('xl/workbook.xml'))
@@ -34,15 +39,45 @@ export async function readLifecycleWorkbook(path: string, modelDictionary?: read
   const shared = array(xml(findPackageText(entries, 'xl/sharedStrings.xml') ?? '<sst/>').sst?.si).map(text)
   const rows: LifecycleRow[] = []
   const warnings: string[] = []
+  const sheetNames: string[] = []
+  const artworkRows: ArtworkSheetRow[] = []
   for (const sheet of array(workbook.workbook?.sheets?.sheet)) {
     const sheetName = String(sheet['@name'] ?? '')
     if (sheetName.startsWith('WpsReserved_')) continue
+    if (sheetName) sheetNames.push(sheetName)
     const relation = relationships.find(rel => rel['@Id'] === sheet['@id'])
     if (!relation || relation['@TargetMode'] === 'External') throw new Error(`无法读取工作表 ${sheetName}`)
     const target = String(relation['@Target']).replace(/\\/g, '/')
     const part = target.startsWith('/') ? target.slice(1) : posix.normalize(posix.join('xl', target))
     if (!part.startsWith('xl/worksheets/')) throw new Error('工作表路径超出允许范围')
     const sheetRows = array(xml(required(part)).worksheet?.sheetData?.row)
+    let artworkColumns: Record<string, string> | null = null
+    for (const row of sheetRows) {
+      const values = new Map<string, string>()
+      for (const cell of array(row.c)) {
+        const column = String(cell['@r'] ?? '').replace(/\d/g, '')
+        const value = cell['@t'] === 's' ? shared[Number(cell.v)] ?? '' : cell['@t'] === 'inlineStr' ? text(cell.is) : text(cell.v)
+        values.set(column, value)
+      }
+      if (!artworkColumns) {
+        const possible: Record<string, string> = {}
+        for (const [field, labels] of Object.entries(artworkAliases)) {
+          const match = [...values].find(([, value]) => labels.some(label => key(label) === key(value)))
+          if (match) possible[field] = match[0]
+        }
+        if (possible.patternNameUpper || (possible.patternName && possible.productCode)) artworkColumns = possible
+        continue
+      }
+      const value = (field: string): string => values.get(artworkColumns![field] ?? '') ?? ''
+      const patternName = value('patternName')
+      const patternNameUpper = value('patternNameUpper')
+      const productCode = value('productCode')
+      const barcodeName = value('barcodeName')
+      if (!patternName && !patternNameUpper && !productCode && !barcodeName) continue
+      const rowNumber = Number(row['@r'])
+      if (!Number.isInteger(rowNumber) || rowNumber < 1) continue
+      artworkRows.push({ id: createHash('sha256').update(`artwork\0${sheetName}\0${rowNumber}`).digest('hex').slice(0, 32), sheet: sheetName, row: rowNumber, productCode, barcodeName, patternName, patternNameUpper, artworkFileName: value('artworkFileName') })
+    }
     let columns: Record<string, string> | null = null
     let detected = false
     for (const row of sheetRows) {
@@ -81,10 +116,13 @@ export async function readLifecycleWorkbook(path: string, modelDictionary?: read
     if (!detected) warnings.push(`“${sheetName}”未识别为条码业务表，原文件已完整保留；若包含待建档物料，请核对表头。`)
   }
   if (!rows.length) throw new Error('未找到同时含“物料名称、69码、物料编码”的业务表头。支持表名带数量后缀，不要求固定工作表名称。')
+  const normalizedSheetNames = sheetNames.map(key)
+  if (!normalizedSheetNames.some(name => name.includes('条码'))) warnings.push('共享表缺少“条码”分表，请将包含类目、69码、物料编码和物料名称的分表名称补充“条码”。')
+  if (!normalizedSheetNames.some(name => name.includes('图片'))) warnings.push('共享表缺少“图片”分表，请将包含图片、产品编码和图片对应名称（大写）的分表名称补充“图片”。')
   for (const field of ['barcode', 'materialCode'] as const) {
     const counts = new Map<string, number>()
     for (const row of rows) if (row[field]) counts.set(row[field], (counts.get(row[field]) ?? 0) + 1)
     for (const row of rows) if ((counts.get(row[field]) ?? 0) > 1) row.issues.push(`本文件${field === 'barcode' ? '69码' : '物料编码'}重复：${row[field]}`)
   }
-  return { rows, warnings }
+  return { rows, warnings, sheetNames, artworkRows }
 }

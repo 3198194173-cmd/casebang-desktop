@@ -71,6 +71,12 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
     if (!externalDraft) return
     setActiveItemId('external'); setError(''); setMessage('')
     try {
+      const inspection = await desktopApi.lifecycle.inspectWorkbook({ path: externalDraft.sourcePath })
+      if (inspection.warnings.some(warning => warning.includes('缺少“图片”分表') || warning.includes('缺少“条码”分表'))) {
+        setExternalDraft(current => current ? { ...current, warnings: inspection.warnings } : current)
+        setError('请先在 WPS 中确保业务分表名称包含“条码”和“图片”，保存后再上传。')
+        return
+      }
       const result = await desktopApi.collaboration.publishWorkbook({ path: externalDraft.sourcePath, title: externalDraft.title, sourceWorkflow: 'manual' })
       setExternalDraft(null)
       await load()
@@ -86,7 +92,7 @@ export function CollaborationTasksPage({ enabled }: { enabled: boolean }): React
   return <div className="collaboration-page">
     <header className="collaboration-hero"><div><span className="eyebrow">共享工作簿</span><h2>工作簿记录</h2><p>管理系列工作簿，并查看谁在何时通过软件加工或 WPS 手动修改。</p></div><button className="secondary-button" disabled={busy} onClick={() => void load()}>{busy ? '刷新中…' : '刷新记录'}</button></header>
     {account?.status === 'signed-in' && <section className="collaboration-account-strip"><span className="status-dot" /><strong>{account.user?.displayName}</strong><span>{account.user?.businessRole === 'upstream' ? '上游建表' : '下游加工'} · 中央记录已连接</span></section>}
-    {account?.status === 'signed-in' && <section className="collaboration-import-panel"><div><strong>外部导入共享表</strong><p>当上游未能生成标准工作簿时，可直接导入外部 .xlsx。导入后先整理工作表名称并保存，再建立共享表；图片工作表用于印刷图档图案对比。</p>{externalDraft && <small>当前文件：{externalDraft.title} · {externalDraft.warnings.length ? `有 ${externalDraft.warnings.length} 条结构提醒` : '结构已读取'}</small>}</div><div>{!externalDraft ? <button className="secondary-button" disabled={busy} onClick={() => void importExternalWorkbook()}>{busy ? '导入中…' : '选择外部工作簿'}</button> : <><button className="secondary-button" disabled={activeItemId === 'external'} onClick={() => void openExternalDraft()}>打开并整理工作表</button><button className="primary-button" disabled={activeItemId === 'external'} onClick={() => void publishExternalDraft()}>上传为共享表</button></>}</div></section>}
+    {account?.status === 'signed-in' && <section className="collaboration-import-panel"><div><strong>外部导入共享表</strong><p>当上游未能生成标准工作簿时，可直接导入外部 .xlsx。工作表名称只需包含“条码”和“图片”关键词：条码表保留类目、69码、物料编码（工厂）、物料名称；图片表保留条码名、产品编码、图片对应名称（大写）和截图。可存在多个图片分表，核验时按产品类别自动选择。</p>{externalDraft && <small>当前文件：{externalDraft.title} · {externalDraft.warnings.length ? `有 ${externalDraft.warnings.length} 条结构提醒，请先整理分表` : '结构已读取'}</small>}</div><div>{!externalDraft ? <button className="secondary-button" disabled={busy} onClick={() => void importExternalWorkbook()}>{busy ? '导入中…' : '选择外部工作簿'}</button> : <><button className="secondary-button" disabled={activeItemId === 'external'} onClick={() => void openExternalDraft()}>打开并整理工作表</button><button className="primary-button" disabled={activeItemId === 'external'} onClick={() => void publishExternalDraft()}>上传为共享表</button></>}</div></section>}
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert success">{message}</div>}
     <nav className="collaboration-tabs"><button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>进行中</button><button aria-pressed={filter === 'completed'} onClick={() => setFilter('completed')}>已完成</button><button aria-pressed={filter === 'cancelled'} onClick={() => setFilter('cancelled')}>已作废</button></nav>

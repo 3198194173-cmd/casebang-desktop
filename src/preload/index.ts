@@ -6,6 +6,7 @@ const api: CasebangDesktopApi = {
   lifecycle: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.lifecycleList),
     importWorkbook: () => ipcRenderer.invoke(IPC_CHANNELS.lifecycleImport),
+    inspectWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleInspectWorkbook, input),
     get: (id) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleGet, id),
     save: (input) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleSave, input),
     preview: (id) => ipcRenderer.invoke(IPC_CHANNELS.lifecyclePreview, id),

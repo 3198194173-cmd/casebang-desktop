@@ -494,6 +494,8 @@ patternVariantOverride / overrideReason / overriddenBy / overriddenAt
 
 ## 10. 钉盘图档核对
 
+最新的系列目录选择、PDF 文件名解析、`图片对应名称（大写）` 匹配、PDF 单页预览及 AI 图案核验结构见 [ARTWORK_COMPARISON_PROJECT.md](./ARTWORK_COMPARISON_PROJECT.md)。本节保留通用安全边界和人工复核要求；具体界面与数据模型以该项目文档为准。
+
 ### 10.1 两层核对，不把名字相同当图片相同
 
 第一层是候选定位：系列代码/名称 → 产品类别目录 → 图案代码或英文名 → 机型/材质版本。
@@ -706,7 +708,7 @@ patternVariantOverride / overrideReason / overriddenBy / overriddenAt
 - `collaboration/revisions`：文件版本与行差异。
 - `material-coding`：编码规则、机型字典、号码账本。
 - `artwork-review`：图档候选、预览入口、证据与审核。
-- 个人钉盘采用两级绑定：下游账号在资料管理中绑定长期固定的父目录；每个共享工作簿在物料编码之后单独选择本系列子目录。系列目录不得作为账号级固定来源，也不得位于父目录之外。
+- 个人钉盘采用工作簿级系列绑定：下游账号在物料编码之后为当前共享工作簿直接选择本系列目录，再选择产品类别和样本机型。系列目录可以随工作簿变化，资料管理页不再要求绑定固定父目录。
 - `workbook-sync`：本地关联、监听、三方差异与写回。
 - `master-materials`：总表发布、合并计划、历史版本。
 - `integrations/dingtalk-*`：身份、通知、钉盘、在线表格分别适配。

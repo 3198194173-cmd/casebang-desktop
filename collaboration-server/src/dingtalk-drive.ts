@@ -47,12 +47,21 @@ export class DingTalkDriveClient {
     let lastFailure: DingTalkDriveError | null = null
     for (const space of spaces) {
       try {
+        // Resolve the copied folder link first. This is important for large
+        // print-artwork directories: we must not enumerate the whole personal
+        // space just to locate one series folder.
+        const queriedFolder = await this.queryDentry(token, unionId, space.id, nodeId)
+        if (queriedFolder) {
+          if (!isFolder(queriedFolder.type)) throw new DingTalkDriveError('artwork_source_not_folder', '链接对应的不是钉盘文件夹。')
+          const descendants = await this.listDescendants(token, unionId, space.id, queriedFolder.id)
+          return { spaceId: space.id, folder: queriedFolder, descendants }
+        }
+
+        // Compatibility path for older tenants where the dentry query API is
+        // unavailable. It is intentionally a fallback only; modern desktop
+        // folder links take the bounded subtree path above.
         const entries = await this.listAll(token, unionId, space.id)
-        // The `/i/desktop/folders/<id>` web link may carry a dentry id that is
-        // not exposed by the bulk listing. Resolve it through the storage
-        // dentry query API before concluding that the folder is missing.
         const folder = entries.find(entry => entry.id === nodeId || entry.uuid === nodeId)
-          ?? await this.queryDentry(token, unionId, space.id, nodeId)
         if (!folder) continue
         if (!isFolder(folder.type)) throw new DingTalkDriveError('artwork_source_not_folder', '链接对应的不是钉盘文件夹。')
         const included = new Set([folder.id])
@@ -71,6 +80,32 @@ export class DingTalkDriveClient {
     }
     if (lastFailure) throw lastFailure
     throw new DingTalkDriveError('artwork_source_unreadable', '当前钉钉账号无法读取该钉盘目录，请确认链接属于可访问的组织空间并已申请钉盘读取权限。')
+  }
+
+  private async listDescendants(token: string, unionId: string, spaceId: string, rootId: string): Promise<DingTalkDentry[]> {
+    const values: DingTalkDentry[] = []
+    const pendingParents = [rootId]
+    while (pendingParents.length) {
+      const parentId = pendingParents.shift()!
+      let nextToken = ''
+      do {
+        const url = new URL(`https://api.dingtalk.com/v1.0/storage/spaces/${encodeURIComponent(spaceId)}/dentries`)
+        url.searchParams.set('unionId', unionId)
+        url.searchParams.set('parentId', parentId)
+        url.searchParams.set('maxResults', '50')
+        url.searchParams.set('withThumbnail', 'false')
+        if (nextToken) url.searchParams.set('nextToken', nextToken)
+        const body = await this.json<{ dentries?: unknown; nextToken?: string }>(url, { headers: authHeaders(token) }, 'list_dentries')
+        for (const raw of asArray(body.dentries)) {
+          const entry = normalizeDentry(raw)
+          if (!entry) continue
+          values.push(entry)
+          if (isFolder(entry.type)) pendingParents.push(entry.id)
+        }
+        nextToken = body.nextToken ?? ''
+      } while (nextToken)
+    }
+    return values
   }
 
   private async queryDentry(token: string, unionId: string, spaceId: string, dentryId: string): Promise<DingTalkDentry | null> {

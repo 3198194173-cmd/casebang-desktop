@@ -216,6 +216,8 @@ export interface DingTalkArtworkTarget {
   folderUrl: string
   nodeId: string
   folderName: string
+  categoryDentryId: string | null
+  modelDentryId: string | null
   boundAt: string
 }
 
@@ -323,7 +325,7 @@ export interface CasebangDesktopApi {
     syncArtworkSource(): Promise<DingTalkArtworkSource>
     searchArtworkEntries(input: { query?: string; limit?: number; workItemId?: string }): Promise<DingTalkArtworkEntry[]>
     artworkTarget(input: { workItemId: string }): Promise<DingTalkArtworkTarget | null>
-    bindArtworkTarget(input: { workItemId: string; folderUrl: string }): Promise<DingTalkArtworkTarget>
+    bindArtworkTarget(input: { workItemId: string; folderUrl: string; categoryDentryId?: string; modelDentryId?: string }): Promise<DingTalkArtworkTarget>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

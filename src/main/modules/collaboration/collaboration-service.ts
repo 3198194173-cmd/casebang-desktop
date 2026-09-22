@@ -124,7 +124,7 @@ export class CollaborationService {
   }
 
   async searchArtworkEntries(input: unknown): Promise<DingTalkArtworkEntry[]> {
-    const value = z.object({ query: z.string().trim().max(200).optional(), limit: z.number().int().min(1).max(100).optional(), workItemId: z.string().uuid().optional() }).strict().parse(input)
+    const value = z.object({ query: z.string().trim().max(200).optional(), limit: z.number().int().min(1).max(1000).optional(), workItemId: z.string().uuid().optional() }).strict().parse(input)
     const query = new URLSearchParams({ ...(value.query ? { query: value.query } : {}), ...(value.limit ? { limit: String(value.limit) } : {}), ...(value.workItemId ? { workItemId: value.workItemId } : {}) })
     const response = await this.request(`/api/v1/dingtalk/artwork-source/entries?${query}`)
     return ((await response.json()) as ArtworkEntriesResponse).entries ?? []
@@ -137,9 +137,9 @@ export class CollaborationService {
   }
 
   async bindArtworkTarget(input: unknown): Promise<DingTalkArtworkTarget> {
-    const value = z.object({ workItemId: z.string().uuid(), folderUrl: z.string().url().max(1000) }).strict().parse(input)
+    const value = z.object({ workItemId: z.string().uuid(), folderUrl: z.string().url().max(1000), categoryDentryId: z.string().trim().min(1).max(200).optional(), modelDentryId: z.string().trim().min(1).max(200).optional() }).strict().parse(input)
     const response = await this.request(`/api/v1/dingtalk/artwork-targets/${encodeURIComponent(value.workItemId)}`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folderUrl: value.folderUrl })
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folderUrl: value.folderUrl, ...(value.categoryDentryId ? { categoryDentryId: value.categoryDentryId } : {}), ...(value.modelDentryId ? { modelDentryId: value.modelDentryId } : {}) })
     })
     const target = ((await response.json()) as ArtworkTargetResponse).target
     if (!target) throw new Error('钉盘没有返回系列目录绑定结果。')
@@ -462,6 +462,9 @@ function serverError(code?: string, status?: number): string {
     invalid_artwork_target: '请输入当前系列印刷图档文件夹的有效钉盘链接。',
     artwork_target_not_bound: '当前共享工作簿尚未选择系列印刷图档目录。',
     artwork_target_outside_source: '该系列目录不在当前账号绑定的固定父目录中，请先同步父目录索引。',
+    artwork_target_not_indexed: '系列目录已解析，但没有找到可索引的目录节点。',
+    artwork_category_not_indexed: '选择的产品类别目录不在当前系列索引中。',
+    artwork_model_not_indexed: '选择的样本机型目录不在当前系列索引中。',
     artwork_target_not_folder: '当前系列链接对应的不是文件夹。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`

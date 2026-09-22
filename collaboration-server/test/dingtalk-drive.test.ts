@@ -30,7 +30,7 @@ describe('personal DingTalk artwork drive', () => {
     expect(result.spaceId).toBe('personal-space')
     expect(result.folder.name).toBe('印刷图档')
     expect(result.descendants.map(entry => entry.name)).toEqual(['J7系列', 'Heart Hat Cat.png'])
-    expect(fetcher).toHaveBeenCalledTimes(4)
+    expect(fetcher).toHaveBeenCalledTimes(5)
   })
 
   it('falls back to recursively listing folders when listAll is unavailable', async () => {
@@ -52,7 +52,7 @@ describe('personal DingTalk artwork drive', () => {
     const result = await client.resolvePersonalFolder('union-1', 'folder-node-from-url')
 
     expect(result.descendants.map(entry => entry.name)).toEqual(['Heart Hat Cat.png'])
-    expect(fetcher).toHaveBeenCalledTimes(6)
+    expect(fetcher).toHaveBeenCalledTimes(7)
   })
 
   it('uses an organization drive when personal space access is denied', async () => {
@@ -81,12 +81,12 @@ describe('personal DingTalk artwork drive', () => {
       const url = String(input)
       if (url.endsWith('/oauth2/accessToken')) return Response.json({ accessToken: 'app-token' })
       if (url.includes('/v1.0/drive/spaces?')) return Response.json({ spaces: [{ spaceId: 'org-space' }] })
-      if (url.includes('/dentries/listAll')) return Response.json({ dentries: [
-        { id: 'child-id', parentId: 'desktop-folder-id', name: 'Heart Hat Cat.png', type: 'FILE', extension: 'png' }
-      ] })
       if (url.includes('/v1.0/storage/spaces/org-space/dentries/query')) return Response.json({ resultItems: [{
         dentryId: 'desktop-folder-id', success: true, dentry: { id: 'desktop-folder-id', uuid: 'desktop-folder-uuid', parentId: '0', name: 'J7系列-印刷图档', type: 'FOLDER', path: '/J7系列-印刷图档' }
       }] })
+      if (url.includes('/v1.0/storage/spaces/org-space/dentries?') && url.includes('parentId=desktop-folder-id')) return Response.json({ dentries: [
+        { id: 'child-id', parentId: 'desktop-folder-id', name: 'Heart Hat Cat.png', type: 'FILE', extension: 'png' }
+      ] })
       return new Response(null, { status: 404 })
     })
     const client = new DingTalkDriveClient(config, fetcher as typeof fetch)
@@ -95,6 +95,7 @@ describe('personal DingTalk artwork drive', () => {
 
     expect(result.folder.name).toBe('J7系列-印刷图档')
     expect(result.descendants.map(entry => entry.name)).toEqual(['Heart Hat Cat.png'])
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes('/dentries/listAll'))).toBe(false)
   })
 
   it('classifies alternate DingTalk permission errors', async () => {

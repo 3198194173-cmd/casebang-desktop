@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 import { XMLParser } from 'fast-xml-parser'
 import { findPackageText, readOoxmlPackage } from '../spreadsheet/ooxml-package'
+import { generatedImageMap } from '../spreadsheet/workbook-preview-service'
 import type { ArtworkSheetRow, LifecycleRow } from '../../../shared/lifecycle-contracts'
 import { parseMaterialIdentity, rowIdentityIssues } from '../../../shared/material-coding'
 import type { MaterialModel } from '../../../shared/material-model-dictionary'
@@ -50,7 +51,12 @@ export async function readLifecycleWorkbook(path: string, modelDictionary?: read
     const target = String(relation['@Target']).replace(/\\/g, '/')
     const part = target.startsWith('/') ? target.slice(1) : posix.normalize(posix.join('xl', target))
     if (!part.startsWith('xl/worksheets/')) throw new Error('工作表路径超出允许范围')
-    const sheetRows = array(xml(required(part)).worksheet?.sheetData?.row)
+    const worksheetXml = required(part)
+    const sheetDocument = xml(worksheetXml)
+    const sheetRows = array(sheetDocument.worksheet?.sheetData?.row)
+    const imageMap = sheetName.normalize('NFKC').includes('图片')
+      ? await generatedImageMap(path, entries, part, worksheetXml)
+      : new Map<string, string>()
     let artworkColumns: Record<string, string> | null = null
     for (const row of sheetRows) {
       const values = new Map<string, string>()
@@ -76,7 +82,8 @@ export async function readLifecycleWorkbook(path: string, modelDictionary?: read
       if (!patternName && !patternNameUpper && !productCode && !barcodeName) continue
       const rowNumber = Number(row['@r'])
       if (!Number.isInteger(rowNumber) || rowNumber < 1) continue
-      artworkRows.push({ id: createHash('sha256').update(`artwork\0${sheetName}\0${rowNumber}`).digest('hex').slice(0, 32), sheet: sheetName, row: rowNumber, productCode, barcodeName, patternName, patternNameUpper, artworkFileName: value('artworkFileName') })
+      const imageDataUrl = [...imageMap.entries()].find(([address]) => Number(address.match(/\d+$/)?.[0]) === rowNumber)?.[1] ?? null
+      artworkRows.push({ id: createHash('sha256').update(`artwork\0${sheetName}\0${rowNumber}`).digest('hex').slice(0, 32), sheet: sheetName, row: rowNumber, productCode, barcodeName, patternName, patternNameUpper, artworkFileName: value('artworkFileName'), imageDataUrl })
     }
     let columns: Record<string, string> | null = null
     let detected = false

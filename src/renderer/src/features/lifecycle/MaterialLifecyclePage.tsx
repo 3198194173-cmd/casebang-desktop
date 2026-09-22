@@ -97,31 +97,19 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const selectedArtworkCategory = artworkCategories.find(entry => entry.id === artworkCategoryId) ?? null
   const selectedArtworkRows = useMemo(() => {
     if (!analysis) return []
-    if (!selectedArtworkCategory) return analysis.artworkRows
-    return analysis.artworkRows.filter(row => artworkCategoryMatches(row, selectedArtworkCategory.name))
+    const imageRows = analysis.artworkRows.filter(row => row.sheet.normalize('NFKC').includes('图片'))
+    const sourceRows = imageRows.length ? imageRows : analysis.artworkRows
+    if (!selectedArtworkCategory) return sourceRows
+    return sourceRows.filter(row => artworkCategoryMatches(row, selectedArtworkCategory.name))
   }, [analysis, selectedArtworkCategory])
-  const artworkNameChecks = useMemo(() => {
-    if (!analysis) return []
-    const sourceRows = analysis.artworkRows.length ? selectedArtworkRows : []
-    const source = sourceRows.length
-      ? [...new Map(sourceRows.map(row => [row.patternNameUpper || row.patternName || row.productCode, row])).values()].map(row => ({ key: row.id, patternName: row.patternNameUpper || row.patternName || row.productCode, productCode: row.productCode }))
-      : analysis.patternPlans.map(plan => ({ key: plan.key, patternName: plan.patternName, productCode: plan.productCode }))
-    return source.map(plan => {
-    const keys = [plan.patternName, plan.productCode].map(value => normalizeArtworkKey(value.trim())).filter(Boolean)
-    const matches = artworkEntries.filter(entry => {
-      const parsed = parseArtworkFilename(entry.name)
-      const productCode = normalizeArtworkKey(parsed.productCode ?? '')
-      const expectedProductCode = normalizeArtworkKey(plan.productCode)
-      return keys.some(key => parsed.normalizedPatternKey === key || (expectedProductCode && productCode === expectedProductCode))
-    })
-    return { key: plan.key, patternName: plan.patternName || plan.productCode || '图案名称待核实', matches }
-    })
-  }, [analysis, artworkEntries, selectedArtworkRows])
+  const artworkPdfParentIds = useMemo(() => new Set(artworkEntries.filter(isPdfArtworkEntry).map(entry => entry.parentId).filter((id): id is string => Boolean(id))), [artworkEntries])
   const artworkModels = useMemo(() => artworkFolders.filter(entry => {
     if (!selectedArtworkCategory) return false
     const path = `${entry.path ?? ''}/${entry.name}`.toLowerCase()
-    return path.includes(selectedArtworkCategory.name.toLowerCase()) && /苹果|iphone|pro|max|plus/i.test(entry.name)
-  }), [artworkFolders, selectedArtworkCategory])
+    // Only expose the leaf model folders that directly contain PDFs. A broad
+    // folder such as “苹果15” must not aggregate 苹果15PRO/苹果15PROMAX files.
+    return artworkPdfParentIds.has(entry.id) && path.includes(selectedArtworkCategory.name.toLowerCase()) && /苹果|iphone/i.test(entry.name)
+  }), [artworkFolders, artworkPdfParentIds, selectedArtworkCategory])
   const selectedArtworkModel = artworkModels.find(entry => entry.id === artworkModelId) ?? null
   const artworkModelEntryIds = useMemo(() => {
     if (!selectedArtworkModel) return new Set<string>()
@@ -135,6 +123,19 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     return path.includes(selectedArtworkModel.name.toLocaleLowerCase())
   }), [artworkEntries, artworkModelEntryIds, selectedArtworkModel])
   const indexedPdfCount = useMemo(() => artworkEntries.filter(isPdfArtworkEntry).length, [artworkEntries])
+  const artworkComparisons = useMemo(() => artworkPdfEntries.map(pdf => {
+    const parsed = parseArtworkFilename(pdf.name)
+    const pdfProductCode = normalizeArtworkKey(parsed.productCode ?? '')
+    const pdfPattern = parsed.normalizedPatternKey ?? ''
+    const row = selectedArtworkRows.find(candidate => {
+      const productCode = normalizeArtworkKey(candidate.productCode)
+      const pattern = normalizeArtworkKey(candidate.patternNameUpper || candidate.patternName)
+      const sameCode = Boolean(pdfProductCode && productCode && pdfProductCode === productCode)
+      const samePattern = Boolean(pdfPattern && pattern && pdfPattern === pattern)
+      return sameCode && samePattern || sameCode || samePattern
+    }) ?? null
+    return { pdf, parsed, row }
+  }), [artworkPdfEntries, selectedArtworkRows])
 
   const loginAccount = async (): Promise<void> => {
     setError(''); setMessage('已打开钉钉登录页面，正在等待确认…')
@@ -222,8 +223,9 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
             <p className="lc-artwork-hint">每个系列使用自己的文件夹链接；读取后再选择产品类别和样本机型，不需要绑定固定父目录。</p>
             {artworkTarget ? <><div className="lc-artwork-selected"><div><small>当前系列目录</small><strong>{artworkTarget.folderName}</strong></div><a href={artworkTarget.folderUrl} target="_blank" rel="noreferrer">打开钉盘检查</a></div>
               <div className="lc-artwork-selectors"><label>产品类别<select value={artworkCategoryId} onChange={event => { setArtworkCategoryId(event.target.value); setArtworkModelId('') }}><option value="">请选择类别目录</option>{artworkCategories.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><label>样本机型<select value={artworkModelId} onChange={event => setArtworkModelId(event.target.value)} disabled={!artworkCategoryId}><option value="">请选择机型目录</option>{artworkModels.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><small>{selectedArtworkModel ? `已定位 ${artworkPdfEntries.length} 个 PDF（远程索引共 ${indexedPdfCount} 个，按所选机型目录筛选）；共享表已筛选 ${selectedArtworkRows.length} 条图片数据（来源：条码名/图片分表）。` : '先选择类别和机型；可拆卸使用可拆卸/磁吸背盖图片分表，一体壳使用出镜壳/出片壳图片分表。'}</small><button disabled={busy || !artworkCategoryId || !artworkModelId} onClick={() => void run(saveArtworkSelection)}>保存类别和样本机型</button></div>
-              <div className="lc-artwork-checks">{artworkNameChecks.map(check => <article key={check.key} className={check.matches.length ? 'matched' : 'missing'}><div><strong>{check.patternName}</strong><small>{check.matches.length ? `找到 ${check.matches.length} 个同名候选` : '没有找到同名文件'}</small></div>{check.matches[0] ? <a href={check.matches[0].nodeUrl} target="_blank" rel="noreferrer">打开候选</a> : <span>待处理</span>}</article>)}</div>
-              <div className="lc-artwork-files"><header><strong>远程目录索引</strong><span>{artworkEntries.length} 项 · 只读取元数据，不下载整个文件夹</span></header>{(selectedArtworkModel ? artworkPdfEntries : artworkEntries).map(entry => { const parsed = parseArtworkFilename(entry.name); return <article key={entry.id}><div><strong>{entry.name}</strong><small>{parsed.productCode ? `${parsed.productCode} · ${parsed.normalizedPatternKey ?? '图案待解析'}` : (entry.path || entry.extension || entry.type)}</small></div><a href={entry.nodeUrl} target="_blank" rel="noreferrer">按需打开</a></article> })}</div><div className="lc-artwork-pending"><strong>下一步：PDF 图案 AI 核验</strong><p>文件名先与图片表“图片对应名称（大写）”匹配，再按需打开选定 PDF 的单页预览，与共享表截图交给视觉 AI 对比；名称相同不能直接判定图案一致。</p></div></> : <div className="lc-artwork-blocked"><strong>尚未读取本系列目录</strong><p>请粘贴当前系列的钉盘文件夹链接。读取成功后可以手工选择“可拆卸”等类别和具体机型。</p></div>}
+              <section className="lc-artwork-pdf-panel"><header><div><strong>已筛选的 PDF 图档</strong><small>只显示当前类别 / 机型目录下的文件，通常为 5 个。</small></div><span>{artworkPdfEntries.length} 个</span></header>{selectedArtworkModel && artworkPdfEntries.length ? <div className="lc-artwork-pdf-list">{artworkPdfEntries.map(entry => { const parsed = parseArtworkFilename(entry.name); return <article key={entry.id}><div><strong>{entry.name}</strong><small>{parsed.productCode ?? '未解析产品编码'} · {parsed.normalizedPatternKey ?? '未解析图案名称'}</small></div><a href={entry.nodeUrl} target="_blank" rel="noreferrer">打开 PDF</a></article> })}</div> : <div className="lc-artwork-empty">请选择类别和机型后显示对应 PDF。</div>}</section>
+              <section className="lc-artwork-compare"><header><div><strong>图片分表对比</strong><small>下方只展示与上面 PDF 名称或产品编码匹配的图片分表记录。</small></div><span>{artworkComparisons.filter(item => item.row).length} / {artworkComparisons.length} 行已匹配</span></header>{artworkComparisons.length ? <div className="lc-artwork-compare-table"><table><thead><tr><th>PDF 图档</th><th>图片分表截图</th><th>图片对应名称（大写）</th><th>产品编码 / 分表</th><th>核验</th></tr></thead><tbody>{artworkComparisons.map(({ pdf, parsed, row }) => <tr key={pdf.id}><td><strong>{pdf.name}</strong><small>{parsed.productCode ?? '未解析产品编码'} · {parsed.normalizedPatternKey ?? '未解析图案名称'}</small><a href={pdf.nodeUrl} target="_blank" rel="noreferrer">打开 PDF 预览</a></td><td>{row?.imageDataUrl ? <img className="lc-artwork-thumb" src={row.imageDataUrl} alt={row.patternNameUpper || row.patternName || '图片分表截图'} /> : <div className="lc-artwork-no-image">未读取到该行截图</div>}</td><td><strong>{row?.patternNameUpper || row?.patternName || parsed.normalizedPatternKey || '未匹配'}</strong><small>{row ? `${row.sheet} · 第 ${row.row} 行` : '图片分表中没有对应名称'}</small></td><td>{row?.productCode || parsed.productCode || '—'}<small>{row?.barcodeName || '—'}</small></td><td className={row ? 'matched' : 'missing'}>{row ? '已匹配，待图案核验' : '未匹配图片分表'}</td></tr>)}</tbody></table></div> : <div className="lc-artwork-empty">完成类别和机型选择后，这里只显示对应的 PDF 与图片分表行。</div>}</section>
+              <div className="lc-artwork-pending"><strong>下一步：PDF 图案 AI 核验</strong><p>每一行对应一个 PDF 和共享表图片截图；名称、产品编码用于定位，最终还需要打开 PDF 预览并进行图案视觉比对。</p></div></> : <div className="lc-artwork-blocked"><strong>尚未读取本系列目录</strong><p>请粘贴当前系列的钉盘文件夹链接。读取成功后可以手工选择“可拆卸”等类别和具体机型。</p></div>}
           </section>}
         {!!analysis.warnings.length && <details className="lc-warnings"><summary>工作簿提醒（{analysis.warnings.length}）</summary>{analysis.warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}
         {tab !== 'artwork' && <section className="lc-sheet-view"><div className="lc-sheet-heading"><div><strong>共享表预览</strong><small>按工作表查看，完整显示当前分表内容；图片工作表由第 3 步用于印刷图档比对。</small></div><span>{visibleRows.length} 行</span></div><nav className="lc-sheet-tabs" aria-label="共享表工作表">{sheetNames.map(name => <button key={name} className={name === (activeSheet || sheetNames[0]) ? 'active' : ''} onClick={() => setActiveSheet(name)}>{name}</button>)}</nav><div className="lc-table-wrap"><table><thead><tr><th>行号</th><th>物料名称</th><th>69 码 / 本次预览</th><th>物料编码 / 候选</th><th>核对结果</th></tr></thead><tbody>{visibleRows.map(row => { const result = resultIndex.get(row.id)!; const eligible = row.materialName.trim() && !row.issues.some(issue => issue.includes('业务字段含公式')); const pendingBefore = analysis.rows.slice(0, analysis.rows.indexOf(row)).filter(item => !item.barcode.trim() && item.materialName.trim() && !item.issues.some(issue => issue.includes('业务字段含公式'))).length; const barcodePreview = row.barcode || (eligible ? `${monthPrefix}${String(Number(analysis.barcodePlan.nextCode.slice(6)) + pendingBefore).padStart(7, '0')}` : '需人工核实'); return <tr key={row.id}><td>{row.row}</td><td>{row.materialName || '待补充：名称缺失'}</td><td>{barcodePreview}</td><td>{result.candidate || '暂不生成'}</td><td>{result.issues.join('；') || (result.status === 'existing' ? '已有编码，保留' : '可以写入')}</td></tr> })}</tbody></table>{!visibleRows.length && <div className="lc-sheet-empty">这是图片工作表或辅助工作表，业务字段不在此表显示；第 3 步会读取其中的图案名称与截图。</div>}</div></section>}

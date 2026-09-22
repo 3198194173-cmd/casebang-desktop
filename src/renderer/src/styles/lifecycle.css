@@ -124,10 +124,36 @@
 .lc-artwork-files article div { display:grid; gap:3px; }
 .lc-artwork-files article small { color:#74837f; font-size:9px; }
 .lc-artwork-files a,.lc-artwork-selected a { color:#1b6964; font-size:10px; font-weight:750; }
+.lc-artwork-pdf-panel,.lc-artwork-compare { display:grid; gap:10px; padding:14px; border:1px solid #dce5e2; border-radius:10px; background:#fff; }
+.lc-artwork-pdf-panel>header,.lc-artwork-compare>header { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+.lc-artwork-pdf-panel header strong,.lc-artwork-pdf-panel header small,.lc-artwork-compare header strong,.lc-artwork-compare header small { display:block; }
+.lc-artwork-pdf-panel header small,.lc-artwork-compare header small { margin-top:4px; color:#71817e; font-size:10px; }
+.lc-artwork-pdf-panel header>span,.lc-artwork-compare header>span { color:#1b6964; font-size:11px; font-weight:750; white-space:nowrap; }
+.lc-artwork-pdf-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+.lc-artwork-pdf-list article { display:flex; align-items:center; justify-content:space-between; gap:12px; min-width:0; padding:10px 12px; border:1px solid #e1e8e5; border-radius:8px; background:#f7faf9; }
+.lc-artwork-pdf-list article div { display:grid; gap:3px; min-width:0; }
+.lc-artwork-pdf-list article strong,.lc-artwork-pdf-list article small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lc-artwork-pdf-list article small { color:#74837f; font-size:9px; }
+.lc-artwork-pdf-list a,.lc-artwork-compare-table a { color:#1b6964; font-size:10px; font-weight:750; white-space:nowrap; }
+.lc-artwork-compare-table { overflow:auto; border:1px solid #d7e2df; border-radius:8px; }
+.lc-artwork-compare-table table { width:100%; min-width:930px; border-collapse:collapse; font-size:12px; }
+.lc-artwork-compare-table th { background:#edf5f2; color:#31574f; font-size:11px; text-align:left; }
+.lc-artwork-compare-table th,.lc-artwork-compare-table td { padding:10px; border-bottom:1px solid #e2e9e6; vertical-align:middle; }
+.lc-artwork-compare-table td:first-child { width:29%; }
+.lc-artwork-compare-table td:nth-child(2) { width:110px; text-align:center; }
+.lc-artwork-compare-table td:nth-child(3) { width:22%; }
+.lc-artwork-compare-table td>strong,.lc-artwork-compare-table td>small { display:block; }
+.lc-artwork-compare-table td>small { margin-top:4px; color:#74837f; font-size:9px; overflow-wrap:anywhere; }
+.lc-artwork-compare-table td:first-child>a { display:inline-block; margin-top:7px; }
+.lc-artwork-thumb { display:block; width:84px; height:84px; margin:auto; object-fit:contain; border:1px solid #d7e2df; border-radius:7px; background:#fff; }
+.lc-artwork-no-image { display:grid; place-items:center; width:84px; height:84px; margin:auto; padding:8px; border:1px dashed #cbdad6; border-radius:7px; color:#8a9995; font-size:10px; text-align:center; }
+.lc-artwork-compare-table td.matched { color:#26745c; font-weight:700; }
+.lc-artwork-compare-table td.missing { color:#a54f37; font-weight:700; }
+.lc-artwork-empty { padding:20px; border:1px dashed #d2dfdc; border-radius:8px; background:#f8fbfa; color:#71817e; font-size:11px; text-align:center; }
 .lc-artwork-blocked,.lc-artwork-pending { padding:18px; border:1px dashed #d2dfdc; border-radius:10px; background:#f8fbfa; }
 .lc-artwork-pending { border-color:#ead39a; background:#fffaf0; }
 .lc-artwork-blocked p,.lc-artwork-pending p { margin:6px 0 0; color:#71817e; font-size:11px; line-height:1.7; }
-@media(max-width:760px) { .lc-artwork-parent,.lc-artwork-selected { align-items:stretch; flex-direction:column; } .lc-artwork-target,.lc-artwork-checks,.lc-artwork-selectors { grid-template-columns:1fr; } }
+@media(max-width:760px) { .lc-artwork-parent,.lc-artwork-selected { align-items:stretch; flex-direction:column; } .lc-artwork-target,.lc-artwork-checks,.lc-artwork-selectors,.lc-artwork-pdf-list { grid-template-columns:1fr; } }
 .lc-handoff { display: grid; gap: 18px; padding: 22px; }
 .lc-handoff h3 { margin: 5px 0 7px; font-size: 20px; }
 .lc-handoff p { margin: 0; color: #71817e; font-size: 12px; line-height: 1.7; }

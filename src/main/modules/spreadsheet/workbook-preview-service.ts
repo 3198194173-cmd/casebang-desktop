@@ -208,7 +208,7 @@ function parseRows(worksheetXml: string, sharedStrings: string[], generatedImage
   }))
 }
 
-async function generatedImageMap(filePath: string, entries: PackageEntryRecord[], worksheetPath: string, worksheetXml: string, startRow = 1, endRow = Number.MAX_SAFE_INTEGER, metadataOnly = false): Promise<Map<string, string>> {
+export async function generatedImageMap(filePath: string, entries: PackageEntryRecord[], worksheetPath: string, worksheetXml: string, startRow = 1, endRow = Number.MAX_SAFE_INTEGER, metadataOnly = false): Promise<Map<string, string>> {
   const result = new Map<string, string>()
   const targets: Array<{ address: string; imagePath: string }> = []
   const resolvePart = (base: string, target: string) => target.startsWith('/') ? target.slice(1) : posix.normalize(posix.join(posix.dirname(base), target))

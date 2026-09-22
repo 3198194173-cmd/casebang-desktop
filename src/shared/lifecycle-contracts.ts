@@ -40,6 +40,8 @@ export interface ArtworkSheetRow {
   patternName: string
   patternNameUpper: string
   artworkFileName: string
+  /** Thumbnail of the embedded workbook image anchored on this row, when available. */
+  imageDataUrl: string | null
 }
 export interface LifecycleDraft {
   id: string

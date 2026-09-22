@@ -26,7 +26,7 @@ export class DingTalkDriveError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly details: { operation?: string; httpStatus?: number; remoteCode?: string } = {}
+    readonly details: { operation?: string; httpStatus?: number; remoteCode?: string; requiredScopes?: string[] } = {}
   ) { super(message); this.name = 'DingTalkDriveError' }
 }
 
@@ -110,7 +110,10 @@ export class DingTalkDriveClient {
     try {
       return await this.listAllFlat(token, unionId, spaceId)
     } catch (error) {
-      if (error instanceof DingTalkDriveError && error.code === 'dingtalk_drive_permission_denied') throw error
+      // listAll is an optional bulk endpoint. Some tenants grant the ordinary
+      // child-list endpoint but deny listAll; fall back before reporting a
+      // permission error so personal folders remain readable with least privilege.
+      if (error instanceof DingTalkDriveError && error.code === 'dingtalk_drive_permission_denied' && error.details.operation !== 'list_all_dentries') throw error
       // Some DingTalk tenants do not expose listAll even though the ordinary
       // dentry-list API is available. Fall back to walking the folder tree.
       return this.listAllRecursively(token, unionId, spaceId)
@@ -164,7 +167,7 @@ export class DingTalkDriveClient {
 
   private async json<T>(url: string | URL, init: RequestInit, operation = 'request'): Promise<T> {
     const response = await this.fetcher(url, { ...init, signal: AbortSignal.timeout(30_000) })
-    const body = await response.json().catch(() => undefined) as (T & { code?: string; message?: string }) | undefined
+    const body = await response.json().catch(() => undefined) as (T & { code?: string; message?: string; accessdenieddetail?: { requiredScopes?: string[] }; AccessDeniedDetail?: { requiredScopes?: string[] } }) | undefined
     if (!response.ok || !body) {
       const remoteCode = body?.code ?? ''
       const normalized = remoteCode.toLowerCase()
@@ -174,7 +177,8 @@ export class DingTalkDriveClient {
       throw new DingTalkDriveError(code, body?.message || `钉盘接口调用失败（HTTP ${response.status}）。`, {
         operation,
         httpStatus: response.status,
-        remoteCode: remoteCode || undefined
+        remoteCode: remoteCode || undefined,
+        requiredScopes: body?.accessdenieddetail?.requiredScopes ?? body?.AccessDeniedDetail?.requiredScopes
       })
     }
     return body

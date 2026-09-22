@@ -38,6 +38,7 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
         operation: error instanceof DingTalkDriveError ? error.details.operation : undefined,
         httpStatus: error instanceof DingTalkDriveError ? error.details.httpStatus : undefined,
         remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined,
+        requiredScopes: error instanceof DingTalkDriveError ? error.details.requiredScopes : undefined,
         detail: error instanceof Error ? error.message : String(error)
       }, 'Personal artwork source binding failed')
       return reply.code(code === 'artwork_source_not_folder' ? 400 : code.startsWith('dingtalk_personal_') ? 409 : 502).send({ error: code })
@@ -59,6 +60,7 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
         operation: error instanceof DingTalkDriveError ? error.details.operation : undefined,
         httpStatus: error instanceof DingTalkDriveError ? error.details.httpStatus : undefined,
         remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined,
+        requiredScopes: error instanceof DingTalkDriveError ? error.details.requiredScopes : undefined,
         detail: error instanceof Error ? error.message : String(error)
       }, 'Personal artwork source sync failed')
       return reply.code(code.startsWith('dingtalk_personal_') ? 409 : 502).send({ error: code })

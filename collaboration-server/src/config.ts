@@ -113,7 +113,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
       agentId: value.DINGTALK_AGENT_ID ?? '',
       clientSecret: dingtalkClientSecret,
       userTokenEncryptionKey: dingtalkUserTokenEncryptionKey,
-      userScopes: value.DINGTALK_USER_SCOPES?.trim() || 'openid Storage.File.Read'
+      // `Storage.File.Read` is an application permission. User Access Tokens
+      // need the delegated/personal Drive scope instead. Keep this configurable
+      // for tenants that expose a different scope, but use DingTalk's official
+      // delegated file-read scope by default.
+      userScopes: value.DINGTALK_USER_SCOPES?.trim() || 'openid Files.Read'
     },
     wps: {
       enabled: wpsRequired,

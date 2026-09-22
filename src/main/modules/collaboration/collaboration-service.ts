@@ -453,7 +453,7 @@ function serverError(code?: string, status?: number): string {
     artwork_source_not_bound: '当前下游账号尚未绑定印刷图档目录。',
     dingtalk_identity_incomplete: '当前登录会话缺少钉钉用户标识，请退出后重新登录。',
     dingtalk_drive_failure: '钉盘接口调用失败，请检查应用的钉盘读取权限。',
-  dingtalk_drive_permission_denied: '钉钉拒绝读取个人空间：请在开发者后台为企业内部应用开通“钉盘应用盘空间读权限”和“企业存储文件读权限”。',
+  dingtalk_drive_permission_denied: '钉钉拒绝读取个人空间：当前使用的是用户 Access Token，请在开发者后台“个人权限/委托权限”开通 Files.Read，并退出 CASEBANG 后重新登录授权；应用权限 Storage.File.Read 不能替代它。',
   dingtalk_personal_grant_required: '当前下游账号尚未完成个人钉盘授权，请退出后重新登录钉钉。',
   dingtalk_personal_token_refresh_failed: '个人钉盘授权已失效，请退出后重新登录钉钉授权。',
   dingtalk_personal_grant_corrupt: '个人钉盘授权凭据异常，请退出后重新登录钉钉授权。',

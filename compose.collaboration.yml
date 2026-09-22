@@ -40,12 +40,14 @@ services:
       DB_USER: casebang
       DB_PASSWORD_FILE: /run/secrets/postgres_password
       DINGTALK_CLIENT_SECRET_FILE: /run/secrets/dingtalk_client_secret
+      DINGTALK_USER_TOKEN_ENCRYPTION_KEY_FILE: /run/secrets/dingtalk_user_token_key
       WPS_APP_SECRET_FILE: /run/secrets/wps_app_secret
       COS_SECRET_ID_FILE: /run/secrets/cos_secret_id
       COS_SECRET_KEY_FILE: /run/secrets/cos_secret_key
     secrets:
       - postgres_password
       - dingtalk_client_secret
+      - dingtalk_user_token_key
       - wps_app_secret
       - cos_secret_id
       - cos_secret_key
@@ -74,6 +76,8 @@ secrets:
     file: ./deploy/secrets/postgres_password.txt
   dingtalk_client_secret:
     file: ./deploy/secrets/dingtalk_client_secret.txt
+  dingtalk_user_token_key:
+    file: ./deploy/secrets/dingtalk_user_token_key.txt
   wps_app_secret:
     file: ./deploy/secrets/wps_app_secret.txt
   cos_secret_id:

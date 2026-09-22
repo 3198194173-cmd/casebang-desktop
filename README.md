@@ -1,6 +1,6 @@
 # CASEBANG 表格编码自动化
 
-软件统一主流程见：[主流程与页面重构](docs/SOFTWARE_WORKFLOW_REDESIGN.md)。详细下游规则见：[建档任务闭环：项目需求与实施设计](docs/MATERIAL_LIFECYCLE_PROJECT.md)。
+软件统一主流程见：[主流程与页面重构](docs/SOFTWARE_WORKFLOW_REDESIGN.md)。详细下游规则见：[建档任务闭环：项目需求与实施设计](docs/MATERIAL_LIFECYCLE_PROJECT.md)。个人“我的文档”印刷图档接入见：[个人钉盘 OAuth 接入项目设计](docs/DINGTALK_PERSONAL_DRIVE_OAUTH_PROJECT.md)。
 
 面向 Windows 的 Electron 桌面应用。当前版本先建立可扩展的软件骨架、基础表管理、任务入口、受控 IPC 和第三方连接器框架。
 

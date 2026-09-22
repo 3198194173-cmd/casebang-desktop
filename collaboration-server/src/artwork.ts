@@ -4,6 +4,7 @@ import type pg from 'pg'
 import { z } from 'zod'
 import { authenticatedUser, type SessionUserRow } from './auth.js'
 import { DingTalkDriveClient, DingTalkDriveError, type DingTalkDentry } from './dingtalk-drive.js'
+import { DingTalkUserGrantError, DingTalkUserGrantStore } from './dingtalk-user-grant.js'
 
 const bindSchema = z.object({ folderUrl: z.string().url().max(1000) }).strict()
 const targetSchema = z.object({ folderUrl: z.string().url().max(1000) }).strict()
@@ -14,7 +15,7 @@ interface SourceRow { id: string; folder_url: string; node_id: string; space_id:
 interface EntryRow { dentry_id: string; dentry_uuid: string | null; parent_id: string | null; name: string; entry_type: string; extension: string | null; size_bytes: string | number | null; version: string | number | null; path: string | null; modified_at: Date | null }
 interface TargetRow { work_item_id: string; folder_url: string; node_id: string; dentry_id: string; folder_name: string; bound_at: Date }
 
-export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive: DingTalkDriveClient): void {
+export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive: DingTalkDriveClient, grants: DingTalkUserGrantStore): void {
   app.get('/api/v1/dingtalk/artwork-source', async (request, reply) => {
     const actor = await downstreamUser(request, reply, pool); if (!actor) return
     const source = await loadSource(pool, actor)
@@ -28,10 +29,10 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
     const nodeId = parseNodeId(input.data.folderUrl)
     if (!nodeId) return reply.code(400).send({ error: 'invalid_artwork_source' })
     try {
-      const indexed = await resolveAndStore(pool, drive, actor, input.data.folderUrl, nodeId)
+      const indexed = await resolveAndStore(pool, drive, grants, actor, input.data.folderUrl, nodeId)
       return reply.header('cache-control', 'no-store').send({ source: publicSource(indexed) })
     } catch (error) {
-      const code = error instanceof DingTalkDriveError ? error.code : 'dingtalk_drive_failure'
+      const code = error instanceof DingTalkDriveError || error instanceof DingTalkUserGrantError ? error.code : 'dingtalk_drive_failure'
       request.log.warn({
         code,
         operation: error instanceof DingTalkDriveError ? error.details.operation : undefined,
@@ -39,7 +40,7 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
         remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined,
         detail: error instanceof Error ? error.message : String(error)
       }, 'Personal artwork source binding failed')
-      return reply.code(code === 'artwork_source_not_folder' ? 400 : 502).send({ error: code })
+      return reply.code(code === 'artwork_source_not_folder' ? 400 : code.startsWith('dingtalk_personal_') ? 409 : 502).send({ error: code })
     }
   })
 
@@ -48,10 +49,10 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
     const current = await loadSource(pool, actor)
     if (!current) return reply.code(404).send({ error: 'artwork_source_not_bound' })
     try {
-      const indexed = await resolveAndStore(pool, drive, actor, current.folder_url, current.node_id)
+      const indexed = await resolveAndStore(pool, drive, grants, actor, current.folder_url, current.node_id)
       return reply.header('cache-control', 'no-store').send({ source: publicSource(indexed) })
     } catch (error) {
-      const code = error instanceof DingTalkDriveError ? error.code : 'dingtalk_drive_failure'
+      const code = error instanceof DingTalkDriveError || error instanceof DingTalkUserGrantError ? error.code : 'dingtalk_drive_failure'
       await pool.query(`UPDATE artwork_sources SET status='error',last_error=$3,updated_at=now() WHERE organization_id=$1 AND user_id=$2`, [actor.organization_id, actor.id, code])
       request.log.warn({
         code,
@@ -60,7 +61,7 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
         remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined,
         detail: error instanceof Error ? error.message : String(error)
       }, 'Personal artwork source sync failed')
-      return reply.code(502).send({ error: code })
+      return reply.code(code.startsWith('dingtalk_personal_') ? 409 : 502).send({ error: code })
     }
   })
 
@@ -139,8 +140,9 @@ async function downstreamUser(request: Parameters<typeof authenticatedUser>[0], 
   return actor
 }
 
-async function resolveAndStore(pool: pg.Pool, drive: DingTalkDriveClient, actor: SessionUserRow, folderUrl: string, nodeId: string): Promise<SourceRow> {
-  const resolved = await drive.resolvePersonalFolder(actor.dingtalk_union_id!, nodeId)
+async function resolveAndStore(pool: pg.Pool, drive: DingTalkDriveClient, grants: DingTalkUserGrantStore, actor: SessionUserRow, folderUrl: string, nodeId: string): Promise<SourceRow> {
+  const accessToken = await grants.accessToken(actor.id, actor.organization_id)
+  const resolved = await drive.resolvePersonalFolderForUser(accessToken, actor.dingtalk_union_id!, nodeId)
   const sourceId = randomUUID()
   const files = resolved.descendants.filter(entry => !['folder', 'FOLDER'].includes(entry.type))
   const folders = resolved.descendants.length - files.length

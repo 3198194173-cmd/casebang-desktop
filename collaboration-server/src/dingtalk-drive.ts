@@ -35,6 +35,14 @@ export class DingTalkDriveClient {
 
   async resolvePersonalFolder(unionId: string, nodeId: string): Promise<ResolvedArtworkFolder> {
     const token = await this.appToken()
+    return this.resolveWithToken(token, unionId, nodeId)
+  }
+
+  async resolvePersonalFolderForUser(accessToken: string, unionId: string, nodeId: string): Promise<ResolvedArtworkFolder> {
+    return this.resolveWithToken(accessToken, unionId, nodeId)
+  }
+
+  private async resolveWithToken(token: string, unionId: string, nodeId: string): Promise<ResolvedArtworkFolder> {
     const spaces = await this.listSpaces(token, unionId)
     let lastFailure: DingTalkDriveError | null = null
     for (const space of spaces) {

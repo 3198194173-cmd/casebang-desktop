@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type pg from 'pg'
 import type { ServerConfig } from './config.js'
 import { DingTalkOAuthClient, DingTalkOAuthError } from './dingtalk-oauth.js'
+import { DingTalkUserGrantStore } from './dingtalk-user-grant.js'
 
 const ATTEMPT_TTL_MS = 10 * 60 * 1000
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -53,7 +54,8 @@ export function registerAuthRoutes(
   app: FastifyInstance,
   config: ServerConfig,
   pool: pg.Pool,
-  oauth: DingTalkOAuthClient = new DingTalkOAuthClient(config)
+  oauth: DingTalkOAuthClient = new DingTalkOAuthClient(config),
+  grants: DingTalkUserGrantStore = new DingTalkUserGrantStore(config, pool)
 ): void {
   app.get('/login', async (_request, reply) => {
     return reply.header('cache-control', 'no-store').type('text/html').send(
@@ -108,7 +110,10 @@ export function registerAuthRoutes(
     }
 
     try {
-      const identity = await oauth.authenticate(authCode)
+      const authenticated = await oauth.authenticateWithGrant(authCode)
+      const identity = authenticated.identity
+      let savedOrganizationId = ''
+      let savedUserId = ''
       const client = await pool.connect()
       try {
         await client.query('BEGIN')
@@ -139,12 +144,15 @@ export function registerAuthRoutes(
         )
         const actualUserId = user.rows[0]?.id
         if (!actualUserId) throw new Error('user_upsert_failed')
+        savedOrganizationId = actualOrganizationId
+        savedUserId = actualUserId
         const updated = await client.query(
           `UPDATE auth_attempts SET status='succeeded',organization_id=$2,user_id=$3,completed_at=now()
            WHERE id=$1 AND status='pending' AND expires_at>now()`,
           [attempt.id, actualOrganizationId, actualUserId]
         )
         if (updated.rowCount !== 1) throw new Error('auth_attempt_no_longer_pending')
+        await grants.save(savedUserId, savedOrganizationId, authenticated.grant, client)
         await client.query('COMMIT')
       } catch (error) {
         await client.query('ROLLBACK')

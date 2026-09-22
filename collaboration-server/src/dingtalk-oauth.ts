@@ -8,6 +8,10 @@ const MEMBER_LOOKUP_ENDPOINT = 'https://oapi.dingtalk.com/topapi/user/getbyunion
 
 interface UserTokenResponse {
   accessToken?: string
+  refreshToken?: string
+  expireIn?: number
+  tokenType?: string
+  scope?: string | string[]
 }
 
 interface UserProfileResponse {
@@ -33,6 +37,14 @@ export interface DingTalkIdentity {
   openId: string | null
   displayName: string
   avatarUrl: string | null
+}
+
+export interface DingTalkUserGrant {
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: Date | null
+  tokenType: string | null
+  scopes: string[]
 }
 
 export class DingTalkOAuthError extends Error {
@@ -61,6 +73,11 @@ export class DingTalkOAuthClient {
   }
 
   async authenticate(authCode: string): Promise<DingTalkIdentity> {
+    const result = await this.authenticateWithGrant(authCode)
+    return result.identity
+  }
+
+  async authenticateWithGrant(authCode: string): Promise<{ identity: DingTalkIdentity; grant: DingTalkUserGrant }> {
     const token = await this.requestJson<UserTokenResponse>(USER_TOKEN_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -102,11 +119,20 @@ export class DingTalkOAuthClient {
     }
 
     return {
-      userId: member.result.userid,
-      unionId: profile.unionId,
-      openId: profile.openId ?? null,
-      displayName: profile.nick,
-      avatarUrl: profile.avatarUrl ?? null
+      grant: {
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken ?? null,
+        expiresAt: typeof token.expireIn === 'number' ? new Date(Date.now() + token.expireIn * 1000) : null,
+        tokenType: token.tokenType ?? null,
+        scopes: normalizeScopes(token.scope)
+      },
+      identity: {
+        userId: member.result.userid,
+        unionId: profile.unionId,
+        openId: profile.openId ?? null,
+        displayName: profile.nick,
+        avatarUrl: profile.avatarUrl ?? null
+      }
     }
   }
 
@@ -118,4 +144,10 @@ export class DingTalkOAuthClient {
     }
     return body
   }
+}
+
+function normalizeScopes(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) return value.filter(Boolean)
+  if (typeof value === 'string') return value.split(/[ ,]+/).map(item => item.trim()).filter(Boolean)
+  return ['openid']
 }

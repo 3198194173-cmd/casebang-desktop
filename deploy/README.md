@@ -27,6 +27,8 @@ mkdir -p deploy/secrets
 chmod 700 deploy/secrets
 openssl rand -base64 36 > deploy/secrets/postgres_password.txt
 chmod 600 deploy/secrets/postgres_password.txt
+openssl rand -base64 32 > deploy/secrets/dingtalk_user_token_key.txt
+chmod 600 deploy/secrets/dingtalk_user_token_key.txt
 ```
 
 编辑 `deploy/collaboration.env`，填写 CorpId、Client ID、AgentId。首次启动保持 `DINGTALK_STREAM_ENABLED=false`。

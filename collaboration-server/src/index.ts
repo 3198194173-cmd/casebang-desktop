@@ -9,6 +9,7 @@ import { registerCollaborationRoutes } from './collaboration.js'
 import { registerWebOfficeRoutes } from './weboffice.js'
 import { registerArtworkRoutes } from './artwork.js'
 import { DingTalkDriveClient } from './dingtalk-drive.js'
+import { DingTalkUserGrantStore } from './dingtalk-user-grant.js'
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -23,10 +24,11 @@ async function main(): Promise<void> {
     storage: () => storage.check(),
     stream
   })
-  registerAuthRoutes(app, config, pool)
+  const grants = new DingTalkUserGrantStore(config, pool)
+  registerAuthRoutes(app, config, pool, undefined, grants)
   registerCollaborationRoutes(app, pool, storage)
   registerWebOfficeRoutes(app, config, pool, storage)
-  registerArtworkRoutes(app, pool, new DingTalkDriveClient(config))
+  registerArtworkRoutes(app, pool, new DingTalkDriveClient(config), grants)
   const close = async (signal: string): Promise<void> => {
     app.log.info({ signal }, '正在停止中央协同服务')
     stream.stop()

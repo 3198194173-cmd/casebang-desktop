@@ -31,6 +31,8 @@ const environmentSchema = z.object({
   DINGTALK_AGENT_ID: z.string().optional(),
   DINGTALK_CLIENT_SECRET: z.string().optional(),
   DINGTALK_CLIENT_SECRET_FILE: z.string().optional(),
+  DINGTALK_USER_TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  DINGTALK_USER_TOKEN_ENCRYPTION_KEY_FILE: z.string().optional(),
   WPS_WEBOFFICE_ENABLED: booleanValue,
   WPS_APP_ID: z.string().optional(),
   WPS_APP_SECRET: z.string().optional(),
@@ -46,7 +48,7 @@ export interface ServerConfig {
   cos: { enabled: boolean; bucket: string; region: string; secretId: string; secretKey: string }
   migrationsRoot: string
   database: { host: string; port: number; name: string; user: string; password: string; ssl: boolean }
-  dingtalk: { enabled: boolean; corpId: string; clientId: string; agentId: string; clientSecret: string }
+  dingtalk: { enabled: boolean; corpId: string; clientId: string; agentId: string; clientSecret: string; userTokenEncryptionKey: string }
   wps: { enabled: boolean; appId: string; appSecret: string }
 }
 
@@ -74,6 +76,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
   const dingtalkRequired = value.DINGTALK_STREAM_ENABLED
   const dingtalkClientSecret = dingtalkRequired
     ? secret('DINGTALK_CLIENT_SECRET', value.DINGTALK_CLIENT_SECRET, value.DINGTALK_CLIENT_SECRET_FILE, production)
+    : ''
+  const dingtalkUserTokenEncryptionKey = dingtalkRequired
+    ? (value.DINGTALK_USER_TOKEN_ENCRYPTION_KEY_FILE
+      ? secret('DINGTALK_USER_TOKEN_ENCRYPTION_KEY', value.DINGTALK_USER_TOKEN_ENCRYPTION_KEY, value.DINGTALK_USER_TOKEN_ENCRYPTION_KEY_FILE, production)
+      : value.DINGTALK_USER_TOKEN_ENCRYPTION_KEY?.trim() ?? '')
     : ''
   if (dingtalkRequired && !(value.DINGTALK_CORP_ID && value.DINGTALK_CLIENT_ID && value.DINGTALK_AGENT_ID)) {
     throw new Error('启用钉钉 Stream 时必须配置 CorpId、ClientId 和 AgentId')
@@ -103,7 +110,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
       corpId: value.DINGTALK_CORP_ID ?? '',
       clientId: value.DINGTALK_CLIENT_ID ?? '',
       agentId: value.DINGTALK_AGENT_ID ?? '',
-      clientSecret: dingtalkClientSecret
+      clientSecret: dingtalkClientSecret,
+      userTokenEncryptionKey: dingtalkUserTokenEncryptionKey
     },
     wps: {
       enabled: wpsRequired,

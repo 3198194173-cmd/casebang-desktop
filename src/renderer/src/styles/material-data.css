@@ -26,12 +26,23 @@
 .md-pagination { display:flex; justify-content:flex-end; align-items:center; gap:12px; padding-top:14px; }
 .md-model-layout { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(340px,.65fr); gap:18px; align-items:start; }
 .md-model-search { margin:16px 0 10px; }
-.md-model-rows { display:grid; gap:8px; max-height:650px; overflow:auto; padding-right:4px; }
-.md-model-rows>button { display:grid; grid-template-columns:75px minmax(170px,1fr) 48px; gap:5px 12px; align-items:center; text-align:left; }
+.md-brand-filters { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:14px; }
+.md-brand-filters button { min-height:34px; padding:6px 10px; font-size:12px; }
+.md-brand-filters button[aria-pressed=true] { border-color:#235d65; background:#e9f5f2; color:#174e52; font-weight:700; }
+.md-brand-filters span { margin-left:5px; color:#69818a; }
+.md-model-groups { display:grid; gap:16px; max-height:650px; overflow:auto; padding-right:4px; }
+.md-model-group { border:1px solid #d8e3e5; border-radius:10px; overflow:hidden; }
+.md-model-group>header { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; background:#eff7f5; }
+.md-model-group>header strong { font-size:15px; color:#174e52; }
+.md-model-group>header span { color:#526e75; font-size:12px; }
+.md-model-rows { display:grid; gap:0; }
+.md-model-rows>button { display:grid; grid-template-columns:minmax(170px,1fr) 48px; gap:5px 12px; align-items:center; text-align:left; border:0; border-top:1px solid #e3ebed; border-radius:0; }
+.md-model-rows>button:hover { background:#f7faf9; }
 .md-model-rows>button.selected { border-color:#29857b; background:#eff8f5; }
-.md-model-rows span,.md-model-rows small { color:#667b83; }
+.md-model-rows small { color:#667b83; }
 .md-model-rows code { justify-self:center; font-size:16px; font-weight:800; color:#155d64; }
-.md-model-rows small { grid-column:2/-1; overflow-wrap:anywhere; }
+.md-model-rows small { grid-column:1/-1; overflow-wrap:anywhere; }
+.md-model-empty { padding:24px 0; text-align:center; }
 .md-model-form { display:grid; gap:15px; position:sticky; top:0; }
 .md-model-form label { display:grid; gap:7px; font-weight:700; }
 .md-model-form textarea { min-height:96px; resize:vertical; }

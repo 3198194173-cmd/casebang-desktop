@@ -29,9 +29,12 @@ describe('supplement model boundaries', () => {
       await settings.setLastMasterImageDirectory('C:/example/images')
       await settings.setMaterialModels([{ brand: 'AP', code: '98', name: 'iP Future Pro', aliases: ['Future Pro'] }])
       expect(await new SettingsRepository(file).getMaterialMasterPath()).toBe('C:/example/master.xlsx')
-      expect(await new SettingsRepository(file).getMaterialModels()).toEqual([
+      const restored = await new SettingsRepository(file).getMaterialModels()
+      expect(restored).toHaveLength(73)
+      expect(restored.find(model => model.brand === 'AP' && model.code === '98')).toEqual(
         { brand: 'AP', code: '98', name: 'iP Future Pro', aliases: ['Future Pro'] }
-      ])
+      )
+      expect(restored.find(model => model.brand === 'HW' && model.code === '51')?.aliases).toContain('PX Max')
       expect(await settings.getBaseFilePaths()).toEqual({})
     } finally { await rm(dir, { recursive: true, force: true }) }
   })

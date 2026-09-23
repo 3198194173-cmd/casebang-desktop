@@ -1,10 +1,9 @@
-import type { BarcodeModelSetting, BarcodePricePair, DomesticPatternNameRecord, ProductImageMappingIndex, TaskDraftInput } from '@shared/contracts'
+import type { BarcodeModelSetting, BarcodePricePair, DomesticPatternNameRecord, TaskDraftInput } from '@shared/contracts'
 import type { EncodingPreviewResult, EncodingPreviewRow } from '@shared/coding-contracts'
 import type { GenerationQualityCheck, GenerationWorkspaceData, PreviewCell, PreviewSheet, PreviewWorkbook } from '@shared/generation-contracts'
 import type { CropBox, ImageAnalysisResult } from '@shared/image-contracts'
 import { buildSeriesCodeReservePlan, resolveNextSeriesRecord } from '@shared/series-code'
 import { isPairedWireless, wirelessPrices, phoneModelBrand, productBusinessSpecification, sortBarcodeModelsByReference } from '@shared/product-business-rules'
-import { buildProductImageMapping } from './product-image-mapping-builder'
 
 const USED_CODE_HEADERS = ['磁吸背盖', '出镜壳/出片壳', '出彩壳', '磁吸支架背盖', '磁吸气囊支架', 'CP002/MP16磁吸充电宝', 'CP006自带线移动电源', 'iPad保护壳', 'Macbook保护壳', '卡包', '奇趣礼盒', '奇趣壳', '奇趣气囊支架', '奇趣挂绳', '镜头框', '镜头膜']
 
@@ -16,7 +15,7 @@ interface GeneratedProductRow {
   fileName: string
 }
 
-export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAnalysisResult, encoding: EncodingPreviewResult, domesticNames: DomesticPatternNameRecord[], mappingIndex?: ProductImageMappingIndex): GenerationWorkspaceData {
+export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAnalysisResult, encoding: EncodingPreviewResult, domesticNames: DomesticPatternNameRecord[]): GenerationWorkspaceData {
   const overview = analysis.crops.find((crop) => crop.role === 'series-overview')
   const products = orderProductsForTemplate(analysis.crops.filter((crop) => crop.role !== 'series-overview'))
   const encodingByCrop = new Map(encoding.rows.map((row) => [row.cropId, row]))
@@ -57,10 +56,6 @@ export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAn
     { id: 'domestic-naming', name: '国内命名表', role: '对应“可拆卸+其他”：上图下名，首列保留全系列主图；图案组只取首图。', sheets: [buildDomesticNamingSheet(overview, domesticDisplayCrops(products), seriesDisplay, domesticNames)] },
     { id: 'generated-product', name: '新建产品表', role: '先生成图片表，再由图片表条码名组合机型生成条码表。', sheets: [buildProductSheet(form, overview, productRows, seriesCode, seriesUpper), buildBarcodeSheet(form, productRows)] }
   ] satisfies PreviewWorkbook[]).map((workbook) => ({ ...workbook, sheets: workbook.sheets.map(sealSheetWritePlan) }))
-  if (mappingIndex) {
-    const mapping = buildProductImageMapping(form, seriesCode, productRows, mappingIndex)
-    if (mapping.sheets.length) workbooks.push({ ...mapping, sheets: mapping.sheets.map(sealSheetWritePlan) })
-  }
   const codes = productRows.map((row) => row.code).filter(Boolean)
   const enabledModels = orderedBarcodeModels(form)
   const barcodeRows = buildBarcodeRows(form, productRows)
@@ -85,7 +80,7 @@ export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAn
     check('used-code-columns', '已使用编码按类别列完整写入', [...expectedUsedCodeColumns].every((column) => plannedUsedCodeColumns.has(column)), `本次涉及 ${expectedUsedCodeColumns.size} 个编码类别列，生成计划已逐列核对。`),
     check('sealed-write-plan', '预览与覆盖共用坐标计划', workbooks.every((workbook) => workbook.sheets.every(hasSealedWritePlan)), '04 中每个绿色单元格均已锁定 Excel 坐标；05 只能执行这些坐标。'),
     check('generated-product-sheets', '新建产品表结构完整', workbooks.find((item) => item.id === 'generated-product')?.sheets.map((sheet) => sheet.name).join('/') === '图片/条码', `先生成图片表 ${productRows.length} 行，再生成条码表 ${buildBarcodeRows(form, productRows).length} 行。`),
-    check('three-outputs', '输出工作簿已建立', workbooks.length >= 3 && barcodeSheets.length === 2, `已建立 ${workbooks.length} 个工作簿预览；K3 仅接收本次产品图片和名称。`)
+    check('three-outputs', '输出工作簿已建立', workbooks.length === 3 && barcodeSheets.length === 2, '已建立 A 条码参考、国内命名表和新建产品表 3 个工作簿预览。')
   ]
   return { title: `${form.seriesNameEn}#${seriesCode}系列-表格更新`, generatedAt: new Date().toISOString(), workbooks, checks }
 }

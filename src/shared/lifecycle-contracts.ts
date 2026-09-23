@@ -1,4 +1,5 @@
-export type MaterialBrand = 'AP' | 'SA' | 'HW'
+export type MaterialBrand = 'AP' | 'SA' | 'HW' | 'MI' | 'HON' | 'VV' | 'OP' | 'IQ' | '1+' | 'RM' | 'GG'
+export type MaterialCodeBrand = 'AP' | 'SA' | 'HW' | 'MI' | 'VV' | 'OP' | 'IQ' | '1+' | 'GG'
 export type BarcodeSource = 'internal_monthly' | 'platform'
 export type LifecycleSource = 'new-series' | 'new-products' | 'new-models' | 'manual'
 export interface MaterialIdentity {
@@ -8,7 +9,7 @@ export interface MaterialIdentity {
   patternName: string
   productCode: string
   modelName: string
-  brand: MaterialBrand | null
+  brand: MaterialCodeBrand | null
   modelCode: string | null
   frame: 'normal' | 'silver'
   variant: string

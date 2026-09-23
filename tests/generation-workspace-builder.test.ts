@@ -33,6 +33,7 @@ describe('generated product workbook business flow', () => {
       masterImagePath: 'C:\\images\\master.png'
     }
     const workspace = buildGenerationWorkspace(form, analysisFixture(), encodingFixture(), [])
+    expect(workspace.workbooks.map((book) => book.id)).toEqual(['barcode-reference', 'domestic-naming', 'generated-product'])
     const generated = workspace.workbooks.find((item) => item.id === 'generated-product')
 
     expect(generated?.sheets.map((sheet) => sheet.name)).toEqual(['图片', '条码'])
@@ -160,6 +161,7 @@ describe('generated product workbook business flow', () => {
         { sheet: '可拆卸+其他', nameRow: 100, appendColumn: 39, names: [] },
         { code: 'K1', englishName: 'Test Series', chineseName: '测试', referenceRow: 10, referenceSheet: '系列名对应代码', referenceAppendColumn: 4 },
         new Map(analysis.crops.map((crop) => [crop.id, crop.productCategory])), analysis)
+      expect(workspace.workbooks.map((book) => book.id)).toEqual(['barcode-reference', 'domestic-naming', 'generated-product'])
       expect(workspace.checks.filter((check) => !check.passed)).toEqual([])
       const request = exportGenerationWorkbookInputSchema.parse({
         suggestedName: 'order', templateName: form.templateName, workspace,

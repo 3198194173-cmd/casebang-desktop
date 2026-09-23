@@ -107,7 +107,6 @@ export interface AppSnapshot {
   productTypes: string[]
   seriesTranslations: SeriesTranslation[]
   domesticPatternNames: DomesticPatternNameRecord[]
-  productImageMappingIndex?: ProductImageMappingIndex
 }
 
 export interface SeriesTranslation {

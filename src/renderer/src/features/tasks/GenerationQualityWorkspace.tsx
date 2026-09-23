@@ -13,8 +13,8 @@ export function GenerationQualityWorkspace({ workspace, analysis }: { workspace:
   const plannedSheet = workbook.sheets.find((item) => item.id === activeSheetId) ?? workbook.sheets[0]!
   const [history, setHistory] = useState<WorkbookPreviewResult | null>(null)
   const [historyError, setHistoryError] = useState('')
-  const historyKind = workbook.id === 'domestic-naming' ? 'domesticNaming' : workbook.id === 'barcode-reference' ? 'barcodeReference' : 'productImageMapping'
-  const needsHistory = (workbook.id === 'product-image-mapping' || workbook.id === 'domestic-naming' || (workbook.id === 'barcode-reference' && plannedSheet.id === 'series-code' && plannedSheet.showBusinessHeader === false)) && !plannedSheet.createIfMissing
+  const historyKind = workbook.id === 'domestic-naming' ? 'domesticNaming' : 'barcodeReference'
+  const needsHistory = (workbook.id === 'domestic-naming' || (workbook.id === 'barcode-reference' && plannedSheet.id === 'series-code' && plannedSheet.showBusinessHeader === false)) && !plannedSheet.createIfMissing
   const [imageRange, setImageRange] = useState({ start: 1, end: 12 })
   const imageRequest = useMemo<WorkbookPreviewRequest | null>(() => needsHistory && history ? { kind: historyKind, sheetName: plannedSheet.name, imagesOnly: true, imageStartRow: imageRange.start, imageEndRow: imageRange.end } : null, [needsHistory, history, historyKind, plannedSheet.name, imageRange])
   const { images: historyImages, error: imageError } = useHistoryImages(`${historyKind}:${plannedSheet.name}:${workspace.generatedAt}`, imageRequest)

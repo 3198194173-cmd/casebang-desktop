@@ -108,7 +108,7 @@ export function App(): React.JSX.Element {
         {(error || accountError) && <div className="alert error">{error ?? accountError}</div>}
         <section className={`page-content ${page === 'new-task' ? 'new-task-page' : ''} ${page === 'material-lifecycle' ? 'material-lifecycle-page' : ''}`}>
           {(page === 'existing-products' || page === 'new-task' || page === 'supplement') && <DraftStatus />}
-          {snapshot && businessRole === 'upstream' && <><div hidden={page !== 'existing-products'}><NewTaskPage existingSeries snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'new-task'}><NewTaskPage snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'supplement'}><SupplementPage active={page === 'supplement'} onOpenBaseFiles={() => setPage('base-files')} /></div></>}
+          {snapshot && businessRole === 'upstream' && <><div hidden={page !== 'existing-products'}><NewTaskPage existingSeries snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'new-task'}><NewTaskPage snapshot={snapshot} onDataChanged={refresh} /></div><div hidden={page !== 'supplement'}><SupplementPage active={page === 'supplement'} onOpenMaterialData={() => setPage('material-data')} /></div></>}
           {renderPage()}
           {snapshot && businessRole === 'downstream' && <div hidden={page !== 'material-lifecycle'}><MaterialLifecyclePage enabled={page === 'material-lifecycle'} /></div>}
           {snapshot && businessRole && <div hidden={page !== 'material-data'}><MaterialDataPage enabled={page === 'material-data'} /></div>}

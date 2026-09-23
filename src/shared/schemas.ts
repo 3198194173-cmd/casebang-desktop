@@ -251,12 +251,12 @@ export const exportGenerationWorkbookInputSchema = z.object({
     title: z.string().trim().min(1).max(200),
     generatedAt: z.string().trim().min(1).max(100),
     workbooks: z.array(z.object({
-      id: z.enum(['barcode-reference', 'domestic-naming', 'generated-product', 'product-image-mapping']),
+      id: z.enum(['barcode-reference', 'domestic-naming', 'generated-product']),
       sourceVersion: z.string().max(100).optional(),
       name: z.string().trim().min(1).max(100),
       role: z.string().trim().min(1).max(300),
       sheets: z.array(previewSheetSchema).min(1).max(20)
-    })).min(1).max(4),
+    })).min(1).max(3),
     checks: z.array(z.object({
       id: z.string().trim().min(1).max(100),
       label: z.string().trim().min(1).max(200),
@@ -267,15 +267,14 @@ export const exportGenerationWorkbookInputSchema = z.object({
   sourcePaths: z.object({
     namingFormula: z.string().trim().min(1).max(1_024),
     barcodeReference: z.string().trim().min(1).max(1_024),
-    domesticNaming: z.string().trim().min(1).max(1_024),
-    productImageMapping: z.string().trim().min(1).max(1_024).optional()
+    domesticNaming: z.string().trim().min(1).max(1_024)
   }),
   templateName: z.string().trim().min(1).max(100),
   imageSource: z.object({
     path: z.string().trim().min(1).max(1_024),
     crops: z.array(z.object({ id: z.string().trim().min(1).max(100), x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), width: z.number().int().positive(), height: z.number().int().positive() })).min(1).max(100)
   }),
-  selectedWorkbookIds: z.array(z.enum(['barcode-reference', 'domestic-naming', 'generated-product', 'product-image-mapping'])).min(1).max(4).default(['generated-product']),
+  selectedWorkbookIds: z.array(z.enum(['barcode-reference', 'domestic-naming', 'generated-product'])).min(1).max(3).default(['generated-product']),
   overwriteBaseFiles: z.boolean().default(false)
 }).superRefine((input, context) => {
   const ids = input.workspace.workbooks.map((book) => book.id)

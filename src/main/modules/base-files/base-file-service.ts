@@ -66,17 +66,6 @@ export class BaseFileService {
     return this.settings.getBaseFileUpdates()
   }
 
-  async productImageMappingIndex() {
-    const paths = await this.settings.getBaseFilePaths()
-    if (!paths.productImageMapping) return undefined
-    try {
-      return await this.previewer.mappingIndex(paths.productImageMapping)
-    } catch {
-      // An unavailable output-only workbook must not prevent the app opening.
-      return undefined
-    }
-  }
-
   async rollback(recordId: string): Promise<BaseFileUpdateRecord> {
     const record = (await this.settings.getBaseFileUpdates()).find((item) => item.id === recordId)
     if (!record) throw new Error('找不到指定的覆盖记录')

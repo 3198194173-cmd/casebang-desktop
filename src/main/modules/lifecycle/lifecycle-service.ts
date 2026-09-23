@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import { z } from 'zod'
 import type { LifecycleDraft, LifecycleDraftSummary, LifecycleRowPreview, LifecycleSource, MaterialMasterPreview, SaveMaterialModelInput, SharedLifecycleAnalysis } from '../../../shared/lifecycle-contracts'
 import { internalBarcodeCandidate, parsePhoneMaterialCodePrefix, patternVariantKey, planMaterialPatterns, previewMaterialCodes } from '../../../shared/material-coding'
-import { normalizeModel, type MaterialModel } from '../../../shared/material-model-dictionary'
+import { materialCodeBrand, normalizeModel, type MaterialModel } from '../../../shared/material-model-dictionary'
 import { readLifecycleWorkbook } from './workbook-reader'
 import { inspectBarcodeSequence, inspectMaterialMappingRows, writeLifecycleCells } from './workbook-allocator'
 import type { LifecycleRepository } from './lifecycle-repository'
@@ -33,8 +33,8 @@ export class LifecycleService {
   async listMaterialModels(): Promise<MaterialModel[]> { return this.settings.getMaterialModels() }
   async saveMaterialModel(input: unknown): Promise<MaterialModel[]> {
     const value = z.object({
-      originalBrand: z.enum(['AP', 'SA', 'HW']).optional(), originalCode: z.string().regex(/^\d{2}$/).optional(),
-      brand: z.enum(['AP', 'SA', 'HW']), code: z.string().regex(/^\d{2}$/), name: z.string().trim().min(1).max(100),
+      originalBrand: z.enum(['AP', 'SA', 'HW', 'MI', 'HON', 'VV', 'OP', 'IQ', '1+', 'RM', 'GG']).optional(), originalCode: z.string().regex(/^\d{2}$/).optional(),
+      brand: z.enum(['AP', 'SA', 'HW', 'MI', 'HON', 'VV', 'OP', 'IQ', '1+', 'RM', 'GG']), code: z.string().regex(/^\d{2}$/), name: z.string().trim().min(1).max(100),
       aliases: z.array(z.string().trim().min(1).max(100)).max(20)
     }).strict().refine(item => Boolean(item.originalBrand) === Boolean(item.originalCode), '原机型定位字段必须同时提供').parse(input) satisfies SaveMaterialModelInput
     const models = await this.settings.getMaterialModels()
@@ -42,7 +42,7 @@ export class LifecycleService {
       ? models.findIndex(model => model.brand === value.originalBrand && model.code === value.originalCode)
       : -1
     if (value.originalBrand && editing < 0) throw new Error('要修改的机型记录不存在，请刷新后重试。')
-    if (models.some((model, index) => index !== editing && model.code === value.code)) throw new Error(`机型编码 ${value.code} 已被其他机型使用。`)
+    if (models.some((model, index) => index !== editing && materialCodeBrand(model.brand) === materialCodeBrand(value.brand) && model.code === value.code)) throw new Error(`编码前缀 ${materialCodeBrand(value.brand)} 下的机型编码 ${value.code} 已被使用。`)
     const aliases = [...new Set(value.aliases.map(alias => alias.trim()).filter(alias => normalizeModel(alias) !== normalizeModel(value.name)))]
     const next: MaterialModel = { brand: value.brand, code: value.code, name: value.name.trim(), aliases }
     const names = new Set([next.name, ...next.aliases].map(normalizeModel))

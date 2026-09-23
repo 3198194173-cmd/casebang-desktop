@@ -6,7 +6,7 @@ import type { LifecycleSource } from '@shared/lifecycle-contracts'
 import { desktopApi } from '../../app/desktop-api'
 
 type WorkbookId = GenerationWorkspaceData['workbooks'][number]['id']
-type BaseWorkbookId = Exclude<WorkbookId, 'generated-product'>
+type BaseWorkbookId = Extract<WorkbookId, 'barcode-reference' | 'domestic-naming'>
 
 interface Props {
   workspace: GenerationWorkspaceData
@@ -26,7 +26,7 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
   const [result, setResult] = useState<string | null>(null)
   const [processedFiles, setProcessedFiles] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [baseUpdateIds, setBaseUpdateIds] = useState<BaseWorkbookId[]>(() => workspace.workbooks.some((item) => item.id === 'product-image-mapping') ? [...DEFAULT_BASE_IDS, 'product-image-mapping'] : DEFAULT_BASE_IDS)
+  const [baseUpdateIds, setBaseUpdateIds] = useState<BaseWorkbookId[]>(() => [...DEFAULT_BASE_IDS])
   const [requireQualityCheck, setRequireQualityCheck] = useState(true)
   const [publishedRecord, setPublishedRecord] = useState<{ id: string; revision: number } | null>(null)
   const ready = !requireQualityCheck || workspace.checks.every((check) => check.passed)
@@ -54,7 +54,7 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
         }))
       },
       templateName,
-      sourcePaths: { namingFormula, barcodeReference, domesticNaming, productImageMapping: baseFiles.productImageMapping?.path ?? undefined },
+      sourcePaths: { namingFormula, barcodeReference, domesticNaming },
       imageSource: {
         path: analysis.sourceImagePath,
         crops: analysis.crops.map(({ id, x, y, width, height }) => ({ id, x, y, width, height }))
@@ -187,10 +187,6 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
         <p>不弹出导出目录；直接执行“自动备份 → 覆盖原表 → 写入历史 → 刷新预览”。</p>
         <div className="base-update-operation-name"><span>本次时间线名称</span><strong>{workspace.title}.xlsx</strong></div>
         <div className="export-selection-list base-update-selection">
-          {workspace.workbooks.some((item) => item.id === 'product-image-mapping') && <label>
-            <input type="checkbox" checked={baseUpdateIds.includes('product-image-mapping')} onChange={() => toggleBaseUpdate('product-image-mapping')} />
-            <span><strong>K3 名称对应产品图片</strong><small>按产品类别追加图片、物料名称和中文对应</small></span>
-          </label>}
           <label>
             <input type="checkbox" checked={baseUpdateIds.includes('barcode-reference')} onChange={() => toggleBaseUpdate('barcode-reference')} />
             <span><strong>A 条码参考</strong><small>写回最新系列与已使用编码</small></span>

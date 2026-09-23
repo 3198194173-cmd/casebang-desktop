@@ -86,10 +86,10 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
   const currentLayout = useExistingSeriesLayout(existingSeries, activeStep, selection, target)
   const generationWorkspace = useMemo(
     () => imageAnalysis && encodingPreview && encodingStepComplete && (!existingSeries || Boolean(currentLayout.selection && currentLayout.target))
-      ? (() => { const workspace = buildGenerationWorkspace(form, imageAnalysis, encodingPreview, snapshot.domesticPatternNames, snapshot.productImageMappingIndex)
+      ? (() => { const workspace = buildGenerationWorkspace(form, imageAnalysis, encodingPreview, snapshot.domesticPatternNames)
           return existingSeries && currentLayout.selection && currentLayout.target ? appendExistingSeries(workspace, currentLayout.target, currentLayout.selection, new Map(imageAnalysis.crops.map(c => [c.id, c.productCategory])), imageAnalysis) : workspace })()
       : null,
-    [form, imageAnalysis, encodingPreview, encodingStepComplete, snapshot.domesticPatternNames, snapshot.productImageMappingIndex, existingSeries, currentLayout.selection, currentLayout.target]
+    [form, imageAnalysis, encodingPreview, encodingStepComplete, snapshot.domesticPatternNames, existingSeries, currentLayout.selection, currentLayout.target]
   )
   const generationStepComplete = Boolean(generationWorkspace?.checks.every((check) => check.passed))
   const maxUnlockedStep = !basicsComplete ? 0 : !namingStepComplete ? 1 : !encodingStepComplete ? 2 : !generationStepComplete ? 3 : 4
@@ -223,9 +223,6 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
         )}
         {message && <div className="alert info">{message}</div>}
         {existingSeries && activeStep >= 3 && !generationWorkspace && <div className={`alert ${currentLayout.error ? 'error' : 'info'}`}>{currentLayout.error || '正在读取原表并重新计算当前系列的追加位置…'}</div>}
-        {!snapshot.productImageMappingIndex && <div className="alert info">{snapshot.baseFiles.productImageMapping?.path
-          ? 'K3 图片对应表暂时无法读取，请在基础资料中重新确认文件后再生成 K3 更新。'
-          : '如需同步 K3 名称对应产品图片，请先在基础资料中导入该工作簿。'}</div>}
         {existingSeries && activeStep === 1 && <ExistingSeriesPicker selection={selection} target={target} confirmed={historyConfirmed} onSelect={value => { setSelection(value); setHistoryConfirmed(false); setForm(current => ({ ...current, seriesNameEn: value.englishName, seriesNameZh: value.chineseName })); setEncodingPreview(null); setModelsConfirmed(false) }} onTarget={value => { setTarget(value); setHistoryConfirmed(false) }} onConfirmedChange={setHistoryConfirmed} analysis={imageAnalysis} onAnalysis={value => { setImageAnalysis(value); setEncodingPreview(null); setModelsConfirmed(false) }} onHistoricalPatterns={setHistoricalPatterns} />}
         {activeStep === 0 ? (
           <TaskBasics

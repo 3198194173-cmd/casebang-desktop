@@ -7,7 +7,7 @@ import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import yazl from 'yazl'
 import type { LifecycleDraft, LifecycleRow } from '../src/shared/lifecycle-contracts'
-import { MATERIAL_MODELS, findMaterialModel } from '../src/shared/material-model-dictionary'
+import { MATERIAL_MODELS, findMaterialModel, materialCodeBrand, mergeMaterialModels } from '../src/shared/material-model-dictionary'
 import { internalBarcodeCandidate, hasValidGtin13Checksum, parseMaterialIdentity, parsePhoneMaterialCode, parsePhoneMaterialCodePrefix, patternVariantKey, planMaterialPatterns, previewMaterialCodes } from '../src/shared/material-coding'
 import { transitionWorkItem, type WorkItemState } from '../src/shared/lifecycle-workflow'
 import { LifecycleRepository } from '../src/main/modules/lifecycle/lifecycle-repository'
@@ -26,15 +26,44 @@ function row(model = 'iP14 Pro', frame = '', code = '', pattern = 'Bear BG00736'
 function draft(rows: LifecycleRow[]): LifecycleDraft { return { id: randomUUID(), title: '测试.xlsx', source: 'manual', sourcePath: 'local.xlsx', sourceHash: 'a'.repeat(64), createdAt: new Date().toISOString(), version: 1, rows, warnings: [], barcodeSource: null, patternVariants: {} } }
 
 describe('material coding preparation', () => {
-  it('retains all 45 confirmed two-digit model mappings and exact aliases', () => {
-    expect(MATERIAL_MODELS).toHaveLength(45)
-    expect(new Set(MATERIAL_MODELS.map(model => model.code)).size).toBe(45)
+  it('retains all confirmed brand-specific two-digit model mappings and aliases', () => {
+    expect(MATERIAL_MODELS).toHaveLength(72)
+    expect(new Set(MATERIAL_MODELS.map(model => `${materialCodeBrand(model.brand)}:${model.code}`)).size).toBe(72)
     for (const model of MATERIAL_MODELS) expect(findMaterialModel(model.name)).toEqual(model)
     expect(findMaterialModel('iP18 Pro Max/17 Pro Max')?.code).toBe('75')
     expect(findMaterialModel('HW Mate 90 RS')?.code).toBe('16')
     expect(findMaterialModel('HW PX VIEW')?.code).toBe('15')
     expect(findMaterialModel('未知机型')).toBeNull()
-    expect(findMaterialModel('PX Max')).toBeNull()
+    expect(findMaterialModel('PX Max')).toMatchObject({ brand: 'HW', code: '51', name: 'Pu X Max' })
+    expect(findMaterialModel('HW PX Max')?.code).toBe('51')
+    expect(findMaterialModel('HW Mate 70 Pro')).toMatchObject({ brand: 'HW', code: '95' })
+    expect(findMaterialModel('HON Magic 7')).toMatchObject({ brand: 'HON', code: '98' })
+    expect(findMaterialModel('SAM A56-5G')).toMatchObject({ brand: 'SA', code: '01' })
+    expect(findMaterialModel('MI 15U')).toMatchObject({ brand: 'MI', code: '37' })
+  })
+  it.each([
+    ['MI', '35', 'MI 15'], ['MI', '36', 'MI 15 Pro'], ['MI', '37', 'MI 15U'],
+    ['HW', '96', 'HW Mate 70 RS'], ['HW', '97', 'HW Mate X6'], ['HW', '78', 'HW Mate X7'],
+    ['HON', '98', 'HON Magic 7'], ['HON', '99', 'HON Magic 7 Pro'],
+    ['HON', '01', 'HON 300'], ['HON', '02', 'HON 300 Pro'], ['HON', '03', 'HON 300 Ultra'],
+    ['SA', '01', 'SAM A56-5G'],
+    ['VV', '01', 'VV x200'], ['VV', '02', 'VV x200 Pro'], ['VV', '03', 'VV x200 Pro mini'],
+    ['VV', '04', 'VV x200S'], ['VV', '05', 'VV x200 U'],
+    ['OP', '01', 'OP Find X8'], ['OP', '02', 'OP Find X8 Pro'], ['OP', '03', 'OP Find X8 Ultra'],
+    ['OP', '04', 'OP Find X8 S'], ['OP', '05', 'OP Find X8 S+'],
+    ['IQ', '01', 'IQ 13'], ['1+', '01', '1+ 13'],
+    ['RM', '38', 'RM K80'], ['RM', '39', 'RM K80 Pro'], ['GG', '01', 'GG 9A']
+  ] as const)('includes added %s model %s %s', (brand, code, name) => {
+    expect(findMaterialModel(name)).toMatchObject({ brand, code })
+  })
+  it('adds new defaults to old saved mappings without replacing edited records', () => {
+    const old = MATERIAL_MODELS.slice(0, 45).map(model => ({ ...model, aliases: [...model.aliases] }))
+    old[0] = { ...old[0]!, name: 'iP13 Pro Custom' }
+    const merged = mergeMaterialModels(old)
+    expect(merged).toHaveLength(72)
+    expect(merged.find(model => model.brand === 'AP' && model.code === '53')?.name).toBe('iP13 Pro Custom')
+    expect(merged.find(model => model.brand === 'HW' && model.code === '51')?.aliases).toContain('PX Max')
+    expect(merged.find(model => model.brand === 'VV' && model.code === '01')?.name).toBe('VV x200')
   })
   it('matches complete model suffixes and keeps frame and Y distinctions', () => {
     expect(row('iP17 Pro Max').identity).toMatchObject({ modelCode: '75', patternName: 'Bear', productCode: 'BG00736', brand: 'AP' })
@@ -54,6 +83,14 @@ describe('material coding preparation', () => {
     expect(parsePhoneMaterialCode('C.K.CA.AP.J7.AC57')).toMatchObject({ patternVariant: 'AC', modelCode: '57' })
     expect(parsePhoneMaterialCode('C.K.CA.AP.J7.A057')).toMatchObject({ patternVariant: 'A0', modelCode: '57' })
     expect(parsePhoneMaterialCode('C.K.CT.AP.J7.A057')).toBeNull()
+    expect(parsePhoneMaterialCode('C.K.CA.MI.J7.A037')).toMatchObject({ brand: 'MI', modelCode: '37' })
+    expect(parsePhoneMaterialCode('C.K.CA.1+.J7.A001')).toMatchObject({ brand: '1+', modelCode: '01' })
+    expect(parsePhoneMaterialCodePrefix('C.K.CA.VV.J7.A0')).toMatchObject({ brand: 'VV' })
+  })
+  it('uses master-table code namespaces for Honor and Redmi while displaying their own brands', () => {
+    expect(row('HON Magic 7').identity).toMatchObject({ brand: 'HW', modelCode: '98' })
+    expect(row('RM K80').identity).toMatchObject({ brand: 'MI', modelCode: '38' })
+    expect(row('PX Max').identity).toMatchObject({ brand: 'HW', modelCode: '51' })
   })
   it('reuses confirmed same-file mapping across models but not across frame variants', () => {
     const normal = row('iP14 Pro', '', 'C.K.CA.AP.J7.A057')

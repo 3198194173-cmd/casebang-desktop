@@ -1,5 +1,5 @@
 import type { LifecycleDraft, LifecycleRow, LifecycleRowPreview, LifecycleSource, MaterialIdentity, MaterialPatternPlan } from './lifecycle-contracts'
-import { findMaterialModel, MATERIAL_MODELS, type MaterialModel } from './material-model-dictionary'
+import { findMaterialModel, materialCodeBrand, materialModelNames, MATERIAL_MODELS, type MaterialModel } from './material-model-dictionary'
 
 const normalize = (value: string): string => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toUpperCase()
 export function parseMaterialIdentity(name: string, itemClass: string, modelDictionary: readonly MaterialModel[] = MATERIAL_MODELS): MaterialIdentity {
@@ -11,7 +11,7 @@ export function parseMaterialIdentity(name: string, itemClass: string, modelDict
   const frame = variantTags.includes('银框') ? 'silver' : 'normal'
   const variant = variantTags.filter(tag => tag !== '银框').join('|')
   const withoutTags = normalized.replace(/\([^()]*\)/g, '').trim()
-  const modelNames = modelDictionary.flatMap(model => [model.name, ...model.aliases, ...(model.brand === 'HW' && !model.name.startsWith('HW ') ? [`HW ${model.name}`] : [])]).sort((a, b) => b.length - a.length)
+  const modelNames = modelDictionary.flatMap(materialModelNames).sort((a, b) => b.length - a.length)
   // Match the whole suffix with a boundary; Pro must never steal Pro Max.
   const modelName = modelNames.find(candidate => withoutTags.toUpperCase().endsWith(candidate.toUpperCase()) && /\s/.test(withoutTags[withoutTags.length - candidate.length - 1] ?? '')) ?? ''
   const model = domain ? findMaterialModel(modelName, modelDictionary) : null
@@ -23,7 +23,7 @@ export function parseMaterialIdentity(name: string, itemClass: string, modelDict
     patternName = cleanTail.slice(0, -modelName.length).trim()
   }
   return { category, domain, series: seriesMatch?.[1]?.toUpperCase() ?? '', patternName, productCode: productMatch?.[1]?.toUpperCase() ?? '',
-    modelName, brand: model?.brand ?? null, modelCode: model?.code ?? null, frame, variant }
+    modelName, brand: model ? materialCodeBrand(model.brand) : null, modelCode: model?.code ?? null, frame, variant }
 }
 
 /** A whole two-character allocation; never infer a universal silver suffix. */
@@ -31,11 +31,11 @@ export function patternVariantKey(identity: MaterialIdentity): string {
   return JSON.stringify([identity.domain, identity.category, identity.series, identity.productCode || normalize(identity.patternName), identity.frame, identity.variant])
 }
 export function parsePhoneMaterialCode(code: string): { domain: string; brand: string; series: string; patternVariant: string; modelCode: string } | null {
-  const match = /^C\.K\.(BG|CA)\.(AP|SA|HW)\.([A-Z0-9]{1,8})\.([A-Z0-9]{2})(\d{2})$/.exec(code)
+  const match = /^C\.K\.(BG|CA)\.(AP|SA|HW|MI|VV|OP|IQ|1\+|GG)\.([A-Z0-9]{1,8})\.([A-Z0-9]{2})(\d{2})$/.exec(code)
   return match ? { domain: match[1]!, brand: match[2]!, series: match[3]!, patternVariant: match[4]!, modelCode: match[5]! } : null
 }
 export function parsePhoneMaterialCodePrefix(code: string): { domain: string; brand: string; series: string; patternVariant: string } | null {
-  const match = /^C\.K\.(BG|CA)\.(AP|SA|HW)\.([A-Z0-9]{1,8})\.([A-Z0-9]{2})$/.exec(code.trim())
+  const match = /^C\.K\.(BG|CA)\.(AP|SA|HW|MI|VV|OP|IQ|1\+|GG)\.([A-Z0-9]{1,8})\.([A-Z0-9]{2})$/.exec(code.trim())
   return match ? { domain: match[1]!, brand: match[2]!, series: match[3]!, patternVariant: match[4]! } : null
 }
 export function internalBarcodeCandidate(month: string, sequence: number): string {

@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { AiSettingsSummary, ApplicationSettings, BaseFileKind, BaseFileUpdateRecord, CollaborationUser, SaveAiSettingsInput } from '@shared/contracts'
-import { MATERIAL_MODELS, type MaterialModel } from '@shared/material-model-dictionary'
+import { MATERIAL_MODELS, mergeMaterialModels, type MaterialModel } from '@shared/material-model-dictionary'
 
 export interface CloudAiSettings {
   provider: 'aliyun'
@@ -76,7 +76,7 @@ export class SettingsRepository {
   async setMaterialMasterPath(path: string): Promise<void> { const settings = await this.read(); settings.materialMasterPath = path; await this.write(settings) }
   async getMaterialModels(): Promise<MaterialModel[]> {
     const values = (await this.read()).materialModels
-    return structuredClone(values?.length ? values : MATERIAL_MODELS)
+    return structuredClone(values?.length ? mergeMaterialModels(values) : MATERIAL_MODELS)
   }
   async setMaterialModels(models: MaterialModel[]): Promise<void> {
     const settings = await this.read()

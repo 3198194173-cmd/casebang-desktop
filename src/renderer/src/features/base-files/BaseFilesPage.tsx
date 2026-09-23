@@ -3,7 +3,6 @@ import type { AppSnapshot, BaseFileKind, BaseFileUpdateRecord, WorkbookPreviewRe
 import type { BaseWorkbookInspectionReport } from '@shared/excel-contracts'
 import { desktopApi } from '../../app/desktop-api'
 import { groupUpdateHistory } from './base-file-history'
-import { MaterialMasterCard } from './MaterialMasterCard'
 
 interface Props {
   snapshot: AppSnapshot
@@ -22,7 +21,7 @@ export function BaseFilesPage({ snapshot, onChanged }: Props): React.JSX.Element
   const [history, setHistory] = useState<BaseFileUpdateRecord[]>([])
   const [rollingBack, setRollingBack] = useState<string | null>(null)
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<string[]>([])
-  const allReady = Object.values(snapshot.baseFiles).every((file) => file.status === 'ready')
+  const allReady = Object.values(snapshot.baseFiles).filter((file) => file.kind !== 'productImageMapping').every((file) => file.status === 'ready')
   const historyGroups = useMemo(() => groupUpdateHistory(history), [history])
 
   useEffect(() => { void desktopApi.baseFiles.history().then(setHistory) }, [])
@@ -90,10 +89,9 @@ export function BaseFilesPage({ snapshot, onChanged }: Props): React.JSX.Element
 
   return (
     <div className="stack-xl">
-      <MaterialMasterCard />
       <section className="notice-card">
         <strong>业务基础资料</strong>
-        <p>A 条码参考、国内命名和 K3 图片对应表支持备份、覆盖与独立回滚。K3 仅接收本次图片和名称，不参与新建表的数据计算。</p>
+        <p>A 条码参考和国内命名表支持本次业务覆盖与独立回滚；新建产品表单独生成。K3 图片对应表保留历史资料查看，不再由新系列建表或系列补产品写入。</p>
       </section>
       {message && <div className="alert info">{message}</div>}
       <section className="file-grid">

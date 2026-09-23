@@ -5,7 +5,7 @@ import type { SupplementResult, SupplementVariantOverride } from '@shared/supple
 import { SupplementWorkbookPreview } from './SupplementWorkbookPreview'
 import { priceGroup } from '@shared/supplement-rules'
 const key = priceGroup
-export function SupplementPage({ active, onOpenBaseFiles }: { active: boolean; onOpenBaseFiles(): void }): React.JSX.Element {
+export function SupplementPage({ active, onOpenMaterialData }: { active: boolean; onOpenMaterialData(): void }): React.JSX.Element {
   const [masterPath, setMaster] = useState('')
   const [inputPath, setInput] = useDraftState('supplement.inputPath', '')
   const [targetModel, setModel] = useDraftState('supplement.targetModel', 'iP Fold（Duo）')
@@ -28,12 +28,12 @@ export function SupplementPage({ active, onOpenBaseFiles }: { active: boolean; o
   const matched = result?.rows.filter(r => r.status === 'matched') ?? []
   return <div className="stack-xl supplement-page">
     <section className="panel supplement-setup"><div className="supplement-heading"><div><span className="eyebrow">新机型补充</span><h2>原有产品补充新机型</h2><p>用补齐表中的原物料名称检索总表，再生成目标机型的新记录。</p></div><span className={`supplement-ready ${masterPath ? 'ready' : ''}`}>{masterPath ? '总表已就绪' : '缺少总物料表'}</span></div>
-      <div className={`supplement-source ${masterPath ? 'is-ready' : 'is-empty'}`}><div className="supplement-source-icon">总</div><div><strong>总物料表</strong><small>首要匹配来源 · 由基础资料统一管理</small><p className="supplement-path">{masterPath || '尚未配置，请先导入总物料表'}</p></div><button className="secondary-button" disabled={busy} onClick={onOpenBaseFiles}>{masterPath ? '查看基础资料' : '立即导入'}</button></div>
+      <div className={`supplement-source ${masterPath ? 'is-ready' : 'is-empty'}`}><div className="supplement-source-icon">总</div><div><strong>总物料表</strong><small>首要匹配来源 · 由资料管理统一维护</small><p className="supplement-path">{masterPath || '尚未配置，请到资料管理选择物料总表'}</p></div><button className="secondary-button" disabled={busy} onClick={onOpenMaterialData}>{masterPath ? '查看资料管理' : '前往资料管理'}</button></div>
       <div className="supplement-input-grid"><div className="supplement-input-card"><span className="supplement-step-number">1</span><div><strong>导入补齐表</strong><small>包含产品图片和原物料名称</small><button className="secondary-button" disabled={busy} onClick={() => void run(async () => { const p = await desktopApi.supplement.select(); if (p) { setInput(p); setResult(null); setVariants([]); setPublishedRecord(null) } })}>{inputPath ? '更换补齐表' : '选择补齐表'}</button><p className="supplement-path">{inputPath || '尚未选择 .xlsx 文件'}</p></div></div>
         <label className="supplement-input-card"><span className="supplement-step-number">2</span><div><strong>填写新增目标机型</strong><small>无需在总表中已经存在</small><input disabled={busy} value={targetModel} placeholder="例如 HW PX VIEW、iP Fold（Duo）" onChange={e => { setModel(e.target.value); setResult(null); setVariants([]); setPublishedRecord(null) }} /><small>款式后缀从补齐表保留，目标机型用于生成新记录。</small></div></label></div>
       <div className="supplement-run-row"><div><strong>准备完成后开始识别</strong><small>不会修改总物料表和补齐表</small></div><button className="primary-button" disabled={busy || !masterPath || !inputPath || !targetModel.trim()} onClick={() => void run(async () => {
         setResult(null); setVariants([]); setPublishedRecord(null)
-        const latest = await desktopApi.supplement.getMaster(); if (!latest) throw new Error('请先在基础资料中导入总物料表')
+        const latest = await desktopApi.supplement.getMaster(); if (!latest) throw new Error('请先在资料管理中选择物料总表')
         setMaster(latest)
         const data = await desktopApi.supplement.analyze({ masterPath: latest, inputPath, targetModel }); setResult(data)
         const groups = new Map<string, string>()

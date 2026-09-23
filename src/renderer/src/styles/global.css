@@ -965,8 +965,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .supplement-table th, .supplement-table td { padding: 12px 14px; border-bottom: 1px solid #e8e9ec; vertical-align: top; line-height: 1.6; }
 .supplement-table tr:hover td { background: #fafafb; }
 .supplement-pending { border-left: 3px solid #bb7b29; }
-.material-master-card { border-top: 3px solid #cf1731; }
-.material-priority { display: inline-block; color: #bd142b; font-size: 12px; font-weight: 700; margin-bottom: 8px; }
 @media (max-width: 1000px) { .supplement-input-grid { grid-template-columns: 1fr; } .supplement-source { grid-template-columns: 42px minmax(0, 1fr); } .supplement-source button { grid-column: 2; justify-self: start; } }
 .supplement-excel .spreadsheet-grid td { padding: 0 5px; height: 28px; max-height: 28px; }
 .supplement-excel .spreadsheet-grid td > div { white-space: nowrap; overflow: hidden; text-overflow: clip; height: 27px; line-height: 27px; font-family: SimSun, serif; font-size: 14px; }

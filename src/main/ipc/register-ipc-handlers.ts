@@ -158,8 +158,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
       connectors: dependencies.connectors.list(),
       productTypes: await dependencies.excel.listProductTypes(),
       seriesTranslations: await dependencies.excel.listSeriesTranslations(),
-      domesticPatternNames: await dependencies.excel.listDomesticPatternNames(),
-      productImageMappingIndex: await dependencies.baseFiles.productImageMappingIndex()
+      domesticPatternNames: await dependencies.excel.listDomesticPatternNames()
     }
   })
 

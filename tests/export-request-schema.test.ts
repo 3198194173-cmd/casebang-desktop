@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { exportGenerationWorkbookInputSchema, publishGenerationWorkbookInputSchema } from '../src/shared/schemas'
 import { workbookFileError } from '../src/main/modules/spreadsheet/safe-workbook-file'
 
-const ids = ['generated-product', 'barcode-reference', 'domestic-naming', 'product-image-mapping'] as const
+const ids = ['generated-product', 'barcode-reference', 'domestic-naming'] as const
 function request(selected = [...ids] as string[]) {
   return {
     suggestedName: 'test', templateName: 'test',
@@ -17,7 +17,7 @@ function request(selected = [...ids] as string[]) {
 it.each(ids)('accepts a single selected workbook: %s', (id) => {
   expect(exportGenerationWorkbookInputSchema.safeParse(request([id])).success).toBe(true)
 })
-it('accepts two and four selected workbooks', () => {
+it('accepts two and three selected workbooks', () => {
   expect(exportGenerationWorkbookInputSchema.safeParse(request(ids.slice(0, 2))).success).toBe(true)
   expect(exportGenerationWorkbookInputSchema.safeParse(request()).success).toBe(true)
 })
@@ -67,6 +67,17 @@ it('rejects empty, duplicate, and missing selected workbook data', () => {
   const input = request(['generated-product'])
   input.selectedWorkbookIds = ['product-image-mapping']
   expect(exportGenerationWorkbookInputSchema.safeParse(input).success).toBe(false)
+})
+it('rejects K3 generation and overwrite requests from either upstream workflow', () => {
+  const selectedK3 = request(['generated-product'])
+  selectedK3.selectedWorkbookIds = ['product-image-mapping']
+  expect(exportGenerationWorkbookInputSchema.safeParse(selectedK3).success).toBe(false)
+  const workspaceWithK3 = request(['generated-product', 'product-image-mapping'])
+  workspaceWithK3.selectedWorkbookIds = ['generated-product']
+  expect(exportGenerationWorkbookInputSchema.safeParse(workspaceWithK3).success).toBe(false)
+  for (const sourceWorkflow of ['new-series', 'new-products']) {
+    expect(publishGenerationWorkbookInputSchema.safeParse({ generation: workspaceWithK3, sourceWorkflow }).success).toBe(false)
+  }
 })
 it('distinguishes busy files from permission errors', () => {
   expect(workbookFileError({ code: 'EBUSY' }, 'test.xlsx', 'K3', '覆盖').message).toContain('当前文件已打开，请关闭文件后重试')

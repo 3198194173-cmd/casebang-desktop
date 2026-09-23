@@ -75,11 +75,12 @@ export class TaskService {
     }
     const safeName = input.suggestedName.replace(/[\\/:*?\"<>|]+/g, '-').replace(/\.xlsx$/i, '')
     const selectedIds = new Set(input.selectedWorkbookIds ?? ['generated-product'])
+    if (selectedIds.has('product-image-mapping') || input.workspace.workbooks.some((book) => book.id === 'product-image-mapping')) {
+      throw new Error('新系列建表和系列补产品不再生成或覆盖 K3 名称对应产品图片。')
+    }
     const generatedTemplatePath = resolveGeneratedProductTemplatePath()
     await Promise.all([
-      ...Object.entries(input.sourcePaths)
-        .filter(([kind]) => kind !== 'productImageMapping' || selectedIds.has('product-image-mapping'))
-        .map(([, path]) => path).filter((path): path is string => Boolean(path)).map((path) => access(path)),
+      ...[input.sourcePaths.namingFormula, input.sourcePaths.barcodeReference, input.sourcePaths.domesticNaming].map((path) => access(path)),
       ...(selectedIds.has('generated-product') ? [access(generatedTemplatePath)] : [])
     ])
     const overwriteBaseFiles = input.overwriteBaseFiles ?? false
@@ -94,7 +95,7 @@ export class TaskService {
       })
       outputDirectory = selection.filePaths[0] ?? null
       if (selection.canceled || !outputDirectory) {
-        const selectedBaseIds = (['barcode-reference', 'domestic-naming', 'product-image-mapping'] as const).filter((id) => selectedIds.has(id))
+        const selectedBaseIds = (['barcode-reference', 'domestic-naming'] as const).filter((id) => selectedIds.has(id))
         if (!overwriteBaseFiles || selectedBaseIds.length === 0) {
           return { canceled: true, outputPath: null, fileName: null, files: [], overwritten: [], skipped: [] }
         }
@@ -112,7 +113,6 @@ export class TaskService {
     const outputDefinitions = [
       { id: 'barcode-reference', label: 'A条码参考更新表', preferred: `A条码参考-${safeName}.xlsx` },
       { id: 'domestic-naming', label: '国内命名更新表', preferred: `国内命名-${safeName}.xlsx` },
-      { id: 'product-image-mapping', label: 'K3 名称对应产品图片', preferred: `K3图片对应-${safeName}.xlsx` },
       { id: 'generated-product', label: '新建产品表', preferred: `${safeName || 'CASEBANG-新建产品表'}.xlsx` }
     ] as const
     const files: Array<{ label: string; path: string; fileName: string }> = []
@@ -134,11 +134,6 @@ export class TaskService {
             throw new Error(`${definition.label}已不是“基础资料”当前使用的文件，请返回基础资料重新确认后再覆盖。`)
           }
           await assertWorkbookWritable(sourcePath, definition.label)
-          if (definition.id === 'product-image-mapping') {
-            const source = await stat(sourcePath)
-            const plan = input.workspace.workbooks.find((item) => item.id === definition.id)
-            if (plan?.sourceVersion !== `${source.size}:${source.mtimeMs}`) throw new Error('K3 基础表在质检后已变化，请刷新基础资料并重新生成，避免覆盖历史数据。')
-          }
         }
       }
       for (const definition of outputDefinitions.filter((item) => selectedIds.has(item.id))) {
@@ -148,16 +143,12 @@ export class TaskService {
         ? input.sourcePaths.barcodeReference
         : workbook.id === 'domestic-naming'
           ? input.sourcePaths.domesticNaming
-          : workbook.id === 'product-image-mapping'
-            ? input.sourcePaths.productImageMapping
           : generatedTemplatePath
       if (!sourcePath) throw new Error(`请先导入${definition.label}`)
       const overwriteKind = workbook.id === 'barcode-reference'
         ? 'barcodeReference' as const
         : workbook.id === 'domestic-naming'
           ? 'domesticNaming' as const
-          : workbook.id === 'product-image-mapping'
-            ? 'productImageMapping' as const
           : null
       if (overwriteBaseFiles && overwriteKind) {
         const configuredPath = configuredBaseFiles[overwriteKind]
@@ -167,12 +158,8 @@ export class TaskService {
         const temporaryPath = join(dirname(sourcePath), `.${basename(sourcePath)}.casebang-${randomUUID()}.xlsx`)
         try {
           await exportFormatPreservingWorkbook(sourcePath, temporaryPath, workbook, input)
-          const role = overwriteKind === 'barcodeReference' ? 'barcode-reference' as const : overwriteKind === 'productImageMapping' ? 'unknown' as const : 'domestic-naming' as const
+          const role = overwriteKind === 'barcodeReference' ? 'barcode-reference' as const : 'domestic-naming' as const
           await new OoxmlWorkbookInspector().inspect(temporaryPath, role)
-          if (overwriteKind === 'productImageMapping') {
-            const current = await stat(sourcePath)
-            if (workbook.sourceVersion !== `${current.size}:${current.mtimeMs}`) throw new Error('生成期间 K3 原表发生变化，请刷新基础资料后重新生成。')
-          }
           const backupPath = join(app.getPath('userData'), 'base-file-backups', overwriteKind, `${Date.now()}-${randomUUID()}-${basename(sourcePath)}`)
           await mkdir(dirname(backupPath), { recursive: true })
           await copyWorkbookWithRetry(sourcePath, backupPath, { label: definition.label, action: '备份' })
@@ -191,8 +178,6 @@ export class TaskService {
             operationName,
             changeSummary: overwriteKind === 'barcodeReference'
               ? '系列名对应代码、全系列主图及各产品类别最新已使用编码'
-              : overwriteKind === 'productImageMapping'
-                ? `产品图片对应：${workbook.sheets.map((sheet) => sheet.name).join('、')}`
               : '可拆卸+其他中的全系列主图、图案图片及对应名称',
             sourcePath,
             sourceFileName: basename(sourcePath),
@@ -250,8 +235,8 @@ export class TaskService {
   }
 }
 
-function baseKindForWorkbook(id: 'barcode-reference' | 'domestic-naming' | 'product-image-mapping') {
-  return id === 'barcode-reference' ? 'barcodeReference' : id === 'domestic-naming' ? 'domesticNaming' : 'productImageMapping'
+function baseKindForWorkbook(id: 'barcode-reference' | 'domestic-naming') {
+  return id === 'barcode-reference' ? 'barcodeReference' : 'domesticNaming'
 }
 
 function resolveGeneratedProductTemplatePath(): string {

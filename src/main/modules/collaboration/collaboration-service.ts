@@ -434,7 +434,7 @@ export class CollaborationService {
       response = await net.fetch(url, { method: 'PUT', headers, body, signal })
     } catch (reason) {
       logger.warn('Direct object storage upload failed', {
-        timedOut: timeout.aborted,
+        timedOut: signal.aborted,
         error: reason instanceof Error ? reason.message : String(reason)
       })
       throw new Error(signal.aborted ? '上传到腾讯云 COS 超时，请检查网络后重试。' : '无法上传到腾讯云 COS，请检查网络后重试。')

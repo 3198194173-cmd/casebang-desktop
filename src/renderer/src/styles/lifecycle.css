@@ -136,19 +136,22 @@
 .lc-artwork-pdf-list article small { color:#74837f; font-size:9px; }
 .lc-artwork-pdf-list a,.lc-artwork-compare-table a { color:#1b6964; font-size:10px; font-weight:750; white-space:nowrap; }
 .lc-artwork-compare-table { overflow:auto; border:1px solid #d7e2df; border-radius:8px; }
-.lc-artwork-compare-table table { width:100%; min-width:930px; border-collapse:collapse; font-size:12px; }
+.lc-artwork-compare-table table { width:100%; min-width:1100px; border-collapse:collapse; font-size:12px; table-layout:fixed; }
 .lc-artwork-compare-table th { background:#edf5f2; color:#31574f; font-size:11px; text-align:left; }
 .lc-artwork-compare-table th,.lc-artwork-compare-table td { padding:10px; border-bottom:1px solid #e2e9e6; vertical-align:middle; }
-.lc-artwork-compare-table td:first-child { width:29%; }
-.lc-artwork-compare-table td:nth-child(2) { width:110px; text-align:center; }
-.lc-artwork-compare-table td:nth-child(3) { width:22%; }
+.lc-artwork-compare-table th:nth-child(1),.lc-artwork-compare-table th:nth-child(3) { width:120px; }
+.lc-artwork-compare-table th:nth-child(2) { width:30%; }
+.lc-artwork-compare-table th:nth-child(4) { width:16%; }
+.lc-artwork-compare-table th:nth-child(5) { width:16%; }
+.lc-artwork-compare-table td { overflow-wrap:anywhere; }
 .lc-artwork-compare-table td>strong,.lc-artwork-compare-table td>small { display:block; }
 .lc-artwork-compare-table td>small { margin-top:4px; color:#74837f; font-size:9px; overflow-wrap:anywhere; }
-.lc-artwork-compare-table td:first-child>a { display:inline-block; margin-top:7px; }
+.lc-artwork-compare-table td:nth-child(2)>a { display:block; margin-top:7px; overflow:hidden; text-overflow:ellipsis; }
 .lc-artwork-thumb { display:block; width:84px; height:84px; margin:auto; object-fit:contain; border:1px solid #d7e2df; border-radius:7px; background:#fff; }
 .lc-artwork-no-image { display:grid; place-items:center; width:84px; height:84px; margin:auto; padding:8px; border:1px dashed #cbdad6; border-radius:7px; color:#8a9995; font-size:10px; text-align:center; }
 .lc-artwork-compare-table td.matched { color:#26745c; font-weight:700; }
 .lc-artwork-compare-table td.missing { color:#a54f37; font-weight:700; }
+.lc-artwork-compare>header>div:last-child { display:flex; align-items:center; gap:12px; }
 .lc-artwork-empty { padding:20px; border:1px dashed #d2dfdc; border-radius:8px; background:#f8fbfa; color:#71817e; font-size:11px; text-align:center; }
 .lc-artwork-blocked,.lc-artwork-pending { padding:18px; border:1px dashed #d2dfdc; border-radius:10px; background:#f8fbfa; }
 .lc-artwork-pending { border-color:#ead39a; background:#fffaf0; }

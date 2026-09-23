@@ -42,6 +42,45 @@ export class DingTalkDriveClient {
     return this.resolveWithToken(accessToken, unionId, nodeId)
   }
 
+  async downloadPdfForUser(accessToken: string, unionId: string, spaceId: string, dentryId: string, version: number | null): Promise<Buffer> {
+    const url = new URL(`https://api.dingtalk.com/v1.0/storage/spaces/${encodeURIComponent(spaceId)}/dentries/${encodeURIComponent(dentryId)}/downloadInfos/query`)
+    url.searchParams.set('unionId', unionId)
+    const info = await this.json<{ headerSignatureInfo?: { resourceUrls?: string[]; headers?: Record<string, string> } }>(url, {
+      method: 'POST', headers: { ...authHeaders(accessToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ option: { ...(version != null ? { version } : {}), preferIntranet: false } })
+    }, 'query_download_info')
+    const signed = info.headerSignatureInfo?.resourceUrls?.[0]
+    if (!signed) throw new DingTalkDriveError('dingtalk_download_unavailable', '钉钉未返回文件下载地址。')
+    const resource = new URL(signed)
+    if (resource.protocol !== 'https:' || !/(^|\.)(aliyuncs\.com|dingtalk\.com)$/.test(resource.hostname)) {
+      throw new DingTalkDriveError('dingtalk_download_untrusted', '钉钉返回了不受信任的下载域名。')
+    }
+    const response = await this.fetcher(resource, { headers: info.headerSignatureInfo?.headers ?? {}, redirect: 'error', signal: AbortSignal.timeout(45_000) })
+    if (!response.ok) throw new DingTalkDriveError('dingtalk_download_failure', `PDF 下载失败（HTTP ${response.status}）。`)
+    const maxBytes = 16 * 1024 * 1024
+    if (Number(response.headers.get('content-length') ?? '0') > maxBytes) throw new DingTalkDriveError('dingtalk_pdf_too_large', 'PDF 超过 16 MB，暂不支持自动核验。')
+    const reader = response.body?.getReader()
+    if (!reader) throw new DingTalkDriveError('dingtalk_download_failure', '钉钉未返回 PDF 内容。')
+    const chunks: Uint8Array[] = []
+    let size = 0
+    try {
+      while (true) {
+        const part = await reader.read()
+        if (part.done) break
+        size += part.value.byteLength
+        if (size > maxBytes) throw new DingTalkDriveError('dingtalk_pdf_too_large', 'PDF 超过 16 MB，暂不支持自动核验。')
+        chunks.push(part.value)
+      }
+    } finally { reader.releaseLock() }
+    const bytes = Buffer.concat(chunks)
+    if (bytes.subarray(0, 5).toString('ascii') !== '%PDF-') throw new DingTalkDriveError('dingtalk_download_not_pdf', '下载内容不是 PDF 文件。')
+    return bytes
+  }
+
+  async downloadPdfForApp(unionId: string, spaceId: string, dentryId: string, version: number | null): Promise<Buffer> {
+    return this.downloadPdfForUser(await this.appToken(), unionId, spaceId, dentryId, version)
+  }
+
   private async resolveWithToken(token: string, unionId: string, nodeId: string): Promise<ResolvedArtworkFolder> {
     const spaces = await this.listSpaces(token, unionId)
     let lastFailure: DingTalkDriveError | null = null

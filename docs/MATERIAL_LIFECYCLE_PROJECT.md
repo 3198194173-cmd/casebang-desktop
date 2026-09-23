@@ -1438,6 +1438,8 @@ DISCOVERED
 
 ### 24.14 待确认事项
 
+一键 AI 对比核验的当前实施契约、错误隔离、接口安全边界与验收项以 [ARTWORK_AI_VERIFICATION_V2.md](ARTWORK_AI_VERIFICATION_V2.md) 为准；本节保留为目录结构与业务分析背景。
+
 1. 同一 `BGxxxxx` 存在透明、闪粉、磨砂多个 PDF 时，默认主 PDF 的选择规则：按图片表材质、人工选择，还是全部并列预览。
 2. PDF 是否始终以第一页作为图案页；如果不是，需要目录规则或人工指定页码。
 3. 钉钉当前用户 token 是否允许读取并渲染团队空间 PDF；`Drive.File.Read`、`Storage.File.Read` 等权限需要以真实接口结果为准。

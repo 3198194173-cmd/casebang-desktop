@@ -1,5 +1,6 @@
 import { fixedMaterial, type MaterialInput, type MaterialResult } from '@shared/material-recognition'
 import type { ComparePatternsInput, ComparePatternsResult } from '@shared/pattern-comparison'
+import type { ArtworkVisualInput, ArtworkVisualResult } from '@shared/artwork-ai'
 import type { AiSettingsSummary, SaveAiSettingsInput, TranslateSeriesNameResult } from '@shared/contracts'
 import type { SuggestImageNamesBatchInput, SuggestImageNamesBatchResult, SuggestImageNamesInput, SuggestImageNamesResult } from '@shared/image-contracts'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
@@ -33,6 +34,10 @@ export class VisionAiService {
 
   async comparePatterns(input: ComparePatternsInput): Promise<ComparePatternsResult> {
     return (await this.activeProvider()).comparePatterns(input)
+  }
+
+  async compareArtworkImages(input: ArtworkVisualInput): Promise<ArtworkVisualResult> {
+    return (await this.activeProvider()).compareArtworkImages(input)
   }
 
   async testConnection(): Promise<{ ok: boolean; message: string }> {

@@ -327,6 +327,7 @@ export interface CasebangDesktopApi {
     searchArtworkEntries(input: { query?: string; limit?: number; workItemId?: string }): Promise<DingTalkArtworkEntry[]>
     artworkTarget(input: { workItemId: string }): Promise<DingTalkArtworkTarget | null>
     bindArtworkTarget(input: { workItemId: string; folderUrl: string; categoryDentryId?: string; modelDentryId?: string }): Promise<DingTalkArtworkTarget>
+    artworkPdf(input: { workItemId: string; dentryId: string }): Promise<{ dataUrl: string; version: number | null }>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>
@@ -351,6 +352,7 @@ export interface CasebangDesktopApi {
     testConnection(): Promise<{ ok: boolean; message: string }>
     recognizeMaterial(input: import('./material-recognition').MaterialInput): Promise<import('./material-recognition').MaterialResult>
     comparePatterns(input: ComparePatternsInput): Promise<ComparePatternsResult>
+    compareArtworkImages(input: import('./artwork-ai').ArtworkVisualInput): Promise<import('./artwork-ai').ArtworkVisualResult>
     suggestImageNames(input: SuggestImageNamesInput): Promise<SuggestImageNamesResult>
     suggestImageNamesBatch(input: SuggestImageNamesBatchInput): Promise<SuggestImageNamesBatchResult>
     translateSeriesName(input: { chineseName: string }): Promise<TranslateSeriesNameResult>

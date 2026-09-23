@@ -53,7 +53,8 @@ const api: CasebangDesktopApi = {
     syncArtworkSource: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationSyncArtworkSource),
     searchArtworkEntries: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationSearchArtworkEntries, input),
     artworkTarget: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationArtworkTarget, input),
-    bindArtworkTarget: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationBindArtworkTarget, input)
+    bindArtworkTarget: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationBindArtworkTarget, input),
+    artworkPdf: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationArtworkPdf, input)
   },
   baseFiles: {
     select: (kind) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesSelect, kind),
@@ -78,6 +79,7 @@ const api: CasebangDesktopApi = {
     testConnection: () => ipcRenderer.invoke(IPC_CHANNELS.aiTestConnection),
     recognizeMaterial: (input) => ipcRenderer.invoke(IPC_CHANNELS.aiRecognizeMaterial, input),
     comparePatterns: (input) => ipcRenderer.invoke(IPC_CHANNELS.aiComparePatterns, input),
+    compareArtworkImages: (input) => ipcRenderer.invoke(IPC_CHANNELS.aiCompareArtworkImages, input),
     suggestImageNames: (input) => ipcRenderer.invoke(IPC_CHANNELS.aiSuggestImageNames, input),
     suggestImageNamesBatch: (input) => ipcRenderer.invoke(IPC_CHANNELS.aiSuggestImageNamesBatch, input),
     translateSeriesName: (input) => ipcRenderer.invoke(IPC_CHANNELS.aiTranslateSeriesName, input)

@@ -146,6 +146,12 @@ export class CollaborationService {
     return target
   }
 
+  async artworkPdf(input: unknown): Promise<{ dataUrl: string; version: number | null }> {
+    const value = z.object({ workItemId: z.string().uuid(), dentryId: z.string().min(1).max(200) }).strict().parse(input)
+    const response = await this.request(`/api/v1/dingtalk/artwork-targets/${encodeURIComponent(value.workItemId)}/pdfs/${encodeURIComponent(value.dentryId)}`, {}, { timeoutMs: 90_000, timeoutMessage: 'PDF 下载超时，请稍后逐行重试。' })
+    return response.json() as Promise<{ dataUrl: string; version: number | null }>
+  }
+
   async publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
     const masterPath = await this.settings.getMaterialMasterPath()
     if (!masterPath) throw new Error('请先在资料管理中选择物料总表。')
@@ -474,7 +480,14 @@ function serverError(code?: string, status?: number): string {
     artwork_target_not_indexed: '系列目录已解析，但没有找到可索引的目录节点。',
     artwork_category_not_indexed: '选择的产品类别目录不在当前系列索引中。',
     artwork_model_not_indexed: '选择的样本机型目录不在当前系列索引中。',
-    artwork_target_not_folder: '当前系列链接对应的不是文件夹。'
+    artwork_target_not_folder: '当前系列链接对应的不是文件夹。',
+    artwork_pdf_not_found: '该 PDF 不在当前工作簿已绑定的系列目录中，请重新读取目录。',
+    artwork_pdf_too_large: '该 PDF 超过 16 MB，暂不支持自动图案核验。',
+    dingtalk_pdf_too_large: '该 PDF 超过 16 MB，暂不支持自动图案核验。',
+    dingtalk_download_unavailable: '钉钉未提供该 PDF 的下载信息，请检查文件权限。',
+    dingtalk_download_untrusted: '钉钉返回了不受信任的下载地址，已中止自动核验。',
+    dingtalk_download_not_pdf: '钉钉返回的文件内容不是 PDF，已中止自动核验。',
+    dingtalk_download_failure: 'PDF 下载失败，请打开钉盘确认权限与文件状态。'
   }
   return messages[code ?? ''] ?? `协同服务处理失败${status ? `（HTTP ${status}）` : ''}。`
 }

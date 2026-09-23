@@ -1,4 +1,5 @@
 import { comparePatternsInputSchema, materialInputSchema } from '@shared/schemas'
+import { artworkVisualInputSchema } from '@shared/artwork-ai'
 import { app, ipcMain } from 'electron'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -264,6 +265,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.bindArtworkTarget(input)
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationArtworkPdf, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.artworkPdf(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.collaborationPublishMaterialMaster, async (event) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.publishMaterialMaster()
@@ -411,6 +417,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.aiComparePatterns, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.ai.comparePatterns(comparePatternsInputSchema.parse(input))
+  })
+
+  ipcMain.handle(IPC_CHANNELS.aiCompareArtworkImages, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.ai.compareArtworkImages(artworkVisualInputSchema.parse(input))
   })
 
   ipcMain.handle(IPC_CHANNELS.aiSuggestImageNames, async (event, input: unknown) => {

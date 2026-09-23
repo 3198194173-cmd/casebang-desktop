@@ -3,7 +3,10 @@ import { desktopApi } from '../../app/desktop-api'
 import type { CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkTarget } from '@shared/contracts'
 import type { SharedLifecycleAnalysis } from '@shared/lifecycle-contracts'
 import { previewMaterialCodes } from '@shared/material-coding'
-import { normalizeArtworkKey, parseArtworkFilename } from '@shared/artwork-comparison'
+import { parseArtworkFilename } from '@shared/artwork-comparison'
+import { buildArtworkComparisons, categoryFolders, isPdf, modelFolders, selectedPdfs } from '@shared/artwork-selection'
+import type { ArtworkVisualResult } from '@shared/artwork-ai'
+import { renderArtworkPdf } from './render-artwork-pdf'
 import '../../styles/lifecycle.css'
 import { useAccount, accountError } from '../../app/account-context'
 
@@ -17,27 +20,6 @@ function artworkCategoryMatches(row: { sheet: string; barcodeName: string }, cat
   if (categoryName === '可拆卸') return /可拆卸|磁吸背盖|手机背盖|背盖/.test(value)
   if (categoryName === '一体壳' || /出镜壳|出片壳|出彩壳/.test(categoryName)) return /一体壳|出镜壳|出片壳|出彩壳/.test(value)
   return value.includes(categoryName.toLowerCase())
-}
-
-function isPdfArtworkEntry(entry: DingTalkArtworkEntry): boolean {
-  const extension = (entry.extension ?? '').trim().toLowerCase().replace(/^\./, '')
-  if (extension === 'pdf') return true
-  return /\.pdf$/i.test(entry.name.trim())
-}
-
-function descendantEntryIds(entries: DingTalkArtworkEntry[], rootId: string): Set<string> {
-  const ids = new Set<string>([rootId])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const entry of entries) {
-      if (entry.parentId && ids.has(entry.parentId) && !ids.has(entry.id)) {
-        ids.add(entry.id)
-        changed = true
-      }
-    }
-  }
-  return ids
 }
 
 export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.JSX.Element {
@@ -54,6 +36,10 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const [artworkEntries, setArtworkEntries] = useState<DingTalkArtworkEntry[]>([])
   const [artworkCategoryId, setArtworkCategoryId] = useState('')
   const [artworkModelId, setArtworkModelId] = useState('')
+  const [selectedMainPdfs, setSelectedMainPdfs] = useState<Record<string, string>>({})
+  const [artworkPreviews, setArtworkPreviews] = useState<Record<string, string>>({})
+  const [artworkAiResults, setArtworkAiResults] = useState<Record<string, ArtworkVisualResult | { error: string }>>({})
+  const [artworkProgress, setArtworkProgress] = useState('')
   const [activeSheet, setActiveSheet] = useState('')
   const [openAfterSave, setOpenAfterSave] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -92,8 +78,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const patternOverrideAllowed = selectedItem?.sourceWorkflow === 'new-series' || selectedItem?.sourceWorkflow === 'new-products'
   const hasPatternOverrides = Boolean(analysis && Object.entries(variants).some(([key, value]) => analysis.patternVariants[key] !== value))
   const overrideReady = !hasPatternOverrides || Boolean(patternOverrideReason.trim())
-  const artworkFolders = useMemo(() => artworkEntries.filter(entry => ['folder', 'FOLDER'].includes(entry.type)), [artworkEntries])
-  const artworkCategories = useMemo(() => artworkFolders.filter(entry => ['可拆卸', '一体壳', '充电宝', '支架', '出镜壳', '出彩壳', '出片壳'].includes(entry.name)), [artworkFolders])
+  const artworkCategories = useMemo(() => categoryFolders(artworkEntries), [artworkEntries])
   const selectedArtworkCategory = artworkCategories.find(entry => entry.id === artworkCategoryId) ?? null
   const selectedArtworkRows = useMemo(() => {
     if (!analysis) return []
@@ -102,40 +87,13 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     if (!selectedArtworkCategory) return sourceRows
     return sourceRows.filter(row => artworkCategoryMatches(row, selectedArtworkCategory.name))
   }, [analysis, selectedArtworkCategory])
-  const artworkPdfParentIds = useMemo(() => new Set(artworkEntries.filter(isPdfArtworkEntry).map(entry => entry.parentId).filter((id): id is string => Boolean(id))), [artworkEntries])
-  const artworkModels = useMemo(() => artworkFolders.filter(entry => {
-    if (!selectedArtworkCategory) return false
-    const path = `${entry.path ?? ''}/${entry.name}`.toLowerCase()
-    // Only expose the leaf model folders that directly contain PDFs. A broad
-    // folder such as “苹果15” must not aggregate 苹果15PRO/苹果15PROMAX files.
-    return artworkPdfParentIds.has(entry.id) && path.includes(selectedArtworkCategory.name.toLowerCase()) && /苹果|iphone/i.test(entry.name)
-  }), [artworkFolders, artworkPdfParentIds, selectedArtworkCategory])
+  const artworkModels = useMemo(() => selectedArtworkCategory ? modelFolders(artworkEntries, selectedArtworkCategory) : [], [artworkEntries, selectedArtworkCategory])
   const selectedArtworkModel = artworkModels.find(entry => entry.id === artworkModelId) ?? null
-  const artworkModelEntryIds = useMemo(() => {
-    if (!selectedArtworkModel) return new Set<string>()
-    return descendantEntryIds(artworkEntries, selectedArtworkModel.id)
-  }, [artworkEntries, selectedArtworkModel])
-  const artworkPdfEntries = useMemo(() => artworkEntries.filter(entry => {
-    if (!selectedArtworkModel || !isPdfArtworkEntry(entry)) return false
-    if (artworkModelEntryIds.has(entry.id)) return true
-    // Older indexes may not have parentId links; retain a path-based fallback.
-    const path = `${entry.path ?? ''}/${entry.name}`.toLocaleLowerCase()
-    return path.includes(selectedArtworkModel.name.toLocaleLowerCase())
-  }), [artworkEntries, artworkModelEntryIds, selectedArtworkModel])
-  const indexedPdfCount = useMemo(() => artworkEntries.filter(isPdfArtworkEntry).length, [artworkEntries])
-  const artworkComparisons = useMemo(() => artworkPdfEntries.map(pdf => {
-    const parsed = parseArtworkFilename(pdf.name)
-    const pdfProductCode = normalizeArtworkKey(parsed.productCode ?? '')
-    const pdfPattern = parsed.normalizedPatternKey ?? ''
-    const row = selectedArtworkRows.find(candidate => {
-      const productCode = normalizeArtworkKey(candidate.productCode)
-      const pattern = normalizeArtworkKey(candidate.patternNameUpper || candidate.patternName)
-      const sameCode = Boolean(pdfProductCode && productCode && pdfProductCode === productCode)
-      const samePattern = Boolean(pdfPattern && pattern && pdfPattern === pattern)
-      return sameCode && samePattern || sameCode || samePattern
-    }) ?? null
-    return { pdf, parsed, row }
-  }), [artworkPdfEntries, selectedArtworkRows])
+  const artworkPdfEntries = useMemo(() => selectedPdfs(artworkEntries, selectedArtworkCategory, selectedArtworkModel), [artworkEntries, selectedArtworkCategory, selectedArtworkModel])
+  const directArtworkPdfs = useMemo(() => selectedPdfs(artworkEntries, selectedArtworkCategory, null), [artworkEntries, selectedArtworkCategory])
+  const indexedPdfCount = useMemo(() => artworkEntries.filter(isPdf).length, [artworkEntries])
+  const artworkComparisons = useMemo(() => buildArtworkComparisons(artworkPdfEntries, selectedArtworkRows, selectedMainPdfs), [artworkPdfEntries, selectedArtworkRows, selectedMainPdfs])
+  useEffect(() => { setSelectedMainPdfs({}); setArtworkPreviews({}); setArtworkAiResults({}); setArtworkProgress('') }, [selectedItem?.id, analysis?.revision, artworkTarget?.folderUrl, artworkCategoryId, artworkModelId])
 
   const loginAccount = async (): Promise<void> => {
     setError(''); setMessage('已打开钉钉登录页面，正在等待确认…')
@@ -169,10 +127,40 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     setMessage(`当前工作簿已选择系列图档目录“${target.folderName}”。`)
   }
   const saveArtworkSelection = async (): Promise<void> => {
-    if (!selectedItem || !artworkTarget || !artworkCategoryId || !artworkModelId) return
-    const target = await desktopApi.collaboration.bindArtworkTarget({ workItemId: selectedItem.id, folderUrl: artworkTarget.folderUrl, categoryDentryId: artworkCategoryId, modelDentryId: artworkModelId })
+    if (!selectedItem || !artworkTarget || !artworkCategoryId || (!artworkModelId && !directArtworkPdfs.length)) return
+    const target = await desktopApi.collaboration.bindArtworkTarget({ workItemId: selectedItem.id, folderUrl: artworkTarget.folderUrl, categoryDentryId: artworkCategoryId, ...(artworkModelId ? { modelDentryId: artworkModelId } : {}) })
     setArtworkTarget(target)
-    setMessage(`已保存图档选择：${selectedArtworkCategory?.name ?? '类别'} / ${selectedArtworkModel?.name ?? '机型'}。`)
+    setMessage(`已保存图档选择：${selectedArtworkCategory?.name ?? '类别'} / ${selectedArtworkModel?.name ?? '直接文件'}。`)
+  }
+  const loadArtworkPreview = async (pdf: DingTalkArtworkEntry): Promise<string> => {
+    if (!selectedItem) throw new Error('请先选择共享工作簿')
+    const value = await desktopApi.collaboration.artworkPdf({ workItemId: selectedItem.id, dentryId: pdf.id })
+    const image = await renderArtworkPdf(value.dataUrl)
+    setArtworkPreviews(previous => ({ ...previous, [pdf.id]: image }))
+    return image
+  }
+  const compareArtworkItem = async (item: (typeof artworkComparisons)[number]): Promise<void> => {
+    if (item.issue || !item.row?.imageDataUrl) throw new Error(item.issue ?? '共享表截图缺失')
+    const pdfImage = artworkPreviews[item.pdf.id] ?? await loadArtworkPreview(item.pdf)
+    const result = await desktopApi.ai.compareArtworkImages({ pdfImageDataUrl: pdfImage, workbookImageDataUrl: item.row.imageDataUrl })
+    setArtworkAiResults(previous => ({ ...previous, [item.key]: result }))
+  }
+  const compareAllArtwork = async (): Promise<void> => {
+    const eligible = artworkComparisons.filter(item => !item.issue && item.row?.imageDataUrl)
+    if (!eligible.length) throw new Error('当前没有可自动核验的行；请先解决缺图、名称冲突或重复 PDF。')
+    setArtworkAiResults({})
+    let completed = 0
+    for (const item of eligible) {
+      setArtworkProgress(`${completed} / ${eligible.length}`)
+      try {
+        await compareArtworkItem(item)
+      } catch (reason) {
+        setArtworkAiResults(previous => ({ ...previous, [item.key]: { error: reason instanceof Error ? reason.message : String(reason) } }))
+      }
+      completed += 1
+    }
+    setArtworkProgress(`${completed} / ${eligible.length}`)
+    setMessage(`AI 核验已处理 ${completed} 行；请查看每行视觉结论，异常行可打开 PDF 人工检查。`)
   }
   const sheetNames = useMemo(() => analysis ? [...new Set([...analysis.sheetNames, ...analysis.rows.map(row => row.sheet)])] : [], [analysis])
   const visibleRows = useMemo(() => {
@@ -222,10 +210,22 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
             <form className="lc-artwork-target" onSubmit={event => { event.preventDefault(); void run(bindArtworkTarget) }}><label>当前工作簿系列印刷图档文件夹<input value={artworkTargetUrl} onChange={event => setArtworkTargetUrl(event.target.value)} placeholder="https://alidocs.dingtalk.com/i/desktop/folders/..." /></label><button disabled={busy || !artworkTargetUrl.trim()}>{artworkTarget ? '重新读取系列目录' : '读取系列目录'}</button></form>
             <p className="lc-artwork-hint">每个系列使用自己的文件夹链接；读取后再选择产品类别和样本机型，不需要绑定固定父目录。</p>
             {artworkTarget ? <><div className="lc-artwork-selected"><div><small>当前系列目录</small><strong>{artworkTarget.folderName}</strong></div><a href={artworkTarget.folderUrl} target="_blank" rel="noreferrer">打开钉盘检查</a></div>
-              <div className="lc-artwork-selectors"><label>产品类别<select value={artworkCategoryId} onChange={event => { setArtworkCategoryId(event.target.value); setArtworkModelId('') }}><option value="">请选择类别目录</option>{artworkCategories.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><label>样本机型<select value={artworkModelId} onChange={event => setArtworkModelId(event.target.value)} disabled={!artworkCategoryId}><option value="">请选择机型目录</option>{artworkModels.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label><small>{selectedArtworkModel ? `已定位 ${artworkPdfEntries.length} 个 PDF（远程索引共 ${indexedPdfCount} 个，按所选机型目录筛选）；共享表已筛选 ${selectedArtworkRows.length} 条图片数据（来源：条码名/图片分表）。` : '先选择类别和机型；可拆卸使用可拆卸/磁吸背盖图片分表，一体壳使用出镜壳/出片壳图片分表。'}</small><button disabled={busy || !artworkCategoryId || !artworkModelId} onClick={() => void run(saveArtworkSelection)}>保存类别和样本机型</button></div>
-              <section className="lc-artwork-pdf-panel"><header><div><strong>已筛选的 PDF 图档</strong><small>只显示当前类别 / 机型目录下的文件，通常为 5 个。</small></div><span>{artworkPdfEntries.length} 个</span></header>{selectedArtworkModel && artworkPdfEntries.length ? <div className="lc-artwork-pdf-list">{artworkPdfEntries.map(entry => { const parsed = parseArtworkFilename(entry.name); return <article key={entry.id}><div><strong>{entry.name}</strong><small>{parsed.productCode ?? '未解析产品编码'} · {parsed.normalizedPatternKey ?? '未解析图案名称'}</small></div><a href={entry.nodeUrl} target="_blank" rel="noreferrer">打开 PDF</a></article> })}</div> : <div className="lc-artwork-empty">请选择类别和机型后显示对应 PDF。</div>}</section>
-              <section className="lc-artwork-compare"><header><div><strong>图片分表对比</strong><small>下方只展示与上面 PDF 名称或产品编码匹配的图片分表记录。</small></div><span>{artworkComparisons.filter(item => item.row).length} / {artworkComparisons.length} 行已匹配</span></header>{artworkComparisons.length ? <div className="lc-artwork-compare-table"><table><thead><tr><th>PDF 图档</th><th>图片分表截图</th><th>图片对应名称（大写）</th><th>产品编码 / 分表</th><th>核验</th></tr></thead><tbody>{artworkComparisons.map(({ pdf, parsed, row }) => <tr key={pdf.id}><td><strong>{pdf.name}</strong><small>{parsed.productCode ?? '未解析产品编码'} · {parsed.normalizedPatternKey ?? '未解析图案名称'}</small><a href={pdf.nodeUrl} target="_blank" rel="noreferrer">打开 PDF 预览</a></td><td>{row?.imageDataUrl ? <img className="lc-artwork-thumb" src={row.imageDataUrl} alt={row.patternNameUpper || row.patternName || '图片分表截图'} /> : <div className="lc-artwork-no-image">未读取到该行截图</div>}</td><td><strong>{row?.patternNameUpper || row?.patternName || parsed.normalizedPatternKey || '未匹配'}</strong><small>{row ? `${row.sheet} · 第 ${row.row} 行` : '图片分表中没有对应名称'}</small></td><td>{row?.productCode || parsed.productCode || '—'}<small>{row?.barcodeName || '—'}</small></td><td className={row ? 'matched' : 'missing'}>{row ? '已匹配，待图案核验' : '未匹配图片分表'}</td></tr>)}</tbody></table></div> : <div className="lc-artwork-empty">完成类别和机型选择后，这里只显示对应的 PDF 与图片分表行。</div>}</section>
-              <div className="lc-artwork-pending"><strong>下一步：PDF 图案 AI 核验</strong><p>每一行对应一个 PDF 和共享表图片截图；名称、产品编码用于定位，最终还需要打开 PDF 预览并进行图案视觉比对。</p></div></> : <div className="lc-artwork-blocked"><strong>尚未读取本系列目录</strong><p>请粘贴当前系列的钉盘文件夹链接。读取成功后可以手工选择“可拆卸”等类别和具体机型。</p></div>}
+              <div className="lc-artwork-selectors">
+                <label>产品类别<select disabled={busy} value={artworkCategoryId} onChange={event => { setArtworkCategoryId(event.target.value); setArtworkModelId('') }}><option value="">请选择类别目录</option>{artworkCategories.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+                <label>样本机型（直接放 PDF 时不用选）<select disabled={busy || !artworkCategoryId || (!artworkModels.length && !directArtworkPdfs.length)} value={artworkModelId} onChange={event => setArtworkModelId(event.target.value)}><option value="">{directArtworkPdfs.length ? '类别目录中的 PDF（无需机型）' : '请选择实际机型目录'}</option>{artworkModels.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+                <small>当前目录 {artworkPdfEntries.length} 份 PDF · 唯一图案 {artworkComparisons.length} 个 · 图片分表候选 {selectedArtworkRows.length} 行 · 系列索引 {indexedPdfCount} 份 PDF</small>
+                <button disabled={busy || !artworkCategoryId || (!artworkModelId && !directArtworkPdfs.length)} onClick={() => void run(saveArtworkSelection)}>保存当前目录选择</button>
+              </div>
+              <section className="lc-artwork-compare"><header><div><strong>PDF 与共享表图片横向核验</strong><small>按产品编码一行；PDF 名称和图片表名称交叉检查，AI 比较真实两张图。</small></div><div><span>{artworkComparisons.filter(item => !item.issue).length} / {artworkComparisons.length} 行可核验</span><button disabled={busy || !artworkComparisons.some(item => !item.issue && item.row?.imageDataUrl)} onClick={() => void run(compareAllArtwork)}>{busy ? `核验中 ${artworkProgress}` : '一键 AI 对比核验'}</button></div></header>
+                {artworkComparisons.length ? <div className="lc-artwork-compare-table"><table><thead><tr><th>PDF 图案</th><th>PDF 文件名</th><th>共享表截图</th><th>图片对应名称（大写）</th><th>产品编码 / 分表</th><th>AI 核验</th></tr></thead><tbody>{artworkComparisons.map(item => { const { pdf, row } = item; const parsed = parseArtworkFilename(pdf.name); const result = artworkAiResults[item.key]; return <tr key={item.key}>
+                  <td>{artworkPreviews[pdf.id] ? <img className="lc-artwork-thumb" src={artworkPreviews[pdf.id]} alt={`${pdf.name} 第一页图案`} /> : <div className="lc-artwork-no-image">{item.issue ? '待解决定位问题' : '待读取 PDF 页图'}</div>}</td>
+                  <td><strong>{pdf.name}</strong><small>{parsed.productCode ?? '未解析编码'} · {item.alternatives.length ? `另有 ${item.alternatives.length} 份同码 PDF` : '单份 PDF'}</small>{item.alternatives.length > 0 && <select aria-label={`${item.key} 选择主 PDF`} disabled={busy} value={selectedMainPdfs[item.key] ?? ''} onChange={event => { setSelectedMainPdfs(previous => ({ ...previous, [item.key]: event.target.value })); setArtworkAiResults(previous => { const next = { ...previous }; delete next[item.key]; return next }) }}><option value="">请选择主 PDF</option>{[pdf, ...item.alternatives].map(file => <option key={file.id} value={file.id}>{file.name}</option>)}</select>}<a href={pdf.nodeUrl} target="_blank" rel="noreferrer">打开原 PDF</a>{item.alternatives.map(extra => <a key={extra.id} href={extra.nodeUrl} target="_blank" rel="noreferrer">候选：{extra.name}</a>)}</td>
+                  <td>{row?.imageDataUrl ? <img className="lc-artwork-thumb" src={row.imageDataUrl} alt={row.patternNameUpper || row.patternName || '图片分表截图'} /> : <div className="lc-artwork-no-image">未读取到截图</div>}</td>
+                  <td><strong>{row?.patternNameUpper || row?.patternName || '未匹配'}</strong><small>{row ? `${row.sheet} · 第 ${row.row} 行` : '图片分表无对应编码'}</small></td>
+                  <td>{parsed.productCode ?? '—'}<small>{row?.barcodeName || '—'}</small></td>
+                  <td className={item.issue || !result || 'error' in result ? 'missing' : result.status === 'matched' ? 'matched' : 'missing'}>{item.issue ?? (!result ? '待 AI 视觉核验' : 'error' in result ? `读取/AI 失败：${result.error}` : result.status === 'matched' ? 'AI 视觉一致（待人工确认）' : result.status === 'mismatched' ? 'AI 视觉不一致' : 'AI 不确定')}{result && !('error' in result) && <small>{result.reason} · {Math.round(result.confidence * 100)}% · {result.model}</small>}{!item.issue && result && ('error' in result || result.status === 'uncertain') && <button disabled={busy} onClick={() => void run(async () => { await compareArtworkItem(item); setMessage(`已重新核验 ${item.key}。`) })}>单行重试</button>}</td>
+                </tr> })}</tbody></table></div> : <div className="lc-artwork-empty">选择实际包含 PDF 的类别或机型目录后显示横向对比。支架、充电宝等直接放 PDF 的类别无需机型。</div>}</section>
+              <div className="lc-artwork-pending"><strong>核验规则</strong><p>AI 只比较实际 PDF 页图与共享表截图；权限错误、重名、缺图、名称冲突不会判为通过。AI 一致仍需人工确认。</p></div></> : <div className="lc-artwork-blocked"><strong>尚未读取本系列目录</strong><p>请粘贴当前系列的钉盘文件夹链接，按真实目录选择类别与可选机型。</p></div>}
           </section>}
         {!!analysis.warnings.length && <details className="lc-warnings"><summary>工作簿提醒（{analysis.warnings.length}）</summary>{analysis.warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}
         {tab !== 'artwork' && <section className="lc-sheet-view"><div className="lc-sheet-heading"><div><strong>共享表预览</strong><small>按工作表查看，完整显示当前分表内容；图片工作表由第 3 步用于印刷图档比对。</small></div><span>{visibleRows.length} 行</span></div><nav className="lc-sheet-tabs" aria-label="共享表工作表">{sheetNames.map(name => <button key={name} className={name === (activeSheet || sheetNames[0]) ? 'active' : ''} onClick={() => setActiveSheet(name)}>{name}</button>)}</nav><div className="lc-table-wrap"><table><thead><tr><th>行号</th><th>物料名称</th><th>69 码 / 本次预览</th><th>物料编码 / 候选</th><th>核对结果</th></tr></thead><tbody>{visibleRows.map(row => { const result = resultIndex.get(row.id)!; const eligible = row.materialName.trim() && !row.issues.some(issue => issue.includes('业务字段含公式')); const pendingBefore = analysis.rows.slice(0, analysis.rows.indexOf(row)).filter(item => !item.barcode.trim() && item.materialName.trim() && !item.issues.some(issue => issue.includes('业务字段含公式'))).length; const barcodePreview = row.barcode || (eligible ? `${monthPrefix}${String(Number(analysis.barcodePlan.nextCode.slice(6)) + pendingBefore).padStart(7, '0')}` : '需人工核实'); return <tr key={row.id}><td>{row.row}</td><td>{row.materialName || '待补充：名称缺失'}</td><td>{barcodePreview}</td><td>{result.candidate || '暂不生成'}</td><td>{result.issues.join('；') || (result.status === 'existing' ? '已有编码，保留' : '可以写入')}</td></tr> })}</tbody></table>{!visibleRows.length && <div className="lc-sheet-empty">这是图片工作表或辅助工作表，业务字段不在此表显示；第 3 步会读取其中的图案名称与截图。</div>}</div></section>}

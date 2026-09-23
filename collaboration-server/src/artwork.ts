@@ -10,12 +10,48 @@ const bindSchema = z.object({ folderUrl: z.string().url().max(1000) }).strict()
 const targetSchema = z.object({ folderUrl: z.string().url().max(1000), categoryDentryId: z.string().trim().min(1).max(200).optional(), modelDentryId: z.string().trim().min(1).max(200).optional() }).strict()
 const workItemParams = z.object({ workItemId: z.string().uuid() })
 const searchSchema = z.object({ query: z.string().trim().max(200).default(''), limit: z.coerce.number().int().min(1).max(1000).default(30), workItemId: z.string().uuid().optional() })
+const pdfParams = z.object({ workItemId: z.string().uuid(), dentryId: z.string().trim().min(1).max(200) })
 
 interface SourceRow { id: string; folder_url: string; node_id: string; space_id: string; folder_name: string; status: string; file_count: number; folder_count: number; last_error: string | null; indexed_at: Date | null }
 interface EntryRow { dentry_id: string; dentry_uuid: string | null; parent_id: string | null; name: string; entry_type: string; extension: string | null; size_bytes: string | number | null; version: string | number | null; path: string | null; modified_at: Date | null }
 interface TargetRow { work_item_id: string; folder_url: string; node_id: string; dentry_id: string; folder_name: string; category_dentry_id: string | null; model_dentry_id: string | null; bound_at: Date }
 
 export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive: DingTalkDriveClient, grants: DingTalkUserGrantStore): void {
+  app.get('/api/v1/dingtalk/artwork-targets/:workItemId/pdfs/:dentryId', async (request, reply) => {
+    const actor = await downstreamUser(request, reply, pool); if (!actor) return
+    const params = pdfParams.safeParse(request.params)
+    if (!params.success || !(await ownsWorkItem(pool, actor, params.data.workItemId))) return reply.code(404).send({ error: 'artwork_pdf_not_found' })
+    const found = await pool.query<EntryRow & { space_id: string }>(
+      `WITH RECURSIVE tree AS (
+         SELECT entry.* FROM artwork_work_targets target JOIN artwork_entries entry ON entry.source_id=target.source_id AND entry.dentry_id=target.dentry_id
+         WHERE target.organization_id=$1 AND target.user_id=$2 AND target.work_item_id=$3
+         UNION ALL SELECT child.* FROM artwork_entries child JOIN tree parent ON child.source_id=parent.source_id AND (child.parent_id=parent.dentry_id OR child.parent_id=parent.dentry_uuid)
+       ) SELECT tree.dentry_id,tree.dentry_uuid,tree.parent_id,tree.name,tree.entry_type,tree.extension,tree.size_bytes,tree.version,tree.path,tree.modified_at,source.space_id
+       FROM tree JOIN artwork_sources source ON source.id=tree.source_id WHERE tree.dentry_id=$4 LIMIT 1`,
+      [actor.organization_id, actor.id, params.data.workItemId, params.data.dentryId]
+    )
+    const entry = found.rows[0]
+    if (!entry || !((entry.extension ?? '').toLowerCase().replace(/^\./, '') === 'pdf' || /\.pdf$/i.test(entry.name)) || ['folder', 'FOLDER'].includes(entry.entry_type)) {
+      return reply.code(404).send({ error: 'artwork_pdf_not_found' })
+    }
+    if (entry.size_bytes != null && Number(entry.size_bytes) > 16 * 1024 * 1024) return reply.code(413).send({ error: 'artwork_pdf_too_large' })
+    try {
+      const token = await grants.accessToken(actor.id, actor.organization_id)
+      const version = entry.version == null ? null : Number(entry.version)
+      let bytes: Buffer
+      try { bytes = await drive.downloadPdfForUser(token, actor.dingtalk_union_id!, entry.space_id, entry.dentry_id, version) }
+      catch (error) {
+        if (!(error instanceof DingTalkDriveError) || error.code !== 'dingtalk_drive_permission_denied') throw error
+        bytes = await drive.downloadPdfForApp(actor.dingtalk_union_id!, entry.space_id, entry.dentry_id, version)
+      }
+      return reply.header('cache-control', 'no-store').send({ dataUrl: `data:application/pdf;base64,${bytes.toString('base64')}`, version: entry.version })
+    } catch (error) {
+      const code = error instanceof DingTalkDriveError || error instanceof DingTalkUserGrantError ? error.code : 'dingtalk_download_failure'
+      request.log.warn({ code, operation: error instanceof DingTalkDriveError ? error.details.operation : undefined,
+        remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined }, 'Artwork PDF download failed')
+      return reply.code(code === 'dingtalk_pdf_too_large' ? 413 : 502).send({ error: code })
+    }
+  })
   app.get('/api/v1/dingtalk/artwork-source', async (request, reply) => {
     const actor = await downstreamUser(request, reply, pool); if (!actor) return
     const source = await loadSource(pool, actor)
@@ -87,7 +123,7 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
       ? await pool.query<EntryRow>(
         `WITH RECURSIVE tree AS (
            SELECT * FROM artwork_entries WHERE source_id=$1 AND dentry_id=$2
-           UNION ALL SELECT child.* FROM artwork_entries child JOIN tree parent ON child.parent_id=parent.dentry_id WHERE child.source_id=$1
+           UNION ALL SELECT child.* FROM artwork_entries child JOIN tree parent ON (child.parent_id=parent.dentry_id OR child.parent_id=parent.dentry_uuid) WHERE child.source_id=$1
          )
          SELECT dentry_id,dentry_uuid,parent_id,name,entry_type,extension,size_bytes,version,path,modified_at
          FROM tree WHERE dentry_id<>$2 AND ($3='' OR name ILIKE '%' || $3 || '%')

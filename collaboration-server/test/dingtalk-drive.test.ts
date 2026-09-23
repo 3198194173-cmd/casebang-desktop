@@ -131,4 +131,25 @@ describe('personal DingTalk artwork drive', () => {
     expect(result.folder.name).toBe('J7系列-印刷图档')
     expect(result.descendants.map(entry => entry.name)).toEqual(['CHARACTERCIRCLE.pdf'])
   })
+
+  it('downloads a PDF with signed headers after querying scoped download information', async () => {
+    const fetcher = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/downloadInfos/query')) {
+        expect(url).toContain('unionId=union-1')
+        expect(JSON.parse(String(init?.body))).toEqual({ option: { version: 3, preferIntranet: false } })
+        return Response.json({ headerSignatureInfo: { resourceUrls: ['https://example.oss-cn-hangzhou.aliyuncs.com/file'], headers: { 'x-signed': 'yes' } } })
+      }
+      expect(init?.headers).toEqual({ 'x-signed': 'yes' })
+      return new Response('%PDF-1.7\nexample', { status: 200 })
+    })
+    const bytes = await new DingTalkDriveClient(config, fetcher as typeof fetch).downloadPdfForUser('user-token', 'union-1', 'space-1', 'pdf-1', 3)
+    expect(bytes.subarray(0, 5).toString()).toBe('%PDF-')
+  })
+
+  it('rejects a signed download URL outside trusted HTTPS domains', async () => {
+    const fetcher = vi.fn(async () => Response.json({ headerSignatureInfo: { resourceUrls: ['https://attacker.example/file'] } }))
+    await expect(new DingTalkDriveClient(config, fetcher as typeof fetch).downloadPdfForUser('user-token', 'union-1', 'space-1', 'pdf-1', null)).rejects.toMatchObject({ code: 'dingtalk_download_untrusted' })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
 })

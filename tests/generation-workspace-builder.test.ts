@@ -8,7 +8,8 @@ import {
   MATERIAL_COLOR_OPTIONS,
   phoneModelBrand,
   productBusinessSpecification,
-  REFERENCE_PHONE_MODELS
+  REFERENCE_PHONE_MODELS,
+  sortBarcodeModelsByReference
 } from '../src/shared/product-business-rules'
 import { buildGenerationWorkspace } from '../src/renderer/src/features/tasks/generation-workspace-builder'
 import { appendExistingSeries } from '../src/renderer/src/features/tasks/existing-series'
@@ -35,7 +36,9 @@ describe('generated product workbook business flow', () => {
     const generated = workspace.workbooks.find((item) => item.id === 'generated-product')
 
     expect(generated?.sheets.map((sheet) => sheet.name)).toEqual(['图片', '条码'])
-    const imageBarcodeNames = generated?.sheets[0]?.rows.map((row) => row[0]?.value) ?? []
+    const imageRows = generated?.sheets[0]?.rows ?? []
+    expect(imageRows.map((row) => row[7]?.value)).toEqual(['BG00726', 'BG00725'])
+    const imageBarcodeNames = [imageRows[1]?.[0]?.value, imageRows[0]?.[0]?.value]
     const barcodeRows = generated?.sheets[1]?.rows ?? []
     expect(barcodeRows).toHaveLength(10)
     expect(barcodeRows.map((row) => row[3]?.value)).toEqual([
@@ -121,7 +124,7 @@ describe('generated product workbook business flow', () => {
     expect(barcodes.rows.some((row) => row[3]?.value.includes('SAM Fold 8（银框）'))).toBe(false)
   })
 
-  it('exports the same crop order as the preview within fixed categories in the existing-series flow', async () => {
+  it('exports category blocks with descending product codes in the existing-series flow', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'casebang-region-order-'))
     try {
       const analysis = analysisFixture()
@@ -129,7 +132,7 @@ describe('generated product workbook business flow', () => {
       analysis.sourceWidth = 100
       analysis.sourceHeight = 100
       const product = analysis.crops[1]!
-      // Region order deliberately differs from pixel coordinates and code/name order.
+      // Region order deliberately differs from pixel coordinates and code order.
       analysis.crops = [
         { ...analysis.crops[0]!, x: 0, y: 0, width: 100, height: 100 },
         { ...product, id: 'case-first', productCategory: '出镜壳', patternNameEn: 'Zebra', x: 50, y: 51, width: 40, height: 40 },
@@ -166,9 +169,10 @@ describe('generated product workbook business flow', () => {
       })
       const generated = request.workspace.workbooks.find((book) => book.id === 'generated-product')!
       const imageSheet = generated.sheets.find((sheet) => sheet.id === 'generated-products')!
-      const expected = ['back-first', 'back-second', 'case-first', 'case-second', 'case-first', 'case-second']
+      const expected = ['back-second', 'back-first', 'case-second', 'case-second', 'case-first', 'case-first']
       expect(imageSheet.rows.map((row) => row[1]?.cropId)).toEqual(expected)
-      expect(imageSheet.rows.map((row) => row[2]?.value)).toEqual(['', '', '', '', '银框', '银框'])
+      expect(imageSheet.rows.map((row) => row[7]?.value)).toEqual(['BG00004', 'BG00002', 'CJ00003', 'CJ00003', 'CJ00001', 'CJ00001'])
+      expect(imageSheet.rows.map((row) => row[2]?.value)).toEqual(['', '', '', '银框', '', '银框'])
       const barcodeRows = generated.sheets.find((sheet) => sheet.id === 'generated-barcodes')!.rows.filter((row) => row[3]?.value)
       expect(barcodeRows.map((row) => row[0]?.value)).toEqual(['单个片材', '单个片材', '一体壳', '一体壳', '一体壳', '一体壳'])
       expect(barcodeRows.map((row) => row[3]?.value.match(/-(Moon|Cloud|Zebra|Apple) /)?.[1])).toEqual(['Moon', 'Cloud', 'Zebra', 'Apple', 'Zebra', 'Apple'])
@@ -232,6 +236,32 @@ describe('generated product workbook business flow', () => {
     expect(phoneModelBrand('Mate 80 Pro')).toBe('huawei')
     expect(phoneModelBrand('SAM S26U')).toBe('samsung')
     expect(phoneModelBrand('New Phone X')).toBe('other')
+  })
+
+  it('places added models after the reference models within Apple, Samsung, and Huawei', () => {
+    const ordered = sortBarcodeModelsByReference([
+      { name: 'Mate New', brand: 'huawei' as const },
+      { name: 'SAM New', brand: 'samsung' as const },
+      { name: 'iP New', brand: 'apple' as const },
+      { name: 'P70', brand: 'huawei' as const },
+      { name: 'SAM S24', brand: 'samsung' as const },
+      { name: 'iP13 Pro Max', brand: 'apple' as const },
+      { name: 'iP13 Pro', brand: 'apple' as const }
+    ])
+    expect(ordered.map((model) => model.name)).toEqual([
+      'iP13 Pro', 'iP13 Pro Max', 'iP New',
+      'SAM S24', 'SAM New',
+      'P70', 'Mate New'
+    ])
+    const form: TaskDraftInput = {
+      templateName: '可拆卸+其他', seriesNameZh: '测试', seriesNameEn: 'Test Series', ipRemark: '',
+      selectedModels: ordered.map((model) => model.name).reverse(),
+      modelBrandAssignments: Object.fromEntries(ordered.map((model) => [model.name, model.brand])),
+      masterImagePath: 'C:\\images\\master.png'
+    }
+    const barcodeRows = buildGenerationWorkspace(form, analysisFixture(), encodingFixture(), [])
+      .workbooks.find((item) => item.id === 'generated-product')!.sheets.find((sheet) => sheet.id === 'generated-barcodes')!.rows
+    expect(barcodeRows.filter((row) => row[3]?.value.includes('Mint Dot')).map((row) => row[3]?.value.split(' BG00725 ')[1])).toEqual(ordered.map((model) => model.name))
   })
 
   it('keeps every barcode item class together before starting the next class', () => {

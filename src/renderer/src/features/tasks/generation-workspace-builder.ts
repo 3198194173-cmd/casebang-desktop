@@ -3,7 +3,7 @@ import type { EncodingPreviewResult, EncodingPreviewRow } from '@shared/coding-c
 import type { GenerationQualityCheck, GenerationWorkspaceData, PreviewCell, PreviewSheet, PreviewWorkbook } from '@shared/generation-contracts'
 import type { CropBox, ImageAnalysisResult } from '@shared/image-contracts'
 import { buildSeriesCodeReservePlan, resolveNextSeriesRecord } from '@shared/series-code'
-import { BARCODE_MODEL_BRAND_ORDER, isPairedWireless, wirelessPrices, phoneModelBrand, productBusinessSpecification, REFERENCE_PHONE_MODELS, type PhoneModelBrand } from '@shared/product-business-rules'
+import { isPairedWireless, wirelessPrices, phoneModelBrand, productBusinessSpecification, sortBarcodeModelsByReference } from '@shared/product-business-rules'
 import { buildProductImageMapping } from './product-image-mapping-builder'
 
 const USED_CODE_HEADERS = ['磁吸背盖', '出镜壳/出片壳', '出彩壳', '磁吸支架背盖', '磁吸气囊支架', 'CP002/MP16磁吸充电宝', 'CP006自带线移动电源', 'iPad保护壳', 'Macbook保护壳', '卡包', '奇趣礼盒', '奇趣壳', '奇趣气囊支架', '奇趣挂绳', '镜头框', '镜头膜']
@@ -264,10 +264,22 @@ function expandProductImageRows(rows: GeneratedProductRow[]): Array<{ row: Gener
   const categories = [...new Set(rows.map((row) => row.crop.productCategory))]
   for (const category of categories) {
     const categoryRows = rows.filter((row) => row.crop.productCategory === category)
-    result.push(...categoryRows.map((row) => ({ row, frame: 'normal' as const })))
-    if (usesSilverFrame(category)) result.push(...categoryRows.map((row) => ({ row, frame: 'silver' as const })))
+      .sort((left, right) => compareProductCodesDescending(left.code, right.code))
+    for (const row of categoryRows) {
+      result.push({ row, frame: 'normal' })
+      if (usesSilverFrame(category)) result.push({ row, frame: 'silver' })
+    }
   }
   return result
+}
+
+function compareProductCodesDescending(left: string, right: string): number {
+  const leftMatch = /^([A-Z]+)(\d{5})$/.exec(left)
+  const rightMatch = /^([A-Z]+)(\d{5})$/.exec(right)
+  if (!leftMatch) return rightMatch ? 1 : 0
+  if (!rightMatch) return -1
+  const byNumber = Number(rightMatch[2]) - Number(leftMatch[2])
+  return byNumber || rightMatch[1]!.localeCompare(leftMatch[1]!, 'en')
 }
 
 function buildBarcodeSheet(form: TaskDraftInput, rows: GeneratedProductRow[]): PreviewSheet {
@@ -323,8 +335,6 @@ function buildBarcodeRows(form: TaskDraftInput, rows: GeneratedProductRow[]): Pr
 }
 
 function orderedBarcodeModels(form: TaskDraftInput): BarcodeModelSetting[] {
-  const brandRank = new Map<PhoneModelBrand, number>(BARCODE_MODEL_BRAND_ORDER.map((brand, index) => [brand, index]))
-  const referenceRank = new Map<string, number>(REFERENCE_PHONE_MODELS.map((model, index) => [model, index]))
   const settings: BarcodeModelSetting[] = form.modelSettings?.length
     ? form.modelSettings.filter((model) => model.enabled && model.name.trim())
     : [...new Set(form.selectedModels)].map((name, index) => ({
@@ -334,17 +344,7 @@ function orderedBarcodeModels(form: TaskDraftInput): BarcodeModelSetting[] {
         enabled: true,
         silverEnabled: true
       }))
-  return settings.map((setting, selectedIndex) => ({
-    ...setting,
-    selectedIndex,
-    referenceIndex: referenceRank.get(setting.name)
-  })).sort((left, right) => {
-    const byBrand = (brandRank.get(left.brand) ?? 999) - (brandRank.get(right.brand) ?? 999)
-    if (byBrand !== 0) return byBrand
-    const leftIndex = left.referenceIndex ?? REFERENCE_PHONE_MODELS.length + left.selectedIndex
-    const rightIndex = right.referenceIndex ?? REFERENCE_PHONE_MODELS.length + right.selectedIndex
-    return leftIndex - rightIndex
-  }).map(({ selectedIndex: _selectedIndex, referenceIndex: _referenceIndex, ...item }) => item)
+  return sortBarcodeModelsByReference(settings)
 }
 
 function buildBarcodeRow(form: TaskDraftInput, row: GeneratedProductRow, model: BarcodeModelSetting | null, frame: 'normal' | 'silver'): PreviewCell[] {

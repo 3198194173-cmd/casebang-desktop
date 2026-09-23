@@ -5,12 +5,12 @@ import type { ImageAnalysisResult } from '@shared/image-contracts'
 import type { BarcodeModelSetting, CategoryFramePriceRule, FramePricePair } from '@shared/contracts'
 import { desktopApi } from '../../app/desktop-api'
 import { buildSeriesCodeReservePlan, isValidSeriesCode } from '@shared/series-code'
-import { phoneModelBrand, productBusinessSpecification, REFERENCE_PHONE_MODELS, type PhoneModelBrand } from '@shared/product-business-rules'
+import { phoneModelBrand, productBusinessSpecification, REFERENCE_PHONE_MODELS, sortBarcodeModelsByReference, type PhoneModelBrand } from '@shared/product-business-rules'
 
 const MODEL_BRANDS: Array<{ id: PhoneModelBrand; label: string }> = [
   { id: 'apple', label: '苹果' },
-  { id: 'huawei', label: '华为' },
   { id: 'samsung', label: '三星' },
+  { id: 'huawei', label: '华为' },
   { id: 'other', label: '其他' }
 ]
 
@@ -114,7 +114,7 @@ export function EncodingPreviewWorkspace({
       })), [modelSettings, availableModels, modelBrandAssignments, selectedModels])
   const modelGroups = useMemo(() => MODEL_BRANDS.map((brand) => ({
     ...brand,
-    models: effectiveModelSettings.filter((model) => model.brand === brand.id)
+    models: sortBarcodeModelsByReference(effectiveModelSettings.filter((model) => model.brand === brand.id))
   })), [effectiveModelSettings])
   const modelDependentProductCount = useMemo(
     () => analysis.crops.filter((crop) => crop.role !== 'series-overview' && productBusinessSpecification(crop.productCategory).expandsByModel).length,
@@ -126,11 +126,12 @@ export function EncodingPreviewWorkspace({
   }, [modelSettings.length])
 
   const commitModelSettings = (settings: BarcodeModelSetting[]): void => {
+    const ordered = sortBarcodeModelsByReference(settings)
     setModelsConfirmed(false)
-    setModelSettings(settings)
-    const enabled = settings.filter((model) => model.enabled && model.name.trim())
+    setModelSettings(ordered)
+    const enabled = ordered.filter((model) => model.enabled && model.name.trim())
     setSelectedModels(enabled.map((model) => model.name.trim()))
-    setModelBrandAssignments(Object.fromEntries(settings.filter((model) => model.name.trim()).map((model) => [model.name.trim(), model.brand])))
+    setModelBrandAssignments(Object.fromEntries(ordered.filter((model) => model.name.trim()).map((model) => [model.name.trim(), model.brand])))
   }
 
   const updateModels = (models: string[]): void => {

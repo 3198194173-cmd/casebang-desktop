@@ -66,6 +66,22 @@ export type PhoneModelBrand = 'apple' | 'huawei' | 'samsung' | 'other'
 /** Barcode-sheet order observed in the reference product workbook. */
 export const BARCODE_MODEL_BRAND_ORDER: readonly PhoneModelBrand[] = ['apple', 'samsung', 'huawei', 'other']
 
+/** Keep the reference workbook's model sequence; append new models inside their brand block. */
+export function sortBarcodeModelsByReference<T extends { name: string; brand: PhoneModelBrand }>(models: readonly T[]): T[] {
+  const brandRank = new Map(BARCODE_MODEL_BRAND_ORDER.map((brand, index) => [brand, index]))
+  const referenceRank = new Map<string, number>(REFERENCE_PHONE_MODELS.map((name, index) => [name, index]))
+  return models.map((model, index) => ({ model, index })).sort((left, right) => {
+    const brandDifference = (brandRank.get(left.model.brand) ?? 999) - (brandRank.get(right.model.brand) ?? 999)
+    if (brandDifference !== 0) return brandDifference
+    const leftReference = referenceRank.get(left.model.name)
+    const rightReference = referenceRank.get(right.model.name)
+    if (leftReference !== undefined && rightReference !== undefined) return leftReference - rightReference
+    if (leftReference !== undefined) return -1
+    if (rightReference !== undefined) return 1
+    return left.index - right.index
+  }).map(({ model }) => model)
+}
+
 export function phoneModelBrand(model: string): PhoneModelBrand {
   const normalized = model.normalize('NFKC').trim().toLocaleLowerCase('en-US')
   if (/^(?:ip|iphone)/.test(normalized)) return 'apple'

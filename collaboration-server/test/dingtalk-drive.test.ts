@@ -147,6 +147,15 @@ describe('personal DingTalk artwork drive', () => {
     expect(bytes.subarray(0, 5).toString()).toBe('%PDF-')
   })
 
+  it('can issue a desktop download ticket without transferring PDF bytes through the server', async () => {
+    const fetcher = vi.fn(async () => Response.json({ headerSignatureInfo: {
+      resourceUrls: ['https://example.oss-cn-hangzhou.aliyuncs.com/file?signature=temporary'], headers: { 'x-signed': 'yes' }
+    } }))
+    const ticket = await new DingTalkDriveClient(config, fetcher as typeof fetch).pdfDownloadTicketForUser('user-token', 'union-1', 'space-1', 'pdf-1', 3)
+    expect(ticket).toEqual({ url: 'https://example.oss-cn-hangzhou.aliyuncs.com/file?signature=temporary', headers: { 'x-signed': 'yes' } })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects a signed download URL outside trusted HTTPS domains', async () => {
     const fetcher = vi.fn(async () => Response.json({ headerSignatureInfo: { resourceUrls: ['https://attacker.example/file'] } }))
     await expect(new DingTalkDriveClient(config, fetcher as typeof fetch).downloadPdfForUser('user-token', 'union-1', 'space-1', 'pdf-1', null)).rejects.toMatchObject({ code: 'dingtalk_download_untrusted' })

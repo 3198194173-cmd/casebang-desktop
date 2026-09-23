@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { desktopApi } from '../../app/desktop-api'
 import type { CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkTarget } from '@shared/contracts'
 import type { SharedLifecycleAnalysis } from '@shared/lifecycle-contracts'
@@ -22,8 +22,8 @@ function artworkCategoryMatches(row: { sheet: string; barcodeName: string }, cat
   return value.includes(categoryName.toLowerCase())
 }
 
-async function fetchArtworkPage(workItemId: string, pdf: DingTalkArtworkEntry): Promise<string> {
-  const value = await desktopApi.collaboration.artworkPdf({ workItemId, dentryId: pdf.id })
+async function fetchArtworkPage(workItemId: string, pdf: DingTalkArtworkEntry, scopeId: string): Promise<string> {
+  const value = await desktopApi.collaboration.artworkPdf({ workItemId, dentryId: pdf.id, scopeId })
   return renderArtworkPdf(value.dataUrl)
 }
 
@@ -48,6 +48,8 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const [openPdfPreviewId, setOpenPdfPreviewId] = useState<string | null>(null)
   const [artworkAiResults, setArtworkAiResults] = useState<Record<string, ArtworkVisualResult | { error: string }>>({})
   const [artworkProgress, setArtworkProgress] = useState('')
+  const artworkPreviewScopeId = useRef<string | null>(null)
+  const artworkPreviewRequests = useRef(new Map<string, Promise<string>>())
   const [activeSheet, setActiveSheet] = useState('')
   const [openAfterSave, setOpenAfterSave] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -102,18 +104,34 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   const indexedPdfCount = useMemo(() => artworkEntries.filter(isPdf).length, [artworkEntries])
   const artworkComparisons = useMemo(() => buildArtworkComparisons(artworkPdfEntries, selectedArtworkRows, selectedMainPdfs), [artworkPdfEntries, selectedArtworkRows, selectedMainPdfs])
   const artworkPreviewScope = `${selectedItem?.id ?? ''}:${analysis?.revision ?? ''}:${artworkTarget?.folderUrl ?? ''}:${artworkCategoryId}:${artworkModelId}:${artworkPdfEntries.map(pdf => `${pdf.id}@${pdf.version ?? ''}`).join(',')}`
+  const readArtworkPage = (workItemId: string, pdf: DingTalkArtworkEntry, scopeId: string): Promise<string> => {
+    const key = `${scopeId}:${pdf.id}`
+    const existing = artworkPreviewRequests.current.get(key)
+    if (existing) return existing
+    const operation = fetchArtworkPage(workItemId, pdf, scopeId).finally(() => {
+      if (artworkPreviewRequests.current.get(key) === operation) artworkPreviewRequests.current.delete(key)
+    })
+    artworkPreviewRequests.current.set(key, operation)
+    return operation
+  }
   useEffect(() => { setSelectedMainPdfs({}); setArtworkPreviews({}); setArtworkPreviewErrors({}); setArtworkPreviewLoading({}); setOpenPdfPreviewId(null); setArtworkAiResults({}); setArtworkProgress('') }, [artworkPreviewScope])
   useEffect(() => {
-    if (tab !== 'artwork' || !selectedItem || !artworkTarget || !artworkPdfEntries.length) return
+    if (enabled && tab === 'artwork') return
+    setArtworkPreviews({}); setArtworkPreviewErrors({}); setArtworkPreviewLoading({}); setOpenPdfPreviewId(null); setArtworkAiResults({}); setArtworkProgress('')
+  }, [enabled, tab])
+  useEffect(() => {
+    if (!enabled || tab !== 'artwork' || !selectedItem || !artworkTarget || !artworkPdfEntries.length) return
     let cancelled = false
     const workItemId = selectedItem.id
+    const scopeId = crypto.randomUUID()
+    artworkPreviewScopeId.current = scopeId
     const pending = [...artworkPdfEntries]
     setArtworkPreviewLoading(Object.fromEntries(pending.map(pdf => [pdf.id, true])))
     const worker = async (): Promise<void> => {
       while (pending.length && !cancelled) {
         const pdf = pending.shift()!
         try {
-          const image = await fetchArtworkPage(workItemId, pdf)
+          const image = await readArtworkPage(workItemId, pdf, scopeId)
           if (!cancelled) setArtworkPreviews(previous => ({ ...previous, [pdf.id]: image }))
         } catch (reason) {
           if (!cancelled) setArtworkPreviewErrors(previous => ({ ...previous, [pdf.id]: reason instanceof Error ? reason.message : String(reason) }))
@@ -122,9 +140,15 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
         }
       }
     }
-    void Promise.all([worker(), worker()])
-    return () => { cancelled = true }
-  }, [artworkPreviewScope, tab])
+    // Limit memory use and avoid concurrent multi-megabyte DingTalk downloads.
+    void worker()
+    return () => {
+      cancelled = true
+      if (artworkPreviewScopeId.current === scopeId) artworkPreviewScopeId.current = null
+      for (const key of artworkPreviewRequests.current.keys()) if (key.startsWith(`${scopeId}:`)) artworkPreviewRequests.current.delete(key)
+      void desktopApi.collaboration.cancelArtworkPdf({ scopeId }).catch(() => undefined)
+    }
+  }, [artworkPreviewScope, enabled, tab])
 
   const loginAccount = async (): Promise<void> => {
     setError(''); setMessage('已打开钉钉登录页面，正在等待确认…')
@@ -165,37 +189,47 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
   }
   const loadArtworkPreview = async (pdf: DingTalkArtworkEntry): Promise<string> => {
     if (!selectedItem) throw new Error('请先选择共享工作簿')
+    const scopeId = artworkPreviewScopeId.current
+    if (!scopeId) throw new Error('请先进入印刷图档核验步骤。')
     setArtworkPreviewLoading(previous => ({ ...previous, [pdf.id]: true }))
     try {
-      const image = await fetchArtworkPage(selectedItem.id, pdf)
-      setArtworkPreviews(previous => ({ ...previous, [pdf.id]: image }))
-      setArtworkPreviewErrors(previous => { const next = { ...previous }; delete next[pdf.id]; return next })
+      const image = await readArtworkPage(selectedItem.id, pdf, scopeId)
+      if (artworkPreviewScopeId.current === scopeId) {
+        setArtworkPreviews(previous => ({ ...previous, [pdf.id]: image }))
+        setArtworkPreviewErrors(previous => { const next = { ...previous }; delete next[pdf.id]; return next })
+      }
       return image
     } catch (reason) {
-      setArtworkPreviewErrors(previous => ({ ...previous, [pdf.id]: reason instanceof Error ? reason.message : String(reason) }))
+      if (artworkPreviewScopeId.current === scopeId) setArtworkPreviewErrors(previous => ({ ...previous, [pdf.id]: reason instanceof Error ? reason.message : String(reason) }))
       throw reason
-    } finally { setArtworkPreviewLoading(previous => ({ ...previous, [pdf.id]: false })) }
+    } finally { if (artworkPreviewScopeId.current === scopeId) setArtworkPreviewLoading(previous => ({ ...previous, [pdf.id]: false })) }
   }
   const compareArtworkItem = async (item: (typeof artworkComparisons)[number]): Promise<void> => {
     if (item.issue || !item.row?.imageDataUrl) throw new Error(item.issue ?? '共享表截图缺失')
+    const scopeId = artworkPreviewScopeId.current
+    if (!scopeId) throw new Error('印刷图档核验已结束。')
     const pdfImage = artworkPreviews[item.pdf.id] ?? await loadArtworkPreview(item.pdf)
     const result = await desktopApi.ai.compareArtworkImages({ pdfImageDataUrl: pdfImage, workbookImageDataUrl: item.row.imageDataUrl })
-    setArtworkAiResults(previous => ({ ...previous, [item.key]: result }))
+    if (artworkPreviewScopeId.current === scopeId) setArtworkAiResults(previous => ({ ...previous, [item.key]: result }))
   }
   const compareAllArtwork = async (): Promise<void> => {
     const eligible = artworkComparisons.filter(item => !item.issue && item.row?.imageDataUrl)
     if (!eligible.length) throw new Error('当前没有可自动核验的行；请先解决缺图、名称冲突或重复 PDF。')
+    const scopeId = artworkPreviewScopeId.current
+    if (!scopeId) throw new Error('印刷图档核验已结束。')
     setArtworkAiResults({})
     let completed = 0
     for (const item of eligible) {
+      if (artworkPreviewScopeId.current !== scopeId) break
       setArtworkProgress(`${completed} / ${eligible.length}`)
       try {
         await compareArtworkItem(item)
       } catch (reason) {
-        setArtworkAiResults(previous => ({ ...previous, [item.key]: { error: reason instanceof Error ? reason.message : String(reason) } }))
+        if (artworkPreviewScopeId.current === scopeId) setArtworkAiResults(previous => ({ ...previous, [item.key]: { error: reason instanceof Error ? reason.message : String(reason) } }))
       }
       completed += 1
     }
+    if (artworkPreviewScopeId.current !== scopeId) return
     setArtworkProgress(`${completed} / ${eligible.length}`)
     setMessage(`AI 核验已处理 ${completed} 行；请查看每行视觉结论，异常行可打开 PDF 人工检查。`)
   }
@@ -253,7 +287,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
                 <small>当前目录 {artworkPdfEntries.length} 份 PDF · 唯一图案 {artworkComparisons.length} 个 · 图片分表候选 {selectedArtworkRows.length} 行 · 系列索引 {indexedPdfCount} 份 PDF</small>
                 <button disabled={busy || !artworkCategoryId || (!artworkModelId && !directArtworkPdfs.length)} onClick={() => void run(saveArtworkSelection)}>保存当前目录选择</button>
               </div>
-              <section className="lc-artwork-compare"><header><div><strong>PDF 与共享表图片横向核验</strong><small>按产品编码一行；PDF 名称和图片表名称交叉检查，AI 比较真实两张图。</small></div><div><span>{artworkComparisons.filter(item => !item.issue).length} / {artworkComparisons.length} 行可核验</span><button disabled={busy || !artworkComparisons.some(item => !item.issue && item.row?.imageDataUrl)} onClick={() => void run(compareAllArtwork)}>{busy ? `核验中 ${artworkProgress}` : '一键 AI 对比核验'}</button></div></header>
+              <section className="lc-artwork-compare"><header><div><strong>PDF 与共享表图片横向核验</strong><small>按产品编码一行；PDF 名称和图片表名称交叉检查，AI 比较真实两张图。PDF 仅临时存于内存，不保存到下载文件夹。</small></div><div><span>{artworkComparisons.filter(item => !item.issue).length} / {artworkComparisons.length} 行可核验</span><button disabled={busy || !artworkComparisons.some(item => !item.issue && item.row?.imageDataUrl)} onClick={() => void run(compareAllArtwork)}>{busy ? `核验中 ${artworkProgress}` : '一键 AI 对比核验'}</button><button disabled={busy} onClick={() => setTab('barcode')}>结束核验并清除预览</button></div></header>
                 {artworkComparisons.length ? <div className="lc-artwork-compare-table"><table><thead><tr><th>PDF 图案</th><th>PDF 文件名</th><th>共享表截图</th><th>图片对应名称（大写）</th><th>产品编码 / 分表</th><th>AI 核验</th></tr></thead><tbody>{artworkComparisons.map(item => { const { pdf, row } = item; const parsed = parseArtworkFilename(pdf.name); const result = artworkAiResults[item.key]; return <tr key={item.key}>
                   <td>{artworkPreviews[pdf.id] ? <button className="lc-artwork-preview-button" title="在软件中放大查看 PDF 第一页" onClick={() => setOpenPdfPreviewId(pdf.id)}><img className="lc-artwork-thumb" src={artworkPreviews[pdf.id]} alt={`${pdf.name} 第一页图案`} /></button> : <><div className="lc-artwork-no-image">{artworkPreviewLoading[pdf.id] ? '正在加载 PDF…' : artworkPreviewErrors[pdf.id] ? 'PDF 预览失败' : '待读取 PDF 页图'}</div>{artworkPreviewErrors[pdf.id] && <><small className="lc-artwork-preview-error" title={artworkPreviewErrors[pdf.id]}>{artworkPreviewErrors[pdf.id]}</small><button disabled={busy || artworkPreviewLoading[pdf.id]} onClick={() => void run(async () => { await loadArtworkPreview(pdf) })}>重试预览</button></>}</>}</td>
                   <td><strong>{pdf.name}</strong><small>{parsed.productCode ?? '未解析编码'} · {item.alternatives.length ? `另有 ${item.alternatives.length} 份同码 PDF` : '单份 PDF'}</small>{item.alternatives.length > 0 && <select aria-label={`${item.key} 选择主 PDF`} disabled={busy} value={selectedMainPdfs[item.key] ?? ''} onChange={event => { setSelectedMainPdfs(previous => ({ ...previous, [item.key]: event.target.value })); setArtworkAiResults(previous => { const next = { ...previous }; delete next[item.key]; return next }) }}><option value="">请选择主 PDF</option>{[pdf, ...item.alternatives].map(file => <option key={file.id} value={file.id}>{file.name}</option>)}</select>}<a href={pdf.nodeUrl} target="_blank" rel="noreferrer">打开原 PDF</a>{item.alternatives.map(extra => <a key={extra.id} href={extra.nodeUrl} target="_blank" rel="noreferrer">候选：{extra.name}</a>)}</td>

@@ -327,7 +327,8 @@ export interface CasebangDesktopApi {
     searchArtworkEntries(input: { query?: string; limit?: number; workItemId?: string }): Promise<DingTalkArtworkEntry[]>
     artworkTarget(input: { workItemId: string }): Promise<DingTalkArtworkTarget | null>
     bindArtworkTarget(input: { workItemId: string; folderUrl: string; categoryDentryId?: string; modelDentryId?: string }): Promise<DingTalkArtworkTarget>
-    artworkPdf(input: { workItemId: string; dentryId: string }): Promise<{ dataUrl: string; version: number | null }>
+    artworkPdf(input: { workItemId: string; dentryId: string; scopeId: string }): Promise<{ dataUrl: string; version: number | null }>
+    cancelArtworkPdf(input: { scopeId: string }): Promise<void>
   }
   baseFiles: {
     select(kind: BaseFileKind): Promise<BaseFileRecord>

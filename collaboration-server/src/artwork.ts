@@ -14,26 +14,42 @@ const pdfParams = z.object({ workItemId: z.string().uuid(), dentryId: z.string()
 
 interface SourceRow { id: string; folder_url: string; node_id: string; space_id: string; folder_name: string; status: string; file_count: number; folder_count: number; last_error: string | null; indexed_at: Date | null }
 interface EntryRow { dentry_id: string; dentry_uuid: string | null; parent_id: string | null; name: string; entry_type: string; extension: string | null; size_bytes: string | number | null; version: string | number | null; path: string | null; modified_at: Date | null }
+type PdfEntryRow = EntryRow & { space_id: string }
 interface TargetRow { work_item_id: string; folder_url: string; node_id: string; dentry_id: string; folder_name: string; category_dentry_id: string | null; model_dentry_id: string | null; bound_at: Date }
 
 export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive: DingTalkDriveClient, grants: DingTalkUserGrantStore): void {
+  app.get('/api/v1/dingtalk/artwork-targets/:workItemId/pdfs/:dentryId/download-ticket', async (request, reply) => {
+    const actor = await downstreamUser(request, reply, pool); if (!actor) return
+    const params = pdfParams.safeParse(request.params)
+    if (!params.success) return reply.code(404).send({ error: 'artwork_pdf_not_found' })
+    const entry = await authorizedPdfEntry(pool, actor, params.data.workItemId, params.data.dentryId)
+    if (!entry) return reply.code(404).send({ error: 'artwork_pdf_not_found' })
+    if (entry.size_bytes != null && Number(entry.size_bytes) > 16 * 1024 * 1024) return reply.code(413).send({ error: 'artwork_pdf_too_large' })
+    try {
+      const token = await grants.accessToken(actor.id, actor.organization_id)
+      const version = entry.version == null ? null : Number(entry.version)
+      let ticket
+      try { ticket = await drive.pdfDownloadTicketForUser(token, actor.dingtalk_union_id!, entry.space_id, entry.dentry_id, version) }
+      catch (error) {
+        if (!(error instanceof DingTalkDriveError) || error.code !== 'dingtalk_drive_permission_denied') throw error
+        ticket = await drive.pdfDownloadTicketForApp(actor.dingtalk_union_id!, entry.space_id, entry.dentry_id, version)
+      }
+      // The signed URL is sent only to the desktop main process, never to the renderer.
+      return reply.header('cache-control', 'no-store').send({ ...ticket, version, sizeBytes: entry.size_bytes == null ? null : Number(entry.size_bytes) })
+    } catch (error) {
+      const code = error instanceof DingTalkDriveError || error instanceof DingTalkUserGrantError ? error.code : 'dingtalk_download_failure'
+      request.log.warn({ code, operation: error instanceof DingTalkDriveError ? error.details.operation : undefined,
+        remoteCode: error instanceof DingTalkDriveError ? error.details.remoteCode : undefined }, 'Artwork PDF download ticket failed')
+      return reply.code(502).send({ error: code })
+    }
+  })
+
   app.get('/api/v1/dingtalk/artwork-targets/:workItemId/pdfs/:dentryId', async (request, reply) => {
     const actor = await downstreamUser(request, reply, pool); if (!actor) return
     const params = pdfParams.safeParse(request.params)
-    if (!params.success || !(await ownsWorkItem(pool, actor, params.data.workItemId))) return reply.code(404).send({ error: 'artwork_pdf_not_found' })
-    const found = await pool.query<EntryRow & { space_id: string }>(
-      `WITH RECURSIVE tree AS (
-         SELECT entry.* FROM artwork_work_targets target JOIN artwork_entries entry ON entry.source_id=target.source_id AND entry.dentry_id=target.dentry_id
-         WHERE target.organization_id=$1 AND target.user_id=$2 AND target.work_item_id=$3
-         UNION ALL SELECT child.* FROM artwork_entries child JOIN tree parent ON child.source_id=parent.source_id AND (child.parent_id=parent.dentry_id OR child.parent_id=parent.dentry_uuid)
-       ) SELECT tree.dentry_id,tree.dentry_uuid,tree.parent_id,tree.name,tree.entry_type,tree.extension,tree.size_bytes,tree.version,tree.path,tree.modified_at,source.space_id
-       FROM tree JOIN artwork_sources source ON source.id=tree.source_id WHERE tree.dentry_id=$4 LIMIT 1`,
-      [actor.organization_id, actor.id, params.data.workItemId, params.data.dentryId]
-    )
-    const entry = found.rows[0]
-    if (!entry || !((entry.extension ?? '').toLowerCase().replace(/^\./, '') === 'pdf' || /\.pdf$/i.test(entry.name)) || ['folder', 'FOLDER'].includes(entry.entry_type)) {
-      return reply.code(404).send({ error: 'artwork_pdf_not_found' })
-    }
+    if (!params.success) return reply.code(404).send({ error: 'artwork_pdf_not_found' })
+    const entry = await authorizedPdfEntry(pool, actor, params.data.workItemId, params.data.dentryId)
+    if (!entry) return reply.code(404).send({ error: 'artwork_pdf_not_found' })
     if (entry.size_bytes != null && Number(entry.size_bytes) > 16 * 1024 * 1024) return reply.code(413).send({ error: 'artwork_pdf_too_large' })
     try {
       const token = await grants.accessToken(actor.id, actor.organization_id)
@@ -43,6 +59,12 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
       catch (error) {
         if (!(error instanceof DingTalkDriveError) || error.code !== 'dingtalk_drive_permission_denied') throw error
         bytes = await drive.downloadPdfForApp(actor.dingtalk_union_id!, entry.space_id, entry.dentry_id, version)
+      }
+      // New desktop clients request the PDF bytes directly. Keep the JSON
+      // response for older clients while they are being updated.
+      if (request.headers.accept?.includes('application/pdf')) {
+        if (entry.version != null) reply.header('x-artwork-version', String(entry.version))
+        return reply.header('cache-control', 'no-store').type('application/pdf').send(bytes)
       }
       return reply.header('cache-control', 'no-store').send({ dataUrl: `data:application/pdf;base64,${bytes.toString('base64')}`, version: entry.version })
     } catch (error) {
@@ -200,6 +222,22 @@ export function registerArtworkRoutes(app: FastifyInstance, pool: pg.Pool, drive
     )
     return reply.header('cache-control', 'no-store').send({ target: publicTarget(result.rows[0]!) })
   })
+}
+
+async function authorizedPdfEntry(pool: pg.Pool, actor: SessionUserRow, workItemId: string, dentryId: string): Promise<PdfEntryRow | null> {
+  if (!(await ownsWorkItem(pool, actor, workItemId))) return null
+  const found = await pool.query<PdfEntryRow>(
+    `WITH RECURSIVE tree AS (
+       SELECT entry.* FROM artwork_work_targets target JOIN artwork_entries entry ON entry.source_id=target.source_id AND entry.dentry_id=target.dentry_id
+       WHERE target.organization_id=$1 AND target.user_id=$2 AND target.work_item_id=$3
+       UNION ALL SELECT child.* FROM artwork_entries child JOIN tree parent ON child.source_id=parent.source_id AND (child.parent_id=parent.dentry_id OR child.parent_id=parent.dentry_uuid)
+     ) SELECT tree.dentry_id,tree.dentry_uuid,tree.parent_id,tree.name,tree.entry_type,tree.extension,tree.size_bytes,tree.version,tree.path,tree.modified_at,source.space_id
+     FROM tree JOIN artwork_sources source ON source.id=tree.source_id WHERE tree.dentry_id=$4 LIMIT 1`,
+    [actor.organization_id, actor.id, workItemId, dentryId]
+  )
+  const entry = found.rows[0]
+  if (!entry || !((entry.extension ?? '').toLowerCase().replace(/^\./, '') === 'pdf' || /\.pdf$/i.test(entry.name)) || ['folder', 'FOLDER'].includes(entry.entry_type)) return null
+  return entry
 }
 
 async function downstreamUser(request: Parameters<typeof authenticatedUser>[0], reply: Parameters<typeof authenticatedUser>[1], pool: pg.Pool): Promise<SessionUserRow | null> {

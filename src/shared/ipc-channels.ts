@@ -40,6 +40,7 @@ export const IPC_CHANNELS = {
   collaborationArtworkTarget: 'collaboration:artwork-target',
   collaborationBindArtworkTarget: 'collaboration:bind-artwork-target',
   collaborationArtworkPdf: 'collaboration:artwork-pdf',
+  collaborationCancelArtworkPdf: 'collaboration:cancel-artwork-pdf',
   baseFilesSelect: 'base-files:select',
   baseFilesPreview: 'base-files:preview',
   baseFilesHistory: 'base-files:history',

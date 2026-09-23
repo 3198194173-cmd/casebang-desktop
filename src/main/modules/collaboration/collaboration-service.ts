@@ -1,4 +1,4 @@
-import { app, net, shell } from 'electron'
+import { app, net, session as electronSession, shell } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -13,6 +13,14 @@ const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
 const CHUNK_UPLOAD_TIMEOUT_MS = 90_000
 const CHUNK_UPLOAD_ATTEMPTS = 3
 const DIRECT_UPLOAD_TIMEOUT_MS = 15 * 60 * 1000
+const MAX_ARTWORK_PDF_SIZE = 16 * 1024 * 1024
+const ARTWORK_DOWNLOAD_TIMEOUT_MS = 120_000
+const artworkTicketSchema = z.object({
+  url: z.string().url(),
+  headers: z.record(z.string(), z.string()),
+  version: z.number().int().nonnegative().nullable(),
+  sizeBytes: z.number().int().nonnegative().nullable()
+})
 const publishSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1).max(240),
@@ -81,6 +89,7 @@ interface WebOfficeSessionResponse { editorUrl?: string }
 interface RequestTiming { timeoutMs?: number; timeoutMessage?: string }
 
 export class CollaborationService {
+  private readonly artworkDownloads = new Map<string, Set<AbortController>>()
   constructor(private readonly settings: SettingsRepository) {}
 
   async members(): Promise<CollaborationMember[]> {
@@ -147,9 +156,67 @@ export class CollaborationService {
   }
 
   async artworkPdf(input: unknown): Promise<{ dataUrl: string; version: number | null }> {
-    const value = z.object({ workItemId: z.string().uuid(), dentryId: z.string().min(1).max(200) }).strict().parse(input)
-    const response = await this.request(`/api/v1/dingtalk/artwork-targets/${encodeURIComponent(value.workItemId)}/pdfs/${encodeURIComponent(value.dentryId)}`, {}, { timeoutMs: 90_000, timeoutMessage: 'PDF 下载超时，请稍后逐行重试。' })
-    return response.json() as Promise<{ dataUrl: string; version: number | null }>
+    const value = z.object({ workItemId: z.string().uuid(), dentryId: z.string().min(1).max(200), scopeId: z.string().uuid() }).strict().parse(input)
+    const controller = new AbortController()
+    const active = this.artworkDownloads.get(value.scopeId) ?? new Set<AbortController>()
+    active.add(controller)
+    this.artworkDownloads.set(value.scopeId, active)
+    const timeout = AbortSignal.timeout(ARTWORK_DOWNLOAD_TIMEOUT_MS)
+    const signal = AbortSignal.any([controller.signal, timeout])
+    try {
+      const ticketResponse = await this.request(
+        `/api/v1/dingtalk/artwork-targets/${encodeURIComponent(value.workItemId)}/pdfs/${encodeURIComponent(value.dentryId)}/download-ticket`,
+        { cache: 'no-store', signal: controller.signal },
+        { timeoutMs: 30_000, timeoutMessage: '钉钉 PDF 下载凭证获取超时，请重试。' }
+      )
+      const ticket = artworkTicketSchema.parse(await ticketResponse.json())
+      const resource = new URL(ticket.url)
+      if (resource.protocol !== 'https:' || resource.username || resource.password || (resource.port && resource.port !== '443') || !/(^|\.)(aliyuncs\.com|dingtalk\.com)$/.test(resource.hostname)) {
+        throw new Error('钉钉返回了不受信任的 PDF 下载地址。')
+      }
+      if (ticket.sizeBytes != null && ticket.sizeBytes > MAX_ARTWORK_PDF_SIZE) throw new Error('PDF 超过 16 MB，暂不支持自动核验。')
+      // A non-persistent session with HTTP caching disabled keeps the signed
+      // download out of the app's on-disk cache and away from the renderer.
+      const previewSession = electronSession.fromPartition('casebang-artwork-preview', { cache: false })
+      const response = await previewSession.fetch(resource.toString(), {
+        headers: ticket.headers, redirect: 'error', cache: 'no-store', signal
+      })
+      if (!response.ok) throw new Error(`钉钉 PDF 下载失败（HTTP ${response.status}）。`)
+      if (Number(response.headers.get('content-length') ?? '0') > MAX_ARTWORK_PDF_SIZE) throw new Error('PDF 超过 16 MB，暂不支持自动核验。')
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('钉钉未返回 PDF 内容。')
+      const chunks: Uint8Array[] = []
+      let size = 0
+      try {
+        while (true) {
+          const part = await reader.read()
+          if (part.done) break
+          size += part.value.byteLength
+          if (size > MAX_ARTWORK_PDF_SIZE) throw new Error('PDF 超过 16 MB，暂不支持自动核验。')
+          chunks.push(part.value)
+        }
+      } finally { reader.releaseLock() }
+      const bytes = Buffer.concat(chunks)
+      if (ticket.sizeBytes != null && bytes.length !== ticket.sizeBytes) throw new Error('PDF 下载不完整，请重试。')
+      if (bytes.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('钉钉返回的内容不是 PDF 文件。')
+      return { dataUrl: `data:application/pdf;base64,${bytes.toString('base64')}`, version: ticket.version }
+    } catch (reason) {
+      if (controller.signal.aborted) throw new Error('PDF 下载已取消。')
+      if (timeout.aborted) throw new Error('电脑直连钉钉下载 PDF 超过 2 分钟，请检查本机网络后重试。')
+      if (reason instanceof Error && (reason.message.startsWith('钉钉') || reason.message.startsWith('PDF ') || reason.message.startsWith('协同服务'))) throw reason
+      throw new Error(`电脑直连钉钉下载 PDF 失败：${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      active.delete(controller)
+      if (!active.size && this.artworkDownloads.get(value.scopeId) === active) this.artworkDownloads.delete(value.scopeId)
+    }
+  }
+
+  cancelArtworkPdf(input: unknown): void {
+    const { scopeId } = z.object({ scopeId: z.string().uuid() }).strict().parse(input)
+    const active = this.artworkDownloads.get(scopeId)
+    if (!active) return
+    this.artworkDownloads.delete(scopeId)
+    for (const controller of active) controller.abort()
   }
 
   async publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
@@ -367,7 +434,7 @@ export class CollaborationService {
       response = await net.fetch(url, { method: 'PUT', headers, body, signal })
     } catch (reason) {
       logger.warn('Direct object storage upload failed', {
-        timedOut: signal.aborted,
+        timedOut: timeout.aborted,
         error: reason instanceof Error ? reason.message : String(reason)
       })
       throw new Error(signal.aborted ? '上传到腾讯云 COS 超时，请检查网络后重试。' : '无法上传到腾讯云 COS，请检查网络后重试。')
@@ -410,7 +477,8 @@ export class CollaborationService {
     if (!session) throw new Error('请先登录钉钉账号。')
     let response: Response
     const timeoutMs = timing.timeoutMs ?? (init.method === 'POST' ? 120_000 : 30_000)
-    const signal = AbortSignal.timeout(timeoutMs)
+    const timeout = AbortSignal.timeout(timeoutMs)
+    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout
     try {
       response = await net.fetch(`${COLLABORATION_ORIGIN}${path}`, {
         ...init,
@@ -425,7 +493,8 @@ export class CollaborationService {
         timedOut: signal.aborted,
         error: reason instanceof Error ? reason.message : String(reason)
       })
-      if (signal.aborted && timing.timeoutMessage) throw new Error(timing.timeoutMessage)
+      if (init.signal?.aborted) throw new Error('PDF 下载已取消。')
+      if (timeout.aborted && timing.timeoutMessage) throw new Error(timing.timeoutMessage)
       throw new Error('无法连接协同服务，请检查网络后重试。')
     }
     if (response.status === 401) {

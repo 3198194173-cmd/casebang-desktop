@@ -270,6 +270,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.artworkPdf(input)
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationCancelArtworkPdf, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    dependencies.collaboration.cancelArtworkPdf(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.collaborationPublishMaterialMaster, async (event) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.publishMaterialMaster()

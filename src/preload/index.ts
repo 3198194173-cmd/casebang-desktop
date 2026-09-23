@@ -54,7 +54,8 @@ const api: CasebangDesktopApi = {
     searchArtworkEntries: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationSearchArtworkEntries, input),
     artworkTarget: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationArtworkTarget, input),
     bindArtworkTarget: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationBindArtworkTarget, input),
-    artworkPdf: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationArtworkPdf, input)
+    artworkPdf: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationArtworkPdf, input),
+    cancelArtworkPdf: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationCancelArtworkPdf, input)
   },
   baseFiles: {
     select: (kind) => ipcRenderer.invoke(IPC_CHANNELS.baseFilesSelect, kind),

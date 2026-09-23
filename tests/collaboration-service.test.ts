@@ -3,13 +3,15 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+const directFetch = vi.hoisted(() => vi.fn())
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => 'C:\\CasebangTest') },
   net: { fetch: vi.fn() },
+  session: { fromPartition: vi.fn(() => ({ fetch: directFetch })) },
   shell: { openPath: vi.fn(async () => ''), openExternal: vi.fn(async () => undefined) }
 }))
 
-import { net, shell } from 'electron'
+import { net, session as electronSession, shell } from 'electron'
 import { CollaborationService } from '../src/main/modules/collaboration/collaboration-service'
 import type { SettingsRepository } from '../src/main/infrastructure/settings-repository'
 
@@ -27,7 +29,7 @@ function settings() {
 }
 
 describe('desktop collaboration service', () => {
-  beforeEach(() => vi.mocked(net.fetch).mockReset())
+  beforeEach(() => { vi.mocked(net.fetch).mockReset(); directFetch.mockReset() })
 
   it('uses the encrypted login session for the same-organization member directory', async () => {
     vi.mocked(net.fetch).mockResolvedValue(new Response(JSON.stringify({ members: [{ id: 'user-2', displayName: '处理人', avatarUrl: null, lastLoginAt: '2026-09-17T00:00:00.000Z' }] }), { status: 200 }))
@@ -122,5 +124,63 @@ describe('desktop collaboration service', () => {
     await new CollaborationService(settings()).openOnlineWorkbook({ workItemId })
     expect(net.fetch).toHaveBeenCalledWith(expect.stringContaining(`/work-items/${workItemId}/weboffice-session`), expect.objectContaining({ method: 'POST' }))
     expect(shell.openExternal).toHaveBeenCalledWith(editorUrl)
+  })
+
+  it('downloads the signed PDF directly in a non-persistent uncached desktop session', async () => {
+    const pdf = Buffer.from('%PDF-1.7\nartwork')
+    const signedUrl = 'https://example.oss-cn-hangzhou.aliyuncs.com/file?signature=temporary'
+    vi.mocked(net.fetch).mockResolvedValue(Response.json({ url: signedUrl, headers: { 'x-signed': 'yes' }, version: 3, sizeBytes: pdf.length }))
+    directFetch.mockResolvedValue(new Response(pdf, { status: 200 }))
+    const result = await new CollaborationService(settings()).artworkPdf({
+      workItemId: '30000000-0000-4000-8000-000000000001', dentryId: 'pdf-1', scopeId: '40000000-0000-4000-8000-000000000001'
+    })
+    expect(result).toEqual({ dataUrl: `data:application/pdf;base64,${pdf.toString('base64')}`, version: 3 })
+    expect(net.fetch).toHaveBeenCalledWith(expect.stringContaining('/pdfs/pdf-1/download-ticket'), expect.objectContaining({ cache: 'no-store' }))
+    expect(electronSession.fromPartition).toHaveBeenCalledWith('casebang-artwork-preview', { cache: false })
+    expect(directFetch).toHaveBeenCalledWith(signedUrl, expect.objectContaining({
+      headers: { 'x-signed': 'yes' }, cache: 'no-store', redirect: 'error'
+    }))
+    expect(net.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an untrusted signed URL before sending any desktop request', async () => {
+    vi.mocked(net.fetch).mockResolvedValue(Response.json({ url: 'https://attacker.example/file', headers: {}, version: 2, sizeBytes: 100 }))
+    await expect(new CollaborationService(settings()).artworkPdf({
+      workItemId: '30000000-0000-4000-8000-000000000001', dentryId: 'pdf-1', scopeId: '40000000-0000-4000-8000-000000000001'
+    })).rejects.toThrow('不受信任')
+    expect(directFetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects an oversized indexed PDF before downloading from DingTalk', async () => {
+    vi.mocked(net.fetch).mockResolvedValue(Response.json({
+      url: 'https://example.aliyuncs.com/file', headers: {}, version: 2, sizeBytes: 16 * 1024 * 1024 + 1
+    }))
+    await expect(new CollaborationService(settings()).artworkPdf({
+      workItemId: '30000000-0000-4000-8000-000000000001', dentryId: 'pdf-1', scopeId: '40000000-0000-4000-8000-000000000001'
+    })).rejects.toThrow('超过 16 MB')
+    expect(directFetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects an incomplete direct download rather than comparing a truncated PDF', async () => {
+    vi.mocked(net.fetch).mockResolvedValue(Response.json({
+      url: 'https://example.aliyuncs.com/file', headers: {}, version: 2, sizeBytes: 200
+    }))
+    directFetch.mockResolvedValue(new Response(Buffer.from('%PDF-1.7\ntruncated'), { status: 200 }))
+    await expect(new CollaborationService(settings()).artworkPdf({
+      workItemId: '30000000-0000-4000-8000-000000000001', dentryId: 'pdf-1', scopeId: '40000000-0000-4000-8000-000000000001'
+    })).rejects.toThrow('下载不完整')
+  })
+
+  it('cancels an in-flight direct download when its preview scope ends', async () => {
+    const scopeId = '40000000-0000-4000-8000-000000000001'
+    vi.mocked(net.fetch).mockResolvedValue(Response.json({ url: 'https://example.aliyuncs.com/file', headers: {}, version: 3, sizeBytes: 100 }))
+    directFetch.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    }))
+    const service = new CollaborationService(settings())
+    const pending = service.artworkPdf({ workItemId: '30000000-0000-4000-8000-000000000001', dentryId: 'pdf-1', scopeId })
+    await vi.waitFor(() => expect(directFetch).toHaveBeenCalledOnce())
+    service.cancelArtworkPdf({ scopeId })
+    await expect(pending).rejects.toThrow('PDF 下载已取消')
   })
 })

@@ -148,7 +148,14 @@
 .lc-artwork-compare-table td>small { margin-top:4px; color:#74837f; font-size:9px; overflow-wrap:anywhere; }
 .lc-artwork-compare-table td:nth-child(2)>a { display:block; margin-top:7px; overflow:hidden; text-overflow:ellipsis; }
 .lc-artwork-thumb { display:block; width:84px; height:84px; margin:auto; object-fit:contain; border:1px solid #d7e2df; border-radius:7px; background:#fff; }
+.lc-artwork-preview-button { display:block; width:84px; height:84px; margin:auto; padding:0; border:0; background:transparent; cursor:zoom-in; }
+.lc-artwork-preview-overlay { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; background:rgba(15,32,37,.72); }
+.lc-artwork-preview-dialog { display:flex; flex-direction:column; max-width:min(96vw,1000px); max-height:96vh; overflow:hidden; border-radius:10px; background:#fff; box-shadow:0 20px 80px rgba(0,0,0,.3); }
+.lc-artwork-preview-dialog header { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:10px 16px; border-bottom:1px solid #d7e2df; }
+.lc-artwork-preview-dialog header strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lc-artwork-preview-dialog img { display:block; max-width:100%; min-height:0; margin:auto; object-fit:contain; }
 .lc-artwork-no-image { display:grid; place-items:center; width:84px; height:84px; margin:auto; padding:8px; border:1px dashed #cbdad6; border-radius:7px; color:#8a9995; font-size:10px; text-align:center; }
+.lc-artwork-preview-error { display:block; margin-top:5px; color:#a54f37; font-size:10px; overflow-wrap:anywhere; }
 .lc-artwork-compare-table td.matched { color:#26745c; font-weight:700; }
 .lc-artwork-compare-table td.missing { color:#a54f37; font-weight:700; }
 .lc-artwork-compare>header>div:last-child { display:flex; align-items:center; gap:12px; }

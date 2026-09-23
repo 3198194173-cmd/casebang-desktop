@@ -64,6 +64,8 @@ export interface ArtworkComparisonRow {
 
 export function buildArtworkComparisons(pdfs: DingTalkArtworkEntry[], workbookRows: ArtworkSheetRow[], selectedPdfIds: Record<string, string> = {}): ArtworkComparisonRow[] {
   const groups = new Map<string, DingTalkArtworkEntry[]>()
+  const sheetOrder = new Map<string, number>()
+  for (const row of workbookRows) if (!sheetOrder.has(row.sheet)) sheetOrder.set(row.sheet, sheetOrder.size)
   for (const pdf of pdfs) {
     const code = normalizeArtworkKey(parseArtworkFilename(pdf.name).productCode ?? '')
     const key = code || `FILE:${pdf.id}`
@@ -83,5 +85,12 @@ export function buildArtworkComparisons(pdfs: DingTalkArtworkEntry[], workbookRo
     else if (parsed.normalizedPatternKey && normalizeArtworkKey(row.patternNameUpper || row.patternName) !== parsed.normalizedPatternKey) issue = 'PDF 文件名与图片分表图案名称冲突'
     else if (!row.imageDataUrl) issue = '图片分表该行没有截图'
     return { key, pdf, alternatives: files.filter(file => file.id !== pdf.id), row, issue }
+  }).sort((left, right) => {
+    if (left.row && right.row) {
+      const sheetDifference = (sheetOrder.get(left.row.sheet) ?? 0) - (sheetOrder.get(right.row.sheet) ?? 0)
+      if (sheetDifference) return sheetDifference
+      if (left.row.row !== right.row.row) return left.row.row - right.row.row
+    } else if (left.row || right.row) return left.row ? -1 : 1
+    return left.key.localeCompare(right.key, 'en', { numeric: true })
   })
 }

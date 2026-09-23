@@ -58,4 +58,31 @@ describe('artwork pairing', () => {
     const pdf = entry('a', 'pro', '可拆卸#BG00733#CHARACTERCIRCLE.pdf')
     expect(buildArtworkComparisons([pdf], [sheetRow('BG00733', 'BEARPALS')])[0]?.issue).toMatch(/名称冲突/)
   })
+
+  it('follows image-sheet row order even when PDFs arrive out of order', () => {
+    const rows = [
+      { ...sheetRow('BG00733', 'CHARACTERCIRCLE'), row: 2 },
+      { ...sheetRow('BG00734', 'BEARPALS'), row: 3 },
+      { ...sheetRow('BG00735', 'MICKEYSTACK'), row: 4 },
+      { ...sheetRow('BG00736', 'KISSKISS'), row: 5 },
+      { ...sheetRow('BG00737', 'DUCKYSTACK'), row: 6 }
+    ]
+    const pdfs = [
+      entry('37', 'pro', '可拆卸#BG00737#DUCKYSTACK.pdf'),
+      entry('33', 'pro', '可拆卸#BG00733#CHARACTERCIRCLE.pdf'),
+      entry('36', 'pro', '可拆卸#BG00736#KISSKISS.pdf'),
+      entry('35', 'pro', '可拆卸#BG00735#MICKEYSTACK.pdf'),
+      entry('34', 'pro', '可拆卸#BG00734#BEARPALS.pdf')
+    ]
+    expect(buildArtworkComparisons(pdfs, rows).map(item => item.key)).toEqual(['BG00733', 'BG00734', 'BG00735', 'BG00736', 'BG00737'])
+  })
+
+  it('sorts unmatched PDF codes naturally after rows found in the image sheet', () => {
+    const pdfs = [
+      entry('10', 'pro', '可拆卸#BG00010#OTHER.pdf'),
+      entry('2', 'pro', '可拆卸#BG00002#OTHER.pdf'),
+      entry('33', 'pro', '可拆卸#BG00733#CHARACTERCIRCLE.pdf')
+    ]
+    expect(buildArtworkComparisons(pdfs, [sheetRow('BG00733', 'CHARACTERCIRCLE')]).map(item => item.key)).toEqual(['BG00733', 'BG00002', 'BG00010'])
+  })
 })

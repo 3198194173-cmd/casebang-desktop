@@ -14,11 +14,14 @@ import { useAccount } from './account-context'
 import { CollaborationTasksPage } from '../features/collaboration/CollaborationTasksPage'
 import { LoginGate } from './LoginGate'
 import { MaterialDataPage } from '../features/material-data/MaterialDataPage'
+import { NavigationIcon } from './NavigationIcon'
+import { AccountAvatar } from './AccountAvatar'
 
 export function App(): React.JSX.Element {
   const [page, setPage] = useState<PageId>('dashboard')
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const { account, initialized: accountInitialized, busy: accountBusy, error: accountError } = useAccount()
   const businessRole = account?.user?.businessRole ?? null
   const visibleGroups = NAV_GROUPS.filter((group) => {
@@ -60,14 +63,17 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-mark" src="./casebang-app-icon.png" alt="CASEBANG" />
-          <div>
+          <div className="brand-copy">
             <strong>CASEBANG</strong>
             <span>业务自动化平台</span>
           </div>
+          <button className="sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}>
+            <NavigationIcon name={sidebarCollapsed ? 'expand' : 'collapse'} />
+          </button>
         </div>
         <nav className="navigation" aria-label="主导航">
           {visibleGroups.map((group) => (
@@ -78,16 +84,19 @@ export function App(): React.JSX.Element {
                   className={page === item.id ? 'nav-item active' : 'nav-item'}
                   key={item.id}
                   onClick={() => setPage(item.id)}
+                  title={sidebarCollapsed ? item.label : undefined}
+                  aria-label={item.label}
+                  aria-current={page === item.id ? 'page' : undefined}
                 >
-                  <span className="nav-icon">{item.icon}</span>
-                  <span>{item.label}</span>
+                  <span className="nav-icon"><NavigationIcon name={item.id} /></span>
+                  <span className="nav-item-label">{item.label}</span>
                 </button>
               ))}
             </section>
           ))}
         </nav>
         <div className="sidebar-footer">
-          <span><i className="status-dot" />服务正常</span>
+          <span>CASEBANG 桌面端</span>
           <small>v{snapshot?.appVersion ?? '0.1.0'}</small>
         </div>
       </aside>
@@ -98,11 +107,10 @@ export function App(): React.JSX.Element {
             <h1>{NAV_ITEMS.find((item) => item.id === page)?.label}</h1>
           </div>
           <div className="topbar-actions">
-            <button className={`global-account ${account?.status ?? 'loading'}`} disabled={accountBusy} onClick={() => setPage('settings')}>
-              <span>{account?.user?.displayName.slice(0, 1) ?? '钉'}</span>
-              <div><strong>{account.user?.displayName}</strong><small>{businessRole === 'upstream' ? '上游建表' : '下游加工'}</small></div>
+            <button className={`global-account ${account?.status ?? 'loading'}`} type="button" disabled={accountBusy} onClick={() => setPage('settings')} aria-label={`${account.user?.displayName || '企业成员'}，打开账号设置`}>
+              <AccountAvatar avatarUrl={account.user?.avatarUrl} displayName={account.user?.displayName} />
+              <strong>{account.user?.displayName || '企业成员'}</strong>
             </button>
-            <div className="topbar-badge">Windows 桌面版</div>
           </div>
         </header>
         {(error || accountError) && <div className="alert error">{error ?? accountError}</div>}

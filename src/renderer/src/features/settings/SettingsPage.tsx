@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ApplicationSettings, BusinessRole } from '@shared/contracts'
 import { desktopApi } from '../../app/desktop-api'
 import { useAccount } from '../../app/account-context'
+import { AccountAvatar } from '../../app/AccountAvatar'
 
 const FALLBACK_SETTINGS: ApplicationSettings = {
   autoSaveDrafts: true,
@@ -75,7 +76,6 @@ export function SettingsPage(): React.JSX.Element {
     <div className="settings-page">
       <div className="two-column settings-columns">
         <section className="panel">
-          <span className="eyebrow">APPLICATION</span>
           <h3>应用设置</h3>
           {SETTING_ROWS.map((item) => (
             <div className="setting-row" key={item.key}>
@@ -97,7 +97,6 @@ export function SettingsPage(): React.JSX.Element {
           {error && <div className="settings-message error">! {error}</div>}
         </section>
         <section className="panel">
-          <span className="eyebrow">SECURITY</span>
           <h3>安全与数据</h3>
           <div className="info-row"><span>原表保护</span><strong>只读处理</strong></div>
           <div className="info-row"><span>API 凭据</span><strong>Windows 加密存储</strong></div>
@@ -107,10 +106,9 @@ export function SettingsPage(): React.JSX.Element {
       </div>
       <section className="panel settings-note account-panel">
         <div className="account-panel-copy">
-          <span className="eyebrow">ACCOUNT ACCESS</span>
           <h3>账号与组织登录</h3>
           {account?.user
-            ? <><div className="account-identity"><span>{account.user.displayName.slice(0, 1)}</span><div><strong>{account.user.displayName}</strong><small>{account.user.businessRole === 'upstream' ? '上游建表' : '下游加工'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 退出后可重新选择业务端；业务端只切换工具，不限制共享工作簿编辑。</p></>
+            ? <><div className="account-identity"><AccountAvatar avatarUrl={account.user.avatarUrl} displayName={account.user.displayName} /><div><strong>{account.user.displayName}</strong><small>{account.user.businessRole === 'upstream' ? '上游建表' : '下游加工'} · {account.status === 'offline' ? '离线保留' : '已在线验证'}</small></div></div><p>{account.message} 退出后可重新选择业务端；业务端只切换工具，不限制共享工作簿编辑。</p></>
             : <><p>{account?.message ?? '正在读取钉钉账号状态…'} 登录前请选择该账号使用的业务端。</p><div className="business-role-picker">
               <label className={loginRole === 'upstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'upstream'} onChange={() => setLoginRole('upstream')} /><span><strong>上游建表</strong><small>建表、提交、复核、合并</small></span></label>
               <label className={loginRole === 'downstream' ? 'selected' : ''}><input type="radio" name="business-role" checked={loginRole === 'downstream'} onChange={() => setLoginRole('downstream')} /><span><strong>下游加工</strong><small>物料码、69 码和图档核对</small></span></label>

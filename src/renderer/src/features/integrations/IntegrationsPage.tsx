@@ -71,7 +71,7 @@ export function IntegrationsPage({ connectors }: { connectors: ConnectorSummary[
     <div className="stack-xl">
       <section className="panel cloud-ai-panel">
         <div className="panel-heading">
-          <div><span className="eyebrow">VISION AI</span><h3>图片命名模型</h3><p className="muted">识别裁剪后的图案，提供中英文对应建议；只有英文名称会写入表格。</p></div>
+          <div><h3>图片命名模型</h3><p className="muted">识别裁剪后的图案，提供中英文对应建议；只有英文名称会写入表格。</p></div>
           <span className={aiSettings.configured ? 'status-label ready' : 'status-label'}>{aiSettings.configured ? '可使用' : '待配置'}</span>
         </div>
         <div className="ai-settings-grid">

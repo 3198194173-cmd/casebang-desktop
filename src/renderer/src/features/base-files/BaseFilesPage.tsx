@@ -114,7 +114,7 @@ export function BaseFilesPage({ snapshot, onChanged }: Props): React.JSX.Element
       </section>
       {preview && <WorkbookPreviewPanel preview={preview} onChange={(sheetName) => void loadPreview(preview.kind, sheetName)} onClose={() => { previewSequence.current += 1; setPreviewing(null); setPreview(null) }} />}
       <section className="panel compact">
-        <div className="panel-heading history-panel-heading"><div><span className="eyebrow">VERSION HISTORY</span><h3>基础表覆盖记录</h3><p>每次业务覆盖归为一组，展开后可按表格独立回滚。</p></div><span className="history-count">{historyGroups.length} 次操作</span></div>
+        <div className="panel-heading history-panel-heading"><div><h3>基础表覆盖记录</h3><p>每次业务覆盖归为一组，展开后可按表格独立回滚。</p></div><span className="history-count">{historyGroups.length} 次操作</span></div>
         {historyGroups.length === 0 ? <div className="history-empty"><strong>暂无覆盖记录</strong><span>完成业务流程并覆盖基础表后，记录会显示在这里。</span></div> : <div className="base-history-timeline">{historyGroups.map((group, index) => {
           const expanded = expandedHistoryIds.includes(group.id)
           const fullyRolledBack = group.records.every((record) => record.rolledBackAt)
@@ -137,7 +137,6 @@ export function BaseFilesPage({ snapshot, onChanged }: Props): React.JSX.Element
       <section className="panel compact">
         <div className="panel-heading">
           <div>
-            <span className="eyebrow">OOXML TEMPLATE ENGINE</span>
             <h3>模板扫描与结构指纹</h3>
           </div>
           <button

@@ -210,8 +210,10 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     if (openAfterSave) {
       try {
         const existing = await desktopApi.collaboration.activeLocalEdit({ workItemId: result.item.id })
-        if (existing?.hasChanges) {
-          openNote = `；另有未提交的本地稿，未自动替换，请先在工作簿记录中处理：${existing.filePath}`
+        if (existing) {
+          openNote = existing.hasChanges
+            ? `；另有未提交的本地稿，未自动替换，请先在工作簿记录中处理：${existing.filePath}`
+            : '；已有本地检查稿，请先关闭文档并结束旧会话，再下载加工后的中央修订'
         } else {
           await desktopApi.collaboration.beginLocalEdit({ workItemId: result.item.id, forceNew: true })
           openNote = '；已打开加工后的中央修订供本地表格软件检查，修改后请提交'

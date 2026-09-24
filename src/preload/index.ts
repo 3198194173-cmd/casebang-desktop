@@ -53,6 +53,7 @@ const api: CasebangDesktopApi = {
     beginLocalEdit: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationBeginLocalEdit, input),
     openLocalEdit: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationOpenLocalEdit, input),
     commitLocalEdit: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationCommitLocalEdit, input),
+    endLocalEdit: (input) => ipcRenderer.invoke(IPC_CHANNELS.collaborationEndLocalEdit, input),
     materialMaster: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationMaterialMaster),
     publishMaterialMaster: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationPublishMaterialMaster),
     syncMaterialMaster: () => ipcRenderer.invoke(IPC_CHANNELS.collaborationSyncMaterialMaster),

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const directFetch = vi.hoisted(() => vi.fn())
 vi.mock('electron', () => ({
@@ -146,6 +146,7 @@ describe('desktop collaboration service', () => {
       expect(vi.mocked(net.fetch).mock.calls[1]?.[0]).toContain(`workbook?revision=2`)
       expect(shell.openPath).toHaveBeenCalledWith(opened.filePath)
       expect(await service.activeLocalEdit({ workItemId })).toMatchObject({ id: opened.id })
+      await expect(service.beginLocalEdit({ workItemId, forceNew: true })).rejects.toThrow('结束并清理')
       await expect(service.commitLocalEdit({ workItemId, sessionId: opened.id })).resolves.toMatchObject({ unchanged: true, item: null })
       expect(net.fetch).toHaveBeenCalledTimes(2)
     } finally {
@@ -193,9 +194,39 @@ describe('desktop collaboration service', () => {
       const saved = await service.commitLocalEdit({ workItemId, sessionId: opened.id, changeReason: '修正图片名称' })
       expect(saved).toMatchObject({ item: { revision: 3 }, unchanged: false, hasRemainingChanges: false })
       expect(await readFile(opened.filePath)).toEqual(await readFile(modified))
-      expect(await service.activeLocalEdit({ workItemId })).toBeNull()
+      expect(await service.activeLocalEdit({ workItemId })).toMatchObject({ id: opened.id, baseRevision: 3, hasChanges: false })
       const metadata = JSON.parse(String(vi.mocked(net.fetch).mock.calls[2]?.[1]?.body))
       expect(metadata).toMatchObject({ targetWorkItemId: workItemId, expectedVersion: 3, expectedRevision: 2, editMethod: 'local-manual', changeReason: '修正图片名称' })
+      await expect(service.endLocalEdit({ workItemId, sessionId: opened.id })).resolves.toEqual({ closed: true, requiresDiscardConfirmation: false })
+      await expect(readFile(opened.filePath)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await service.activeLocalEdit({ workItemId })).toBeNull()
+    } finally {
+      vi.mocked(app.getPath).mockReturnValue('C:\\CasebangTest')
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it('requires explicit discard for an unsubmitted edit and refuses cleanup while editor sidecars remain', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'casebang-local-discard-'))
+    vi.mocked(app.getPath).mockReturnValue(root)
+    const workItemId = '30000000-0000-4000-8000-000000000001'
+    const workbook = await readFile(join(process.cwd(), 'resources', 'generated-product-template.xlsx'))
+    const sha256 = (await import('node:crypto')).createHash('sha256').update(workbook).digest('hex')
+    vi.mocked(net.fetch)
+      .mockResolvedValueOnce(Response.json({ title: '新建产品表.xlsx', state: 'PROCESSING', version: 3, revision: 2, sha256 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array(workbook)))
+    try {
+      const service = new CollaborationService(settings())
+      const opened = await service.beginLocalEdit({ workItemId })
+      await writeFile(opened.filePath, Buffer.concat([workbook, Buffer.from('local change')]))
+      await expect(service.endLocalEdit({ workItemId, sessionId: opened.id })).resolves.toEqual({ closed: false, requiresDiscardConfirmation: true })
+      expect(await readFile(opened.filePath)).toHaveLength(workbook.length + 'local change'.length)
+      const sidecar = join(dirname(opened.filePath), '~$workbook.xlsx')
+      await writeFile(sidecar, '')
+      await expect(service.endLocalEdit({ workItemId, sessionId: opened.id, discardChanges: true })).rejects.toThrow('还有表格软件生成的文件')
+      await rm(sidecar)
+      await expect(service.endLocalEdit({ workItemId, sessionId: opened.id, discardChanges: true })).resolves.toEqual({ closed: true, requiresDiscardConfirmation: false })
+      await expect(readFile(opened.filePath)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       vi.mocked(app.getPath).mockReturnValue('C:\\CasebangTest')
       await rm(root, { recursive: true, force: true })

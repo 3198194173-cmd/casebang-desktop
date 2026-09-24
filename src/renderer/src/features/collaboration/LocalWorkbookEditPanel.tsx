@@ -44,10 +44,10 @@ export function LocalWorkbookEditPanel({ workItemId, currentRevision, onSaved }:
     finally { setBusy(false) }
   }
 
-  const begin = async (forceNew = false): Promise<void> => {
+  const begin = async (): Promise<void> => {
     setBusy(true); setError(''); setMessage('')
     try {
-      const result = await desktopApi.collaboration.beginLocalEdit({ workItemId, ...(forceNew ? { forceNew: true } : {}) })
+      const result = await desktopApi.collaboration.beginLocalEdit({ workItemId })
       setSession(result); setConflict(false)
       setMessage(`已打开本地工作簿（基于中央修订 ${result.baseRevision}）。请在本地表格软件中保存，完成后返回这里提交。`)
     } catch (cause) {
@@ -75,7 +75,7 @@ export function LocalWorkbookEditPanel({ workItemId, currentRevision, onSaved }:
       if (result.unchanged) {
         setMessage('本地工作簿与下载时相同，没有新修订；如已修改，请先在本地表格软件中保存。')
       } else {
-        setMessage(`已提交中央修订 ${result.item?.revision ?? ''}${result.hasRemainingChanges ? '；本地还有上传期间产生的改动，请再次提交。' : '；编辑时间轴已更新。'}`)
+        setMessage(`已提交中央修订 ${result.item?.revision ?? ''}${result.hasRemainingChanges ? '；本地还有上传期间产生的改动，请再次提交。' : '；请关闭本地表格文档，再点击“结束并清理”。'}`)
         setReason('')
         setSession(await desktopApi.collaboration.activeLocalEdit({ workItemId }).catch(() => null))
         if (result.item && onSaved) {
@@ -90,6 +90,24 @@ export function LocalWorkbookEditPanel({ workItemId, currentRevision, onSaved }:
     } finally { setBusy(false) }
   }
 
+  const end = async (): Promise<void> => {
+    if (!session) return
+    setBusy(true); setError(''); setMessage('')
+    try {
+      let result = await desktopApi.collaboration.endLocalEdit({ workItemId, sessionId: session.id })
+      if (result.requiresDiscardConfirmation) {
+        const confirmed = window.confirm('本地稿还有未提交到工作簿记录的修改。结束后会永久删除这份本地稿，未提交内容无法恢复；中央已有修订不受影响。确定放弃吗？')
+        if (!confirmed) return
+        result = await desktopApi.collaboration.endLocalEdit({ workItemId, sessionId: session.id, discardChanges: true })
+      }
+      if (result.closed) {
+        setSession(null); setReason(''); setConflict(false)
+        setMessage('已结束本地编辑并清理该会话缓存；中央工作簿及时间轴不受影响。')
+      }
+    } catch (cause) { setError(accountError(cause, '清理本地编辑稿失败；本地文件仍需检查')) }
+    finally { setBusy(false) }
+  }
+
   return <div className="local-workbook-edit">
     <div className="local-workbook-editor-choice"><small title={editorPath ?? undefined}>打开方式：{editorPath ?? 'Windows 默认 .xlsx 程序'}</small>
       <button className="secondary-button" disabled={busy} onClick={() => void selectEditor()}>选择 WPS/Excel 程序</button>
@@ -97,13 +115,13 @@ export function LocalWorkbookEditPanel({ workItemId, currentRevision, onSaved }:
     <div className="local-workbook-edit-actions">
       {!session ? <button className="secondary-button" disabled={busy} onClick={() => void begin()}>{busy ? '下载并打开中…' : '下载最新版并用本地表格软件编辑'}</button>
         : <><button className="secondary-button" disabled={busy} onClick={() => void open()}>重新打开本地稿</button>
-          <button className="primary-button" disabled={busy || stale} onClick={() => void commit()}>{busy ? '提交中…' : '提交本地修改到工作簿记录'}</button></>}
+          <button className="primary-button" disabled={busy || stale} onClick={() => void commit()}>{busy ? '处理中…' : '提交本地修改到工作簿记录'}</button>
+          <button className="secondary-button" disabled={busy} onClick={() => void end()}>已关闭文档，结束并清理</button></>}
     </div>
-    {session && <><small>本地稿基于中央修订 {session.baseRevision}。请先在本机表格软件保存，再点击提交；本地保存不会自动同步。</small>
+    {session && <><small>本地稿基于中央修订 {session.baseRevision}。请先在本机表格软件保存，再点击提交；结束编辑前请先关闭该文档。本地保存不会自动同步。</small>
       <small className="local-workbook-edit-path" title={session.filePath}>恢复文件：{session.filePath}</small>
       <label>修改说明（可选）<input value={reason} maxLength={500} onChange={event => setReason(event.target.value)} placeholder="例如：修正条码表名称" /></label></>}
-    {(conflict || stale) && session && <div className="alert error"><p>中央版本已变化。本地稿不会被覆盖；请保留上方路径，与中央最新版人工合并。</p>
-      <button className="secondary-button" disabled={busy} onClick={() => void begin(true)}>保留旧稿并下载中央最新版</button></div>}
+    {(conflict || stale) && session && <div className="alert error"><p>中央版本已变化。本地稿不会被覆盖。若需保留未提交内容，请先从上方路径另存备份；再关闭本地文档，点击“结束并清理”，最后下载中央最新版人工合并。</p></div>}
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert success">{message}</div>}
   </div>

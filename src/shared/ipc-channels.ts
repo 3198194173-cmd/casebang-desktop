@@ -38,6 +38,7 @@ export const IPC_CHANNELS = {
   collaborationBeginLocalEdit: 'collaboration:begin-local-edit',
   collaborationOpenLocalEdit: 'collaboration:open-local-edit',
   collaborationCommitLocalEdit: 'collaboration:commit-local-edit',
+  collaborationEndLocalEdit: 'collaboration:end-local-edit',
   collaborationMaterialMaster: 'collaboration:material-master',
   collaborationPublishMaterialMaster: 'collaboration:publish-material-master',
   collaborationSyncMaterialMaster: 'collaboration:sync-material-master',

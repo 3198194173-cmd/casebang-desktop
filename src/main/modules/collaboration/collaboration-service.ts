@@ -1,7 +1,7 @@
 import { app, dialog, net, session as electronSession, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { access, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdir, readFile, readdir, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import type { CollaborationActivity, CollaborationMember, CollaborationWorkAction, CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkSource, DingTalkArtworkTarget, LocalWorkbookEditSession } from '@shared/contracts'
@@ -379,10 +379,9 @@ export class CollaborationService {
   async beginLocalEdit(input: unknown): Promise<LocalWorkbookEditSession> {
     const { workItemId, forceNew } = localEditSchema.extend({ forceNew: z.boolean().optional() }).parse(input)
     const userId = await this.localUserId()
-    if (!forceNew) {
-      const current = await this.readActiveLocalEdit(workItemId, userId)
-      if (current) return this.openLocalEdit({ workItemId, sessionId: current.id })
-    }
+    const current = await this.readActiveLocalEdit(workItemId, userId)
+    if (current && forceNew) throw new Error('已有本地编辑稿。请先关闭表格文档，并在 CASEBANG 点击“结束并清理”后下载中央最新版。')
+    if (current) return this.openLocalEdit({ workItemId, sessionId: current.id })
     const metadataResponse = await this.request(`/api/v1/collaboration/work-items/${workItemId}/workbook-metadata`)
     const metadata = workbookMetadataSchema.parse(await metadataResponse.json())
     if (['COMPLETED', 'CANCELLED'].includes(metadata.state)) throw new Error('工作簿已经归档或作废，不能开始本地编辑。')
@@ -446,15 +445,11 @@ export class CollaborationService {
       const currentDigest = await readFile(filePath).then(sha256).catch(() => null)
       let hasRemainingChanges = currentDigest !== digest
       try {
-        if (hasRemainingChanges) {
-          const updatedManifest = { ...manifest, baseVersion: saved.item.version, baseRevision: saved.item.revision, baseSha256: digest }
-          const manifestPath = path.join(this.localEditDirectory(manifest), 'session.json')
-          const temporaryPath = `${manifestPath}.tmp`
-          await writeFile(temporaryPath, JSON.stringify(updatedManifest))
-          await rename(temporaryPath, manifestPath)
-        } else {
-          await unlink(this.localEditPointerPath(manifest.workItemId, manifest.userId))
-        }
+        const updatedManifest = { ...manifest, baseVersion: saved.item.version, baseRevision: saved.item.revision, baseSha256: digest }
+        const manifestPath = path.join(this.localEditDirectory(manifest), 'session.json')
+        const temporaryPath = `${manifestPath}.tmp`
+        await writeFile(temporaryPath, JSON.stringify(updatedManifest))
+        await rename(temporaryPath, manifestPath)
       } catch (reason) {
         hasRemainingChanges = true
         logger.warn('Workbook saved centrally but local edit state could not be finalized', {
@@ -465,6 +460,65 @@ export class CollaborationService {
     } finally {
       this.localCommits.delete(key)
     }
+  }
+
+  async endLocalEdit(input: unknown): Promise<{ closed: boolean; requiresDiscardConfirmation: boolean }> {
+    const value = localEditSessionSchema.extend({ discardChanges: z.boolean().optional() }).parse(input)
+    const key = `${value.workItemId}:${value.sessionId}`
+    if (this.localCommits.has(key)) throw new Error('本地稿正在提交，完成后才能结束编辑。')
+    this.localCommits.add(key)
+    try {
+      const manifest = await this.requireLocalEdit(value.workItemId, value.sessionId)
+      const directory = await this.checkedLocalEditDirectory(manifest)
+      const names = await readdir(directory)
+      if (names.some(name => name !== 'workbook.xlsx' && name !== 'session.json')) {
+        throw new Error('本地稿目录中还有表格软件生成的文件。请先关闭该工作簿，再重试清理。')
+      }
+      const filePath = path.join(directory, 'workbook.xlsx')
+      const manifestPath = path.join(directory, 'session.json')
+      if (!(await lstat(filePath)).isFile() || !(await lstat(manifestPath)).isFile()) {
+        throw new Error('本地编辑会话文件不完整，未执行清理。')
+      }
+      const before = await stat(filePath)
+      const digest = sha256(await readFile(filePath))
+      await new Promise(resolve => setTimeout(resolve, 350))
+      const after = await stat(filePath)
+      if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || digest !== sha256(await readFile(filePath))) {
+        throw new Error('工作簿仍在保存中。请先关闭本地表格软件，再结束编辑。')
+      }
+      if (digest !== manifest.baseSha256 && !value.discardChanges) {
+        return { closed: false, requiresDiscardConfirmation: true }
+      }
+      let workbookDeleted = false
+      try {
+        await unlink(filePath)
+        workbookDeleted = true
+        await unlink(manifestPath)
+        await rmdir(directory)
+      } catch (reason) {
+        if (workbookDeleted) await unlink(this.localEditPointerPath(manifest.workItemId, manifest.userId)).catch(() => undefined)
+        throw reason
+      }
+      await unlink(this.localEditPointerPath(manifest.workItemId, manifest.userId)).catch(reason => {
+        logger.warn('Local workbook removed but active pointer cleanup failed', {
+          workItemId: manifest.workItemId, error: reason instanceof Error ? reason.message : String(reason)
+        })
+      })
+      return { closed: true, requiresDiscardConfirmation: false }
+    } finally {
+      this.localCommits.delete(key)
+    }
+  }
+
+  private async checkedLocalEditDirectory(manifest: LocalEditManifest): Promise<string> {
+    const userData = await realpath(app.getPath('userData'))
+    const cacheRoot = await realpath(path.join(app.getPath('userData'), 'collaboration-workbooks'))
+    const actualDirectory = await realpath(this.localEditDirectory(manifest))
+    const expected = path.join(cacheRoot, manifest.workItemId, 'edit-sessions', sha256(Buffer.from(manifest.userId)).slice(0, 24), manifest.id)
+    if (path.dirname(cacheRoot) !== userData || actualDirectory !== expected) {
+      throw new Error('本地稿路径不在 CASEBANG 缓存目录中，已停止清理。')
+    }
+    return actualDirectory
   }
 
   private async localUserId(): Promise<string> {

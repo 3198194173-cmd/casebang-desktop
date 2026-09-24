@@ -264,6 +264,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.commitLocalEdit(input)
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationEndLocalEdit, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.endLocalEdit(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.collaborationMaterialMaster, async (event) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.materialMaster()

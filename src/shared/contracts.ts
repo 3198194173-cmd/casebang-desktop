@@ -342,6 +342,7 @@ export interface CasebangDesktopApi {
     beginLocalEdit(input: { workItemId: string; forceNew?: boolean }): Promise<LocalWorkbookEditSession>
     openLocalEdit(input: { workItemId: string; sessionId: string }): Promise<LocalWorkbookEditSession>
     commitLocalEdit(input: { workItemId: string; sessionId: string; changeReason?: string }): Promise<{ item: CollaborationWorkItem | null; duplicate: boolean; unchanged: boolean; hasRemainingChanges: boolean }>
+    endLocalEdit(input: { workItemId: string; sessionId: string; discardChanges?: boolean }): Promise<{ closed: boolean; requiresDiscardConfirmation: boolean }>
     materialMaster(): Promise<CollaborationWorkItem | null>
     publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     syncMaterialMaster(): Promise<{ item: CollaborationWorkItem; path: string }>

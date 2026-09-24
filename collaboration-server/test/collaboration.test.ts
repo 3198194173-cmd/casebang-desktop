@@ -74,6 +74,50 @@ describe('collaboration identity boundaries', () => {
     await app.close()
   })
 
+  it('binds local editing to an exact authorized workbook revision and digest', async () => {
+    const workbook = Buffer.from('revision two')
+    const sha256 = createHash('sha256').update(workbook).digest('hex')
+    const user = { id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null,
+      organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([user]))
+      .mockResolvedValueOnce(queryResult([{ title: '新建产品表.xlsx', state: 'PROCESSING', version: 4, revision: 2, sha256 }]))
+      .mockResolvedValueOnce(queryResult([user]))
+      .mockResolvedValueOnce(queryResult([{ object_key: 'revision-2.xlsx', title: '新建产品表.xlsx' }]))
+    const storage = { readObject: vi.fn(async () => workbook) }
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, storage as unknown as PrivateStorage)
+    const headers = { authorization: `Bearer ${'x'.repeat(40)}` }
+    const id = '30000000-0000-4000-8000-000000000001'
+    const metadata = await app.inject({ method: 'GET', url: `/api/v1/collaboration/work-items/${id}/workbook-metadata`, headers })
+    const file = await app.inject({ method: 'GET', url: `/api/v1/collaboration/work-items/${id}/workbook?revision=2`, headers })
+    expect(metadata.json()).toMatchObject({ version: 4, revision: 2, sha256 })
+    expect(file.statusCode).toBe(200)
+    expect(file.rawPayload).toEqual(workbook)
+    expect(query.mock.calls[3]?.[1]).toEqual([user.organization_id, id, user.id, 2])
+    await app.close()
+  })
+
+  it('paginates local manual and software activity with their stored revision', async () => {
+    const user = { id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null,
+      organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }
+    const id = '30000000-0000-4000-8000-000000000001'
+    const query = vi.fn()
+      .mockResolvedValueOnce(queryResult([user]))
+      .mockResolvedValueOnce(queryResult([{ id }]))
+      .mockResolvedValueOnce(queryResult([{
+        id: '40000000-0000-4000-8000-000000000001', work_item_id: id, actor_id: user.id, actor_name: user.display_name,
+        action: 'save-workbook', payload: { revision: 3, editMethod: 'local-manual', reason: '修正图片名称' },
+        created_at: new Date('2026-09-24T00:00:00Z'), version: 4
+      }]))
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query } as unknown as pg.Pool, {} as PrivateStorage)
+    const response = await app.inject({ method: 'GET', url: `/api/v1/collaboration/work-items/${id}/activities`, headers: { authorization: `Bearer ${'x'.repeat(40)}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ activities: [expect.objectContaining({ kind: 'manual', source: 'local', revision: 3, reason: '修正图片名称' })], nextBeforeVersion: null })
+    await app.close()
+  })
+
   it('accepts the workbook media type but requires bounded metadata before storage', async () => {
     const query = vi.fn().mockResolvedValueOnce(queryResult([{ id: '10000000-0000-4000-8000-000000000001', display_name: '卓志', avatar_url: null, organization_id: '20000000-0000-4000-8000-000000000001', corp_id: 'corp', business_role: 'upstream' }]))
     const pool = { query } as unknown as pg.Pool
@@ -129,7 +173,45 @@ describe('collaboration identity boundaries', () => {
     expect(storage.writeObject).toHaveBeenCalledWith(`${organizationId}/${workItemId}/revision-3.xlsx`, workbook, metadata.sha256)
     expect(clientQuery.mock.calls.some(call => String(call[0]).includes("'save-workbook'"))).toBe(true)
     const eventInsert = clientQuery.mock.calls.find(call => String(call[0]).includes("'save-workbook'"))
-    expect(eventInsert?.[1]?.[7]).toEqual(expect.objectContaining({ reason: metadata.changeReason, patternOverrides: metadata.patternOverrides }))
+    expect(eventInsert?.[1]?.[7]).toEqual(expect.objectContaining({ reason: metadata.changeReason, editMethod: 'software', patternOverrides: metadata.patternOverrides }))
+    await app.close()
+  })
+
+  it('rejects a stale local edit without overwriting the newer central workbook', async () => {
+    const actorId = '10000000-0000-4000-8000-000000000001'
+    const organizationId = '20000000-0000-4000-8000-000000000001'
+    const workItemId = '30000000-0000-4000-8000-000000000001'
+    const workbook = Buffer.from('local WPS edit')
+    const metadata = {
+      sourceWorkflow: 'manual', sourceId: workItemId, title: '共享表.xlsx',
+      sha256: createHash('sha256').update(workbook).digest('hex'),
+      requestKey: '40000000-0000-4000-8000-000000000003',
+      targetWorkItemId: workItemId, expectedVersion: 2, expectedRevision: 1,
+      editMethod: 'local-manual'
+    }
+    const current = {
+      id: workItemId, title: metadata.title, state: 'PROCESSING', source_workflow: 'new-series',
+      version: 3, revision: 2, created_at: new Date('2026-09-24T00:00:00Z'),
+      origin_id: actorId, origin_name: '卓志', assignee_id: actorId, assignee_name: '卓志',
+      current_sha256: 'a'.repeat(64)
+    }
+    const query = vi.fn().mockResolvedValueOnce(queryResult([{
+      id: actorId, display_name: '卓志', avatar_url: null, organization_id: organizationId,
+      corp_id: 'corp', business_role: 'upstream'
+    }]))
+    const clientQuery = vi.fn(async (sql: string) => String(sql).includes('FOR UPDATE OF w') ? queryResult([current]) : queryResult([]))
+    const storage = { writeObject: vi.fn(), removeObject: vi.fn() }
+    const app = Fastify()
+    registerCollaborationRoutes(app, { query, connect: vi.fn(async () => ({ query: clientQuery, release: vi.fn() })) } as unknown as pg.Pool, storage as unknown as PrivateStorage)
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/collaboration/work-items',
+      headers: { authorization: `Bearer ${'x'.repeat(40)}`, 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'x-casebang-metadata': Buffer.from(JSON.stringify(metadata)).toString('base64url') },
+      payload: workbook
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({ error: 'version_conflict' })
+    expect(storage.writeObject).not.toHaveBeenCalled()
     await app.close()
   })
 

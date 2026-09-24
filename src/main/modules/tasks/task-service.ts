@@ -2,7 +2,7 @@ import { access, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app, dialog } from 'electron'
-import type { SelectFileResult, TaskDraft, TaskDraftInput } from '@shared/contracts'
+import type { SelectFileResult, TaskDraft, TaskDraftBasicsInput } from '@shared/contracts'
 import type { ExportGenerationWorkbookInput, ExportGenerationWorkbookResult } from '@shared/generation-contracts'
 import { exportFormatPreservingWorkbook } from './format-preserving-generation-exporter'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
@@ -56,10 +56,13 @@ export class TaskService {
     }
   }
 
-  async createDraft(input: TaskDraftInput): Promise<TaskDraft> {
+  async createDraft(input: TaskDraftBasicsInput): Promise<TaskDraft> {
     await access(input.masterImagePath)
     const draft: TaskDraft = {
       ...input,
+      templateName: '自动按产品类型',
+      selectedModels: [],
+      modelBrandAssignments: {},
       id: randomUUID(),
       createdAt: new Date().toISOString(),
       status: 'draft'

@@ -3,6 +3,7 @@ import type { MaterialMasterPreview, MaterialBrand, SaveMaterialModelInput } fro
 import { MATERIAL_BRAND_GROUPS, type MaterialModel } from '@shared/material-model-dictionary'
 import type { CollaborationWorkItem } from '@shared/contracts'
 import { desktopApi } from '../../app/desktop-api'
+import { LocalWorkbookEditPanel } from '../collaboration/LocalWorkbookEditPanel'
 import '../../styles/material-data.css'
 
 const emptyModel = (): SaveMaterialModelInput => ({ brand: 'AP', code: '', name: '', aliases: [] })
@@ -84,7 +85,8 @@ export function MaterialDataPage({ enabled }: { enabled: boolean }): React.JSX.E
     {error && <div className="alert error">{error}</div>}{message && <div className="alert info">{message}</div>}
     {tab === 'master' ? <section className="md-panel">
       <header><div><h3>物料总表管理与预览</h3><p title={master?.path}>{master?.path ? master.path.split(/[\\/]/).pop() : '尚未配置物料总表'}</p></div><button disabled={busy} onClick={() => void run(chooseMaster)}>{master ? '选择 / 更换物料总表' : '选择物料总表'}</button></header>
-      <div className="md-central-master"><div><strong>中央共享总表</strong><span>{centralMaster ? `${centralMaster.title} · 版本 ${centralMaster.revision}` : '尚未建立'}</span><small>编码前会自动同步中央最新版；钉盘同步接口暂未启用。</small></div><nav><button disabled={busy || !master} onClick={() => void run(publishMaster)}>{centralMaster ? '上传本地更新' : '建立共享总表'}</button><button disabled={busy || !centralMaster} onClick={() => void run(syncMaster)}>同步中央最新版</button><button disabled={busy || !centralMaster} onClick={() => void run(async () => { await desktopApi.collaboration.openOnlineWorkbook({ workItemId: centralMaster!.id }); setMessage('已打开中央物料总表。') })}>WPS 在线编辑</button></nav></div>
+      <div className="md-central-master"><div><strong>中央共享总表</strong><span>{centralMaster ? `${centralMaster.title} · 版本 ${centralMaster.revision}` : '尚未建立'}</span><small>编码前会自动同步中央最新版；本地编辑需明确提交。</small></div><nav><button disabled={busy || !master} onClick={() => void run(publishMaster)}>{centralMaster ? '上传本地更新' : '建立共享总表'}</button><button disabled={busy || !centralMaster} onClick={() => void run(syncMaster)}>同步中央最新版</button></nav></div>
+      {centralMaster && <LocalWorkbookEditPanel workItemId={centralMaster.id} currentRevision={centralMaster.revision} onSaved={item => setCentralMaster(item)} />}
       <div className="md-toolbar"><form onSubmit={event => { event.preventDefault(); setAppliedQuery(query.trim()); void run(async () => loadMaster(0, query.trim())) }}><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索物料名称、编码、类目或工作表" /><button disabled={busy}>查询</button></form><span>{master ? `共 ${master.totalRows} 条` : '等待选择文件'}</span></div>
       {master && <><div className="md-table"><table><thead><tr><th>位置</th><th>类目</th><th>物料编码</th><th>物料名称</th><th>图案标识</th><th>机型码</th></tr></thead><tbody>{master.rows.map(row => <tr key={row.id}><td>{row.sheet}!{row.row}</td><td>{row.itemClass || '—'}</td><td><code>{row.materialCode}</code></td><td>{row.materialName}</td><td>{/^\d{2}$/.test(row.materialCode.slice(-2)) ? row.materialCode.slice(-4, -2) : '—'}</td><td>{row.identity.modelCode ?? '未识别'}</td></tr>)}</tbody></table></div><footer className="md-pagination"><button disabled={busy || page === 0} onClick={() => void run(async () => loadMaster(page - 1))}>上一页</button><span>第 {page + 1} 页</span><button disabled={busy || (page + 1) * pageSize >= master.totalRows} onClick={() => void run(async () => loadMaster(page + 1))}>下一页</button></footer></>}
     </section> : <div className="md-model-layout">

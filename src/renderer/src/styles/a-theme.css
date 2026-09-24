@@ -248,6 +248,15 @@ input[type="checkbox"], input[type="radio"] { accent-color: #465be8; }
 .collaboration-timeline summary { color: #465be8; cursor: pointer; font-size: 14px; font-weight: 600; }
 .collaboration-timeline[open] summary { margin-bottom: 10px; }
 .collaboration-timeline>div { margin: 7px 0; }
+.collaboration-task-card>.local-workbook-edit { grid-column: 1/-1; }
+.local-workbook-edit { display: grid; gap: 10px; min-width: 0; padding: 14px; border: 1px solid #d9e2f2; border-radius: 10px; background: #f8faff; }
+.local-workbook-edit-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.local-workbook-editor-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.local-workbook-editor-choice small { min-width: 220px; max-width: 100%; overflow-wrap: anywhere; color: #526176; }
+.local-workbook-edit label { display: grid; gap: 6px; max-width: 620px; font-size: 14px; font-weight: 600; }
+.local-workbook-edit label input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+.local-workbook-edit-path { overflow-wrap: anywhere; }
+.shared-workbook-export > .local-workbook-edit { grid-column: 1/-1; }
 .file-grid, .integration-grid { grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); }
 .file-card, .integration-card { padding: 20px; }
 .file-number { display: none; }

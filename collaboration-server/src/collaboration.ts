@@ -21,6 +21,7 @@ const metadataFields = {
   expectedVersion: z.number().int().positive().optional(),
   expectedRevision: z.number().int().positive().optional(),
   changeReason: z.string().trim().min(1).max(500).optional(),
+  editMethod: z.enum(['software', 'local-manual']).optional(),
   patternOverrides: z.array(z.object({
     key: z.string().max(1000),
     detectedVariant: z.string().regex(/^[A-Z0-9]{2}$/).nullable(),
@@ -80,7 +81,7 @@ interface WorkItemRow {
   activities?: ActivityRow[]
 }
 
-interface ActivityRow { id: string; work_item_id: string; actor_id: string; actor_name: string; action: string; created_at: Date }
+interface ActivityRow { id: string; work_item_id: string; actor_id: string; actor_name: string; action: string; payload: { revision?: number; reason?: string; editMethod?: string } | null; created_at: Date }
 
 export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool, storage: PrivateStorage): void {
   if (!app.hasContentTypeParser(XLSX_CONTENT_TYPE)) {
@@ -280,18 +281,37 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
     return reply.code(result.status).header('cache-control', 'no-store').send(result.body)
   })
 
+  app.get('/api/v1/collaboration/work-items/:id/workbook-metadata', async (request, reply) => {
+    const actor = await authenticatedUser(request, reply, pool)
+    if (!actor) return
+    const id = z.string().uuid().safeParse((request.params as { id?: string }).id)
+    if (!id.success) return reply.code(400).send({ error: 'invalid_work_item' })
+    const result = await pool.query<{ title: string; state: string; version: number; revision: number; sha256: string }>(
+      `SELECT w.title,w.state,w.version,w.revision,r.sha256 FROM work_items w
+       JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id AND r.revision=w.revision
+       WHERE w.organization_id=$1 AND w.id=$2
+         AND (w.origin_id=$3 OR w.assignee_id=$3 OR (w.source_workflow='manual' AND w.source_id='material-master'))`,
+      [actor.organization_id, id.data, actor.id]
+    )
+    if (!result.rows[0]) return reply.code(404).send({ error: 'work_item_not_found' })
+    return reply.header('cache-control', 'no-store').send(result.rows[0])
+  })
+
   app.get('/api/v1/collaboration/work-items/:id/workbook', async (request, reply) => {
     const actor = await authenticatedUser(request, reply, pool)
     if (!actor) return
     const params = request.params as { id?: string }
     const id = z.string().uuid().safeParse(params.id)
     if (!id.success) return reply.code(400).send({ error: 'invalid_work_item' })
+    const requestedRevision = z.coerce.number().int().positive().optional().safeParse((request.query as { revision?: string }).revision)
+    if (!requestedRevision.success) return reply.code(400).send({ error: 'invalid_revision' })
     const result = await pool.query<{ object_key: string; title: string }>(
       `SELECT r.object_key,w.title FROM work_items w
-       JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id AND r.revision=w.revision
+       JOIN workbook_revisions r ON r.organization_id=w.organization_id AND r.work_item_id=w.id
+         AND r.revision=COALESCE($4::integer,w.revision)
        WHERE w.organization_id=$1 AND w.id=$2
          AND (w.origin_id=$3 OR w.assignee_id=$3 OR (w.source_workflow='manual' AND w.source_id='material-master'))`,
-      [actor.organization_id, id.data, actor.id]
+      [actor.organization_id, id.data, actor.id, requestedRevision.data ?? null]
     )
     const row = result.rows[0]
     if (!row) return reply.code(404).send({ error: 'work_item_not_found' })
@@ -302,6 +322,34 @@ export function registerCollaborationRoutes(app: FastifyInstance, pool: pg.Pool,
       .header('content-type', XLSX_CONTENT_TYPE)
       .header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(row.title)}`)
       .send(await storage.readObject(row.object_key))
+  })
+
+  app.get('/api/v1/collaboration/work-items/:id/activities', async (request, reply) => {
+    const actor = await authenticatedUser(request, reply, pool)
+    if (!actor) return
+    const id = z.string().uuid().safeParse((request.params as { id?: string }).id)
+    const query = z.object({ beforeVersion: z.coerce.number().int().positive().optional() }).strict().safeParse(request.query)
+    if (!id.success || !query.success) return reply.code(400).send({ error: 'invalid_action' })
+    const allowed = await pool.query<{ id: string }>(
+      `SELECT id FROM work_items WHERE organization_id=$1 AND id=$2
+       AND (origin_id=$3 OR assignee_id=$3 OR (source_workflow='manual' AND source_id='material-master'))`,
+      [actor.organization_id, id.data, actor.id]
+    )
+    if (!allowed.rows[0]) return reply.code(404).send({ error: 'work_item_not_found' })
+    const result = await pool.query<ActivityRow & { version: number }>(
+      `SELECT e.id,e.work_item_id,e.actor_id,u.display_name AS actor_name,e.action,e.payload,e.created_at,e.version
+       FROM work_item_events e JOIN app_users u ON u.organization_id=e.organization_id AND u.id=e.actor_id
+       WHERE e.organization_id=$1 AND e.work_item_id=$2
+         AND e.action IN ('submit','save-workbook','weboffice-save')
+         AND ($3::integer IS NULL OR e.version<$3)
+       ORDER BY e.version DESC LIMIT 21`,
+      [actor.organization_id, id.data, query.data.beforeVersion ?? null]
+    )
+    const rows = result.rows.slice(0, 20)
+    return reply.header('cache-control', 'no-store').send({
+      activities: rows.map(publicActivity),
+      nextBeforeVersion: result.rows.length > 20 ? rows[rows.length - 1]?.version : null
+    })
   })
 
   app.post('/api/v1/collaboration/work-items/:id/actions', async (request, reply) => {
@@ -606,7 +654,7 @@ async function saveWorkbookRevision(
        VALUES($1,$2,$3,$4,$5,$6,$7,'save-workbook',$8)`,
       [eventId, actor.organization_id, current.id, actor.id, metadata.requestKey,
         createHash('sha256').update(JSON.stringify(metadata)).digest('hex'), nextVersion,
-        { revision: nextRevision, sha256: metadata.sha256, ...(metadata.changeReason ? { reason: metadata.changeReason } : {}),
+        { revision: nextRevision, sha256: metadata.sha256, editMethod: metadata.editMethod ?? 'software', ...(metadata.changeReason ? { reason: metadata.changeReason } : {}),
           ...(metadata.patternOverrides?.length ? { patternOverrides: metadata.patternOverrides } : {}) }]
     )
     const destinationUserId = actor.id === current.origin_id ? current.assignee_id : current.origin_id
@@ -633,9 +681,9 @@ async function loadActivities(pool: pg.Pool, organizationId: string, workItemIds
   const grouped = new Map<string, ActivityRow[]>()
   if (!workItemIds.length) return grouped
   const result = await pool.query<ActivityRow>(
-    `SELECT event.id,event.work_item_id,event.actor_id,actor.display_name AS actor_name,event.action,event.created_at
+    `SELECT event.id,event.work_item_id,event.actor_id,actor.display_name AS actor_name,event.action,event.payload,event.created_at
      FROM (
-       SELECT id,organization_id,work_item_id,actor_id,action,created_at,
+       SELECT id,organization_id,work_item_id,actor_id,action,payload,created_at,
               row_number() OVER (PARTITION BY work_item_id ORDER BY created_at DESC) AS position
        FROM work_item_events
        WHERE organization_id=$1 AND work_item_id=ANY($2::uuid[])
@@ -698,11 +746,18 @@ function publicWorkItem(row: WorkItemRow): object {
     assignee: { id: row.assignee_id, displayName: row.assignee_name },
     lastEditor: { id: row.modifier_id ?? row.origin_id, displayName: row.modifier_name ?? row.origin_name },
     lastEditedAt: (row.revision_created_at ?? row.created_at).toISOString(),
-    activities: (row.activities ?? []).map(activity => ({
-      id: activity.id,
-      actor: { id: activity.actor_id, displayName: activity.actor_name },
-      occurredAt: activity.created_at instanceof Date ? activity.created_at.toISOString() : String(activity.created_at),
-      kind: activity.action === 'weboffice-save' ? 'manual' : 'software'
-    }))
+    activities: (row.activities ?? []).map(publicActivity)
+  }
+}
+
+function publicActivity(activity: ActivityRow): object {
+  return {
+    id: activity.id,
+    actor: { id: activity.actor_id, displayName: activity.actor_name },
+    occurredAt: activity.created_at instanceof Date ? activity.created_at.toISOString() : String(activity.created_at),
+    kind: activity.action === 'weboffice-save' || activity.payload?.editMethod === 'local-manual' ? 'manual' : 'software',
+    source: activity.action === 'submit' ? 'published' : activity.action === 'weboffice-save' ? 'weboffice' : activity.payload?.editMethod === 'local-manual' ? 'local' : 'software',
+    revision: typeof activity.payload?.revision === 'number' ? activity.payload.revision : null,
+    reason: typeof activity.payload?.reason === 'string' ? activity.payload.reason : null
   }
 }

@@ -24,6 +24,7 @@ interface PersistedSettings {
   baseFileUpdates: BaseFileUpdateRecord[]
   lastMasterImageDirectory: string | null
   materialMasterPath?: string | null
+  localWorkbookEditorPath?: string | null
   materialModels?: MaterialModel[]
   application: ApplicationSettings
   cloudAi: PersistedCloudAiSettings
@@ -74,6 +75,8 @@ const EMPTY_SETTINGS: PersistedSettings = {
 export class SettingsRepository {
   async getMaterialMasterPath(): Promise<string | null> { return (await this.read()).materialMasterPath ?? null }
   async setMaterialMasterPath(path: string): Promise<void> { const settings = await this.read(); settings.materialMasterPath = path; await this.write(settings) }
+  async getLocalWorkbookEditorPath(): Promise<string | null> { return (await this.read()).localWorkbookEditorPath ?? null }
+  async setLocalWorkbookEditorPath(filePath: string | null): Promise<void> { const settings = await this.read(); settings.localWorkbookEditorPath = filePath; await this.write(settings) }
   async getMaterialModels(): Promise<MaterialModel[]> {
     const values = (await this.read()).materialModels
     return structuredClone(values?.length ? mergeMaterialModels(values) : MATERIAL_MODELS)
@@ -212,6 +215,7 @@ export class SettingsRepository {
         baseFileUpdates: parsed.baseFileUpdates ?? [],
         lastMasterImageDirectory: parsed.lastMasterImageDirectory ?? null,
         materialMasterPath: parsed.materialMasterPath ?? null,
+        localWorkbookEditorPath: parsed.localWorkbookEditorPath ?? null,
         materialModels: Array.isArray(parsed.materialModels) ? parsed.materialModels : undefined,
         application: { ...DEFAULT_APPLICATION_SETTINGS, ...(parsed.application ?? {}) },
         cloudAi: { ...DEFAULT_CLOUD_AI, ...(parsed.cloudAi ?? {}) },

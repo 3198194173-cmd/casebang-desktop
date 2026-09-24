@@ -42,12 +42,19 @@ export const taskDraftInputSchema = z.object({
   framePriceRules: z.record(z.string().trim().min(1).max(100), z.object({
     normal: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional(),
     silver: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional(),
-    brands: z.record(z.enum(['apple', 'huawei', 'samsung', 'other']), z.object({
+    brands: z.partialRecord(z.enum(['apple', 'huawei', 'samsung', 'other']), z.object({
       normal: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional(),
       silver: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional()
     })).optional()
   })).optional(),
   masterImagePath: z.string().trim().min(1).max(1_024)
+})
+
+export const taskDraftBasicsInputSchema = taskDraftInputSchema.pick({
+  seriesNameZh: true,
+  seriesNameEn: true,
+  ipRemark: true,
+  masterImagePath: true
 })
 
 export const analyzeMasterImageInputSchema = z.object({

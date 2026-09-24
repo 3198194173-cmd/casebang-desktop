@@ -14,13 +14,8 @@ import { GenerationQualityWorkspace } from './GenerationQualityWorkspace'
 import { ExportWorkspace } from './ExportWorkspace'
 import { REFERENCE_PHONE_MODELS } from '@shared/product-business-rules'
 
-const TEMPLATE_OPTIONS = [
-  '可拆卸+其他', '出镜壳', '出彩壳', '出片壳', '奇趣壳', '卡包', 'Macbook',
-  'Macbook Pad（带系列编码）', '镜头膜', '流沙磁吸支架背盖', '无编码系列0418'
-]
-
 const WIZARD_STEPS = [
-  { title: '模板与系列', short: '选择模板、填写系列资料', icon: '01' },
+  { title: '系列与总图', short: '填写系列资料，按产品类型自动选模板', icon: '01' },
   { title: '导入、裁图与命名', short: '识别、排组、归类与 AI 命名', icon: '02' },
   { title: '编码与机型', short: '确认系列码、产品码与条码机型', icon: '03' },
   { title: '生成与质检', short: '受控写入并检查工作簿', icon: '04' },
@@ -28,23 +23,23 @@ const WIZARD_STEPS = [
 ] as const
 
 const STEP_DETAILS = [
-  ['识别“命名-公式”的全部模板', '读取系列名称与主图', '建立不修改基础表的任务副本'],
+  ['步骤 2 确认产品类型后自动选择分表模板', '读取系列名称与主图', '建立不修改基础表的任务副本'],
   ['自动寻找并确认产品图片边界', '按图案关系排组并确认产品类别', 'AI 命名并检查国内命名表中的重复项'],
   ['读取“已使用编码”中的最大编号', '按产品类别和图案顺序连续分配', '勾选本次条码表使用的机型'],
-  ['先生成图片表，再由条码名组合机型生成条码表', '公式、样式、行列尺寸和图片关系复核', '异常时停止输出并给出检查报告'],
+  ['按产品类别分别生成图片和条码分表', '公式、样式、行列尺寸和图片关系复核', '异常时停止输出并给出检查报告'],
   ['新建产品表可另存到指定文件夹', 'A 条码参考和国内命名表原位备份并覆盖', '每次覆盖形成一组时间线，组内可按表回滚']
 ] as const
 
 export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }: { snapshot: AppSnapshot; existingSeries?: boolean; onDataChanged(): Promise<void> }): React.JSX.Element {
   const draftPrefix = existingSeries ? 'existing-products' : 'encoding'
-  const steps = existingSeries ? WIZARD_STEPS.map((step, index) => index === 0 ? { ...step, title: '导入新增产品', short: '选择产品模板与新增产品总图' } : index === 1 ? { ...step, title: '选择系列与图案比对', short: '沿用系列、复用历史名称或 AI 命名' } : step) : WIZARD_STEPS
+  const steps = existingSeries ? WIZARD_STEPS.map((step, index) => index === 0 ? { ...step, title: '导入新增产品', short: '选择新增产品总图，按类型自动分表' } : index === 1 ? { ...step, title: '选择系列与图案比对', short: '沿用系列、复用历史名称或 AI 命名' } : step) : WIZARD_STEPS
   const [selection, setSelection] = useDraftState<ExistingSeriesSelection | null>(`${draftPrefix}.selection`, null)
   const [target, setTarget] = useDraftState<ExistingSeriesTarget | null>(`${draftPrefix}.target`, null)
   const [historicalPatterns, setHistoricalPatterns] = useState<HistoricalPatternOption[]>([])
   const [historyConfirmed, setHistoryConfirmed] = useDraftState(`${draftPrefix}.historyConfirmed`, false)
   const [activeStep, setActiveStep] = useDraftState(`${draftPrefix}.activeStep`, 0)
   const [form, setForm] = useDraftState<TaskDraftInput>(`${draftPrefix}.form`, {
-    templateName: TEMPLATE_OPTIONS[0] ?? '', seriesNameZh: '', seriesNameEn: '', ipRemark: '', selectedModels: [...REFERENCE_PHONE_MODELS], modelBrandAssignments: {}, modelSettings: [], framePriceRules: {}, masterImagePath: ''
+    templateName: '自动按产品类型', seriesNameZh: '', seriesNameEn: '', ipRemark: '', selectedModels: [...REFERENCE_PHONE_MODELS], modelBrandAssignments: {}, modelSettings: [], framePriceRules: {}, masterImagePath: ''
   })
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -74,7 +69,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
     [imageAnalysis]
   )
   const basicsComplete = baseFilesReady
-    && Boolean(form.templateName.trim() && (existingSeries || form.seriesNameEn.trim()) && form.masterImagePath)
+    && Boolean((existingSeries || form.seriesNameEn.trim()) && form.masterImagePath)
   const cropStepComplete = Boolean(imageAnalysis)
     && imageAnalysis?.crops.filter((crop) => crop.role === 'series-overview').length === 1
     && productCrops.length > 0
@@ -138,7 +133,12 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
     }
     try {
       setBusy(true)
-      const task = existingSeries ? { id: 'existing-series' } : await desktopApi.tasks.createDraft(form)
+      const task = existingSeries ? { id: 'existing-series' } : await desktopApi.tasks.createDraft({
+        seriesNameZh: form.seriesNameZh,
+        seriesNameEn: form.seriesNameEn,
+        ipRemark: form.ipRemark,
+        masterImagePath: form.masterImagePath
+      })
       setMessage(`任务草稿 ${task.id.slice(0, 8)} 已建立，可继续体验后续向导页面。`)
       setActiveStep(1)
     } catch (reason) {
@@ -210,7 +210,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
       <section className="panel wizard-workspace">
         <div className="panel-heading wizard-heading">
           <div>
-            <span className="eyebrow">STEP {String(activeStep + 1).padStart(2, '0')} / 05</span>
+            <span className="eyebrow">步骤 {activeStep + 1} / 5</span>
             <h3>{currentStep.title}</h3>
             <p>{currentStep.short}</p>
           </div>
@@ -265,7 +265,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
         ) : activeStep === 3 && imageAnalysis && generationWorkspace ? (
           <GenerationQualityWorkspace workspace={generationWorkspace} analysis={imageAnalysis} />
         ) : activeStep === 4 && generationWorkspace && imageAnalysis ? (
-          <ExportWorkspace workspace={generationWorkspace} templateName={form.templateName} baseFiles={snapshot.baseFiles} analysis={imageAnalysis} sourceWorkflow={existingSeries ? 'new-products' : 'new-series'} onDataChanged={onDataChanged} />
+          <ExportWorkspace workspace={generationWorkspace} templateName="自动按产品类型" baseFiles={snapshot.baseFiles} analysis={imageAnalysis} sourceWorkflow={existingSeries ? 'new-products' : 'new-series'} onDataChanged={onDataChanged} />
         ) : (
           <StepPlaceholder step={activeStep} />
         )}
@@ -311,13 +311,10 @@ function TaskBasics({
   return (
     <div className="wizard-form-grid">
       <div>
-        <label className="field">
-          <span>产品模板</span>
-          <select value={form.templateName} onChange={(event) => setForm({ ...form, templateName: event.target.value })}>
-            {TEMPLATE_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-          </select>
-          <small>正式版将由模板配置自动生成该清单，不在页面里写死。</small>
-        </label>
+        <div className="field">
+          <span>产品模板：按产品类型自动选择</span>
+          <small>步骤 2 确认的出镜壳、出片壳、出彩壳分别生成专属图片与条码分表；其余产品进入“可拆卸+其他”分表。旧草稿的模板选择不会限制生成。</small>
+        </div>
         {!existingSeries && <div className="field-row">
           <label className="field"><span>中文系列名（选填）</span><input value={form.seriesNameZh} onChange={(event) => updateChineseSeriesName(event.target.value)} placeholder="可留空；例如：杭州限定系列" /><small>留空时直接使用英文系列名继续业务流程。</small></label>
           <label className="field"><span className="field-title-row"><span>英文系列名</span><button type="button" disabled={translationBusy} onClick={applyAutomaticTranslation}>{translationBusy ? '翻译中…' : '重新翻译'}</button></span><input value={form.seriesNameEn} onChange={(event) => updateEnglishSeriesName(event.target.value)} placeholder="填写中文名后自动翻译，也可以手工修改" /><small>{translationHint}</small></label>
@@ -326,7 +323,7 @@ function TaskBasics({
         <label className="field">
           <span>备注（IP）（选填）</span>
           <input value={form.ipRemark} onChange={(event) => setForm({ ...form, ipRemark: event.target.value })} placeholder="例如：杭州限定" />
-          <small>只写入新建表“条码”工作表的备注（IP）列。</small>
+          <small>写入新建表各产品类别“条码”分表的备注（IP）列。</small>
         </label>
         <label className="field">
           <span>一张产品排版总图</span>
@@ -335,10 +332,10 @@ function TaskBasics({
         </label>
       </div>
       <div className="template-protection-card">
-        <span className="eyebrow">CONTROLLED WORKBOOKS</span><h4>基础资料受控写入</h4>
+        <h4>基础资料受控写入</h4>
         <p>命名-公式始终只读；A 条码参考和国内命名表只有在质检通过并确认后，才按预览坐标备份、覆盖。</p>
         <div><strong>3 个</strong><small>初始化基础表</small></div>
-        <div><strong>11 个</strong><small>已识别通用模板</small></div>
+        <div><strong>按类别</strong><small>自动选择图片表列布局</small></div>
         <div><strong>自动</strong><small>覆盖前备份并支持回滚</small></div>
       </div>
     </div>
@@ -360,7 +357,7 @@ function buildBasicsIncompleteMessage(baseFilesReady: boolean, form: TaskDraftIn
 }
 
 function buildStepLockedMessage(index: number, basicsComplete: boolean, cropStepComplete: boolean, namingStepComplete: boolean, encodingStepComplete: boolean, generationStepComplete: boolean): string {
-  if (!basicsComplete) return '步骤 1 尚未完成：三个基础表、模板、英文系列名和产品总图必须就绪；中文系列名可留空。'
+  if (!basicsComplete) return '步骤 1 尚未完成：三个基础表、英文系列名和产品总图必须就绪；中文系列名可留空。产品模板将在确认品类后自动选择。'
   if (index >= 2 && !cropStepComplete) return '步骤 2 尚未完成：请先识别总图并确认裁剪区域。'
   if (index >= 2 && !namingStepComplete) return '步骤 2 尚未完成：请确认产品类别、补齐英文图案名，并处理本次任务或国内命名表中的重复名称。'
   if (index >= 3 && !encodingStepComplete) return '步骤 3 尚未完成：请处理编码问题，并点击“确认机型”。'
@@ -417,7 +414,7 @@ function StepPlaceholder({ step }: { step: number }): React.JSX.Element {
     <div className="placeholder-workspace">
       <div className="placeholder-canvas"><span className="placeholder-icon">{WIZARD_STEPS[step]?.icon}</span><h4>{WIZARD_STEPS[step]?.title}工作区</h4><p>页面结构已经接通，当前暂不执行真实数据操作。</p></div>
       <div className="placeholder-checklist">
-        <span className="eyebrow">PLANNED CAPABILITIES</span>
+        <span className="eyebrow">当前步骤说明</span>
         {(STEP_DETAILS[step] ?? []).map((detail, index) => <div key={detail}><span>{index + 1}</span><p>{detail}</p><i>待接入</i></div>)}
       </div>
     </div>

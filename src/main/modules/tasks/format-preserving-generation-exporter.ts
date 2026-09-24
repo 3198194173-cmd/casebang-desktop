@@ -39,6 +39,11 @@ export async function exportFormatPreservingWorkbook(sourcePath: string, destina
   let workbookXml = requireText(entries, 'xl/workbook.xml')
   let relationshipsXml = requireText(entries, 'xl/_rels/workbook.xml.rels')
   const sheetPaths = parseSheetPaths(workbookXml, relationshipsXml)
+  if (workbook.id === 'generated-product') {
+    const prepared = prepareGeneratedProductSheets(entries, workbook, workbookXml, relationshipsXml, sheetPaths)
+    workbookXml = prepared.workbookXml
+    relationshipsXml = prepared.relationshipsXml
+  }
   const cropById = new Map(input.imageSource.crops.map((crop) => [crop.id, crop]))
   const optimizedMedia = new Map<string, string>()
   let mediaIndex = nextPartIndex(entries, /^xl\/media\/image(\d+)\./i)
@@ -67,7 +72,7 @@ export async function exportFormatPreservingWorkbook(sourcePath: string, destina
     if (!sourceSheet) throw new Error(`源工作簿中找不到工作表：${sourceSheetName}`)
     let worksheetXml = requireText(entries, sourceSheet.path)
     const originalWorksheetXml = worksheetXml
-    if (workbook.id === 'generated-product' && previewSheet.id === 'generated-barcodes') {
+    if (workbook.id === 'generated-product') {
       worksheetXml = truncateWorksheetAfterColumn(worksheetXml, previewSheet.columns.length)
     }
     if (workbook.id === 'generated-product' && previewSheet.columnWidths?.length) {
@@ -165,6 +170,55 @@ export async function exportFormatPreservingWorkbook(sourcePath: string, destina
   replacePackageText(entries, 'xl/workbook.xml', recalculatingWorkbookXml)
   replacePackageText(entries, 'xl/_rels/workbook.xml.rels', relationshipsXml)
   await writeOoxmlPackage(destinationPath, entries)
+}
+
+/** Reuse each bundled template layout once, then clone it for additional product-type tabs. */
+function prepareGeneratedProductSheets(
+  entries: PackageEntryRecord[],
+  workbook: PreviewWorkbook,
+  initialWorkbookXml: string,
+  initialRelationshipsXml: string,
+  sheetPaths: Array<{ name: string; path: string }>
+): { workbookXml: string; relationshipsXml: string } {
+  const sourceImage = sheetPaths.find((sheet) => sheet.name === '图片')
+  const sourceBarcode = sheetPaths.find((sheet) => sheet.name === '条码')
+  if (!sourceImage || !sourceBarcode) throw new Error('新建产品表模板缺少图片或条码工作表')
+  const templateXml = {
+    image: requireText(entries, sourceImage.path),
+    barcode: requireText(entries, sourceBarcode.path)
+  }
+  const used = new Set<'image' | 'barcode'>()
+  let workbookXml = initialWorkbookXml
+  let relationshipsXml = initialRelationshipsXml
+  for (const sheet of workbook.sheets) {
+    const kind = sheet.id.startsWith('generated-products') || sheet.name.endsWith('图片') || sheet.name === '图片' ? 'image' : 'barcode'
+    const source = kind === 'image' ? sourceImage : sourceBarcode
+    if (sheet.name.length > 31 || /[\\/\[\]:*?]/.test(sheet.name)) throw new Error(`新建产品分表名称无效：${sheet.name}`)
+    if (!used.has(kind)) {
+      used.add(kind)
+      if (source.name !== sheet.name) {
+        const originalName = source.name
+        workbookXml = workbookXml.replace(/<sheet\b[^>]*\/\s*>/gi, (tag) =>
+          parseAttributes(tag).name === originalName ? tag.replace(/\bname="[^"]*"/, `name="${escapeXml(sheet.name)}"`) : tag)
+        source.name = sheet.name
+      }
+      continue
+    }
+    const sheetIndex = nextPartIndex(entries, /^xl\/worksheets\/sheet(\d+)\.xml$/i)
+    const path = `xl/worksheets/sheet${sheetIndex}.xml`
+    const relationshipId = `rId${Math.max(0, ...[...relationshipsXml.matchAll(/\bId="rId(\d+)"/g)].map((match) => Number(match[1]))) + 1}`
+    const sheetId = Math.max(0, ...[...workbookXml.matchAll(/\bsheetId="(\d+)"/g)].map((match) => Number(match[1]))) + 1
+    workbookXml = workbookXml.replace('</sheets>', `<sheet name="${escapeXml(sheet.name)}" sheetId="${sheetId}" r:id="${relationshipId}"/></sheets>`)
+    relationshipsXml = relationshipsXml.replace('</Relationships>', `<Relationship Id="${relationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${sheetIndex}.xml"/></Relationships>`)
+    // A cloned sheet must not share the template sheet's drawing relationship.
+    // New images get their own drawing/media relationships in the normal write path.
+    const cleanXml = templateXml[kind].replace(/<drawing\b[^>]*\/>/gi, '').replace(/\s+tabSelected="1"/gi, '')
+    setPackageText(entries, path, cleanXml)
+    const contentTypes = requireText(entries, '[Content_Types].xml')
+    setPackageText(entries, '[Content_Types].xml', contentTypes.replace('</Types>', `<Override PartName="/${path}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`))
+    sheetPaths.push({ name: sheet.name, path })
+  }
+  return { workbookXml, relationshipsXml }
 }
 
 function embeddedImageDimension(displayPixels: number): number {

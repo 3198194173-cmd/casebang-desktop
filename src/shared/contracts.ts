@@ -183,6 +183,20 @@ export interface CollaborationActivity {
   actor: { id: string; displayName: string }
   occurredAt: string
   kind: 'software' | 'manual'
+  source?: 'published' | 'software' | 'local' | 'weboffice'
+  revision?: number | null
+  reason?: string | null
+}
+
+export interface LocalWorkbookEditSession {
+  id: string
+  workItemId: string
+  title: string
+  filePath: string
+  baseVersion: number
+  baseRevision: number
+  createdAt: string
+  hasChanges: boolean
 }
 
 export interface DingTalkArtworkSource {
@@ -249,6 +263,9 @@ export interface TaskDraftInput {
   masterImagePath: string
 }
 
+/** Step 1 only: product categories, models and prices are decided in later steps. */
+export type TaskDraftBasicsInput = Pick<TaskDraftInput, 'seriesNameZh' | 'seriesNameEn' | 'ipRemark' | 'masterImagePath'>
+
 export interface BarcodePricePair {
   domestic: number | null
   overseas: number | null
@@ -311,12 +328,20 @@ export interface CasebangDesktopApi {
   collaboration: {
     members(): Promise<CollaborationMember[]>
     workItems(): Promise<CollaborationWorkItem[]>
+    activities(input: { workItemId: string; beforeVersion?: number }): Promise<{ activities: CollaborationActivity[]; nextBeforeVersion: number | null }>
     publishWorkbook(input: { path: string; title: string; sourceWorkflow: import('./lifecycle-contracts').LifecycleSource }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     submitLifecycle(input: { draftId: string; expectedVersion: number; assigneeId: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     act(input: { workItemId: string; action: CollaborationWorkAction; expectedVersion: number; revision: number; state?: string; reason?: string }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     openWorkbook(input: { workItemId: string; title: string; revision: number }): Promise<{ path: string }>
     openLocalWorkbook(input: { path: string }): Promise<{ path: string }>
     openOnlineWorkbook(input: { workItemId: string }): Promise<{ opened: true }>
+    activeLocalEdit(input: { workItemId: string }): Promise<LocalWorkbookEditSession | null>
+    localEditor(): Promise<string | null>
+    selectLocalEditor(): Promise<string | null>
+    clearLocalEditor(): Promise<void>
+    beginLocalEdit(input: { workItemId: string; forceNew?: boolean }): Promise<LocalWorkbookEditSession>
+    openLocalEdit(input: { workItemId: string; sessionId: string }): Promise<LocalWorkbookEditSession>
+    commitLocalEdit(input: { workItemId: string; sessionId: string; changeReason?: string }): Promise<{ item: CollaborationWorkItem | null; duplicate: boolean; unchanged: boolean; hasRemainingChanges: boolean }>
     materialMaster(): Promise<CollaborationWorkItem | null>
     publishMaterialMaster(): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
     syncMaterialMaster(): Promise<{ item: CollaborationWorkItem; path: string }>
@@ -337,7 +362,7 @@ export interface CasebangDesktopApi {
   }
   tasks: {
     selectMasterImage(): Promise<SelectFileResult>
-    createDraft(input: TaskDraftInput): Promise<TaskDraft>
+    createDraft(input: TaskDraftBasicsInput): Promise<TaskDraft>
     exportGenerationWorkbook(input: ExportGenerationWorkbookInput): Promise<ExportGenerationWorkbookResult>
     publishGenerationWorkbook(input: import('./generation-contracts').PublishGenerationWorkbookInput): Promise<{ item: CollaborationWorkItem; duplicate: boolean }>
   }

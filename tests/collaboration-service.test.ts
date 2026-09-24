@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const directFetch = vi.hoisted(() => vi.fn())
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => 'C:\\CasebangTest') },
+  dialog: { showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] })) },
   net: { fetch: vi.fn() },
   session: { fromPartition: vi.fn(() => ({ fetch: directFetch })) },
   shell: { openPath: vi.fn(async () => ''), openExternal: vi.fn(async () => undefined) }
 }))
 
-import { net, session as electronSession, shell } from 'electron'
+import { app, dialog, net, session as electronSession, shell } from 'electron'
 import { CollaborationService } from '../src/main/modules/collaboration/collaboration-service'
 import type { SettingsRepository } from '../src/main/infrastructure/settings-repository'
+import { readOoxmlPackage, replacePackageText, writeOoxmlPackage } from '../src/main/modules/spreadsheet/ooxml-package'
 
 const session = {
   sessionToken: 'session-token-for-tests',
@@ -24,6 +26,8 @@ const session = {
 function settings() {
   return {
     getCollaborationSession: vi.fn(async () => session),
+    getLocalWorkbookEditorPath: vi.fn(async () => null),
+    setLocalWorkbookEditorPath: vi.fn(async () => undefined),
     clearCollaborationSession: vi.fn(async () => undefined)
   } as unknown as SettingsRepository
 }
@@ -125,6 +129,78 @@ describe('desktop collaboration service', () => {
     expect(net.fetch).toHaveBeenCalledWith(expect.stringContaining(`/work-items/${workItemId}/weboffice-session`), expect.objectContaining({ method: 'POST' }))
     expect(shell.openExternal).toHaveBeenCalledWith(editorUrl)
   })
+
+  it('opens an immutable central revision as a recoverable local edit and does not submit unchanged bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'casebang-local-edit-'))
+    vi.mocked(app.getPath).mockReturnValue(root)
+    const workItemId = '30000000-0000-4000-8000-000000000001'
+    const workbook = await readFile(join(process.cwd(), 'resources', 'generated-product-template.xlsx'))
+    const sha256 = (await import('node:crypto')).createHash('sha256').update(workbook).digest('hex')
+    vi.mocked(net.fetch)
+      .mockResolvedValueOnce(Response.json({ title: '新建产品表.xlsx', state: 'PROCESSING', version: 3, revision: 2, sha256 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array(workbook)))
+    try {
+      const service = new CollaborationService(settings())
+      const opened = await service.beginLocalEdit({ workItemId })
+      expect(opened).toMatchObject({ workItemId, baseVersion: 3, baseRevision: 2, hasChanges: false })
+      expect(vi.mocked(net.fetch).mock.calls[1]?.[0]).toContain(`workbook?revision=2`)
+      expect(shell.openPath).toHaveBeenCalledWith(opened.filePath)
+      expect(await service.activeLocalEdit({ workItemId })).toMatchObject({ id: opened.id })
+      await expect(service.commitLocalEdit({ workItemId, sessionId: opened.id })).resolves.toMatchObject({ unchanged: true, item: null })
+      expect(net.fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.mocked(app.getPath).mockReturnValue('C:\\CasebangTest')
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('lets the user select an installed local spreadsheet editor without a hard-coded WPS path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'casebang-editor-'))
+    const editor = join(root, 'wps.exe')
+    await writeFile(editor, '')
+    vi.mocked(dialog.showOpenDialog).mockResolvedValueOnce({ canceled: false, filePaths: [editor] })
+    try {
+      const value = settings()
+      await expect(new CollaborationService(value).selectLocalEditor()).resolves.toBe(editor)
+      expect(value.setLocalWorkbookEditorPath).toHaveBeenCalledWith(editor)
+    } finally { await rm(root, { recursive: true, force: true }) }
+  })
+
+  it('submits a locally saved workbook as a manual revision and keeps the original edit file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'casebang-local-submit-'))
+    vi.mocked(app.getPath).mockReturnValue(root)
+    const workItemId = '30000000-0000-4000-8000-000000000001'
+    const workbook = await readFile(join(process.cwd(), 'resources', 'generated-product-template.xlsx'))
+    const sha256 = (await import('node:crypto')).createHash('sha256').update(workbook).digest('hex')
+    const updated = { id: workItemId, title: '新建产品表.xlsx', state: 'PROCESSING', sourceWorkflow: 'new-series', version: 4, revision: 3,
+      createdAt: '2026-09-24T00:00:00Z', lastEditedAt: '2026-09-24T00:01:00Z', origin: { id: session.user.id, displayName: '卓志' },
+      assignee: { id: session.user.id, displayName: '卓志' }, lastEditor: { id: session.user.id, displayName: '卓志' }, activities: [] }
+    vi.mocked(net.fetch)
+      .mockResolvedValueOnce(Response.json({ title: updated.title, state: 'PROCESSING', version: 3, revision: 2, sha256 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array(workbook)))
+      .mockResolvedValueOnce(Response.json({ uploadId: '40000000-0000-4000-8000-000000000001', uploadMode: 'direct', uploadUrl: 'https://example.com/upload', headers: {} }, { status: 201 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json({ item: updated, duplicate: false }, { status: 201 }))
+    try {
+      const service = new CollaborationService(settings())
+      const opened = await service.beginLocalEdit({ workItemId })
+      const modified = join(root, 'modified.xlsx')
+      const entries = await readOoxmlPackage(opened.filePath)
+      const originalXml = entries.find(entry => entry.path === 'xl/workbook.xml')?.buffer?.toString('utf8') ?? ''
+      replacePackageText(entries, 'xl/workbook.xml', `${originalXml} `)
+      await writeOoxmlPackage(modified, entries)
+      await copyFile(modified, opened.filePath)
+      const saved = await service.commitLocalEdit({ workItemId, sessionId: opened.id, changeReason: '修正图片名称' })
+      expect(saved).toMatchObject({ item: { revision: 3 }, unchanged: false, hasRemainingChanges: false })
+      expect(await readFile(opened.filePath)).toEqual(await readFile(modified))
+      expect(await service.activeLocalEdit({ workItemId })).toBeNull()
+      const metadata = JSON.parse(String(vi.mocked(net.fetch).mock.calls[2]?.[1]?.body))
+      expect(metadata).toMatchObject({ targetWorkItemId: workItemId, expectedVersion: 3, expectedRevision: 2, editMethod: 'local-manual', changeReason: '修正图片名称' })
+    } finally {
+      vi.mocked(app.getPath).mockReturnValue('C:\\CasebangTest')
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
 
   it('downloads the signed PDF directly in a non-persistent uncached desktop session', async () => {
     const pdf = Buffer.from('%PDF-1.7\nartwork')

@@ -48,9 +48,10 @@ export function GenerationQualityWorkspace({ workspace, analysis }: { workspace:
   const allPassed = workspace.checks.every((check) => check.passed)
   const variantSummary = useMemo(() => {
     const generated = workspace.workbooks.find((item) => item.id === 'generated-product')
-    const images = generated?.sheets.find((item) => item.id === 'generated-products')?.rows ?? []
-    const barcodes = generated?.sheets.find((item) => item.id === 'generated-barcodes')?.rows.filter((row) => row[3]?.value) ?? []
-    const silverImages = images.filter((row) => row[2]?.value === '银框').length
+    const imageSheets = generated?.sheets.filter((item) => item.id.startsWith('generated-products-')) ?? []
+    const images = imageSheets.flatMap((item) => item.rows)
+    const barcodes = generated?.sheets.filter((item) => item.id.startsWith('generated-barcodes-')).flatMap((item) => item.rows.filter((row) => row[3]?.value)) ?? []
+    const silverImages = imageSheets.reduce((count, item) => count + (item.columns.indexOf('') >= 0 ? item.rows.filter((row) => row[2]?.value === '银框').length : 0), 0)
     const silverBarcodes = barcodes.filter((row) => row[3]?.value.includes('（银框）')).length
     return `图片：普通 ${images.length - silverImages} / 银框 ${silverImages}；条码：普通 ${barcodes.length - silverBarcodes} / 银框 ${silverBarcodes}`
   }, [workspace])

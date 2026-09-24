@@ -4,6 +4,7 @@ import type { AppSnapshot } from '@shared/contracts'
 import type { ImageAnalysisResult } from '@shared/image-contracts'
 import type { LifecycleSource } from '@shared/lifecycle-contracts'
 import { desktopApi } from '../../app/desktop-api'
+import { LocalWorkbookEditPanel } from '../collaboration/LocalWorkbookEditPanel'
 
 type WorkbookId = GenerationWorkspaceData['workbooks'][number]['id']
 type BaseWorkbookId = Extract<WorkbookId, 'barcode-reference' | 'domestic-naming'>
@@ -21,7 +22,7 @@ const DEFAULT_EXPORT_IDS: WorkbookId[] = ['generated-product']
 const DEFAULT_BASE_IDS: BaseWorkbookId[] = ['barcode-reference', 'domestic-naming']
 
 export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, sourceWorkflow, onDataChanged }: Props): React.JSX.Element {
-  const [busyMode, setBusyMode] = useState<'export' | 'overwrite' | 'publish' | 'open' | null>(null)
+  const [busyMode, setBusyMode] = useState<'export' | 'overwrite' | 'publish' | null>(null)
   const operationPending = useRef(false)
   const [result, setResult] = useState<string | null>(null)
   const [processedFiles, setProcessedFiles] = useState<string[]>([])
@@ -133,24 +134,9 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
         sourceWorkflow
       })
       setPublishedRecord({ id: response.item.id, revision: response.item.revision })
-      setResult(response.duplicate ? '中央工作簿已经存在，已连接到原记录。' : '共享工作簿已建立，双方现在编辑同一份中央文件。')
+      setResult(response.duplicate ? '中央工作簿已经存在，已连接到原记录。' : '共享工作簿已建立；本地修改需明确提交到中央修订。')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '') : '建立共享工作簿失败')
-    } finally {
-      operationPending.current = false
-      setBusyMode(null)
-    }
-  }
-
-  const openOnlineWorkbook = async (): Promise<void> => {
-    if (!publishedRecord || operationPending.current) return
-    try {
-      operationPending.current = true
-      setBusyMode('open'); setError(null)
-      await desktopApi.collaboration.openOnlineWorkbook({ workItemId: publishedRecord.id })
-      setResult('已打开 WPS 在线工作簿；双方从“工作簿记录”进入时编辑的是同一份中央文件。')
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '') : '打开 WPS 在线工作簿失败')
     } finally {
       operationPending.current = false
       setBusyMode(null)
@@ -160,11 +146,11 @@ export function ExportWorkspace({ workspace, templateName, baseFiles, analysis, 
   return <div className="export-workspace">
     <section className="export-card shared-workbook-export">
       <div className="export-file-icon update">共享</div>
-      <div><span className="eyebrow">进入协作</span><h4>建立共享工作簿</h4><p>软件在后台生成并上传新建产品表，不需要先导出本地文件。建立后双方编辑同一份中央工作簿。</p><div className="base-update-operation-name"><span>中央工作簿</span><strong>{workspace.title}.xlsx</strong></div>{publishedRecord && <small>共享记录 {publishedRecord.id.slice(0, 8)} · 修订 {publishedRecord.revision}</small>}</div>
+      <div><span className="eyebrow">进入协作</span><h4>建立共享工作簿</h4><p>软件在后台生成并上传新建产品表；如需修改，请在本地 WPS 保存后再提交中央修订。</p><div className="base-update-operation-name"><span>中央工作簿</span><strong>{workspace.title}.xlsx</strong></div>{publishedRecord && <small>共享记录 {publishedRecord.id.slice(0, 8)} · 修订 {publishedRecord.revision}</small>}</div>
       <div className="shared-workbook-actions">
         <button className="primary-button" disabled={!ready || busyMode !== null || Boolean(publishedRecord)} onClick={() => void publishWorkbook()}>{busyMode === 'publish' ? '正在建立并上传…' : publishedRecord ? '共享工作簿已建立' : '建立共享工作簿'}</button>
-        {publishedRecord && <button className="secondary-button" disabled={busyMode !== null} onClick={() => void openOnlineWorkbook()}>{busyMode === 'open' ? '正在打开…' : '打开 WPS 在线编辑'}</button>}
       </div>
+      {publishedRecord && <LocalWorkbookEditPanel workItemId={publishedRecord.id} currentRevision={publishedRecord.revision} onSaved={item => setPublishedRecord({ id: item.id, revision: item.revision })} />}
     </section>
 
     <section className="export-card primary-export local-copy-export">

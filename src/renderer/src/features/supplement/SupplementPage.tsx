@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { desktopApi } from '../../app/desktop-api'
 import type { SupplementResult, SupplementVariantOverride } from '@shared/supplement-contracts'
 import { SupplementWorkbookPreview } from './SupplementWorkbookPreview'
+import { LocalWorkbookEditPanel } from '../collaboration/LocalWorkbookEditPanel'
 import { priceGroup } from '@shared/supplement-rules'
 const key = priceGroup
 export function SupplementPage({ active, onOpenMaterialData }: { active: boolean; onOpenMaterialData(): void }): React.JSX.Element {
@@ -49,10 +50,10 @@ export function SupplementPage({ active, onOpenMaterialData }: { active: boolean
           {(['domesticPrice', 'overseasPrice'] as const).map((field, f) => <label key={field}>{['建议零售价（元）', '海外零售价（美元）'][f]}<input inputMode="decimal" value={v[field] ?? ''} placeholder="留空保留参考值" onChange={e => { setVariants(current => current.map((item, n) => n === i ? { ...item, [field]: e.target.value } : item)); setPublishedRecord(null) }} /></label>)}
         </div></fieldset>)}
         <div className="supplement-final-actions">
-          <button className="primary-button" disabled={busy || !matched.length || Boolean(publishedRecord)} onClick={() => void run(async () => { const response = await desktopApi.supplement.publishShared({ title: `产品补机型-${targetModel}`, overrides: { variants, draft: { result, sourcePaths: [masterPath, inputPath] } } }); setPublishedRecord({ id: response.item.id, revision: response.item.revision }); setMessage(response.duplicate ? '中央工作簿已经存在，已连接到原记录。' : '共享工作簿已建立，双方现在编辑同一份中央文件。') })}>{publishedRecord ? '共享工作簿已建立' : '建立共享工作簿'}</button>
-          {publishedRecord && <button className="secondary-button" disabled={busy} onClick={() => void run(async () => { await desktopApi.collaboration.openOnlineWorkbook({ workItemId: publishedRecord.id }); setMessage('已打开 WPS 在线工作簿。') })}>打开 WPS 在线编辑</button>}
+          <button className="primary-button" disabled={busy || !matched.length || Boolean(publishedRecord)} onClick={() => void run(async () => { const response = await desktopApi.supplement.publishShared({ title: `产品补机型-${targetModel}`, overrides: { variants, draft: { result, sourcePaths: [masterPath, inputPath] } } }); setPublishedRecord({ id: response.item.id, revision: response.item.revision }); setMessage(response.duplicate ? '中央工作簿已经存在，已连接到原记录。' : '共享工作簿已建立；本地修改需明确提交到中央修订。') })}>{publishedRecord ? '共享工作簿已建立' : '建立共享工作簿'}</button>
           <button className="secondary-button" disabled={busy || !matched.length} onClick={() => void run(async () => { const path = await desktopApi.supplement.export({ variants, draft: { result, sourcePaths: [masterPath, inputPath] } }); if (path) setMessage(`本地副本已导出：${path}；后续修改不会自动同步到中央工作簿。`) })}>导出本地副本</button>
         </div>
+        {publishedRecord && <LocalWorkbookEditPanel workItemId={publishedRecord.id} currentRevision={publishedRecord.revision} onSaved={item => setPublishedRecord({ id: item.id, revision: item.revision })} />}
         <p>共享工作簿会在后台直接生成并上传；本地副本仅用于离线备份，不是进入协作流程的前置步骤。</p>
       </section>
       <SupplementWorkbookPreview result={result} variants={variants} />

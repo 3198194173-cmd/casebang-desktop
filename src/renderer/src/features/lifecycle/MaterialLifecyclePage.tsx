@@ -9,6 +9,7 @@ import type { ArtworkVisualResult } from '@shared/artwork-ai'
 import { renderArtworkPdf } from './render-artwork-pdf'
 import '../../styles/lifecycle.css'
 import { useAccount, accountError } from '../../app/account-context'
+import { LocalWorkbookEditPanel } from '../collaboration/LocalWorkbookEditPanel'
 
 const currentMonthPrefix = (): string => {
   const now = new Date()
@@ -203,10 +204,23 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
       expectedVersion: selectedItem.version, expectedRevision: selectedItem.revision,
       monthPrefix, fillBarcodes, fillMaterialCodes, patternVariants: variants,
       patternOverrideEnabled,
-      patternOverrideReason: patternOverrideReason.trim() || undefined,
-      openOnlineAfterSave: openAfterSave
+      patternOverrideReason: patternOverrideReason.trim() || undefined
     })
-    setCodingMessage(`已保存中央版本 ${result.item.revision}：填写 69 码 ${result.barcodeFilled} 条，物料编码 ${result.materialCodeFilled} 条${result.openedOnline ? '；已打开 WPS 检查' : ''}。`)
+    let openNote = ''
+    if (openAfterSave) {
+      try {
+        const existing = await desktopApi.collaboration.activeLocalEdit({ workItemId: result.item.id })
+        if (existing?.hasChanges) {
+          openNote = `；另有未提交的本地稿，未自动替换，请先在工作簿记录中处理：${existing.filePath}`
+        } else {
+          await desktopApi.collaboration.beginLocalEdit({ workItemId: result.item.id, forceNew: true })
+          openNote = '；已打开加工后的中央修订供本地表格软件检查，修改后请提交'
+        }
+      } catch (cause) {
+        openNote = `；中央已保存，但打开本地编辑稿失败：${accountError(cause, '请稍后从工作簿记录重试')}`
+      }
+    }
+    setCodingMessage(`已保存中央版本 ${result.item.revision}：填写 69 码 ${result.barcodeFilled} 条，物料编码 ${result.materialCodeFilled} 条${openNote}。`)
     const values = await refreshItems()
     const updated = values.find(item => item.id === result.item.id) ?? result.item
     await analyze(updated, monthPrefix, {}, true)
@@ -290,14 +304,15 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
     {artworkMessage && <div role="status" className="lc-message">图档核验：{artworkMessage}</div>}
     <div className="lc-layout"><div className="lc-workbook-picker"><label htmlFor="lc-workbook-select"><span className="lc-step-label">步骤 1 · 选择共享工作簿</span><select id="lc-workbook-select" disabled={busy || !items.length} value={selectedItem?.id ?? ''} onChange={event => { const item = items.find(candidate => candidate.id === event.target.value); if (item) void run(async () => analyze(item, monthPrefix, {})) }}><option value="">{items.length ? '请选择中央最新版本的工作簿' : '暂无共享工作簿'}</option>{items.map(item => <option key={item.id} value={item.id}>{item.title} · 版本 {item.revision}</option>)}</select></label><div className="lc-workbook-meta">{selectedItem ? <><strong title={selectedItem.title}>{selectedItem.title}</strong><small>中央版本 {selectedItem.revision} · {selectedItem.lastEditor.displayName} · {new Date(selectedItem.lastEditedAt).toLocaleString()}</small></> : <span>选定工作簿后开始编码或图档核验</span>}</div></div><section className="lc-workbench">
       {!analysis || !selectedItem ? <div className="lc-empty"><h3>选择一份共享工作簿</h3><p>软件会下载中央最新版本进行计算；只有点击保存后才建立新修订，不会覆盖历史版本。</p></div>
-      : <><div className="lc-task-heading"><div><h3>{analysis.title}</h3><small>中央版本 {analysis.revision} · 共 {analysis.rows.length} 条物料</small></div><button disabled={busy} onClick={() => void run(async () => { await desktopApi.collaboration.openOnlineWorkbook({ workItemId: selectedItem.id }); setMessage('已打开 WPS 在线工作簿。') })}>打开 WPS 检查</button></div>
+      : <><div className="lc-task-heading"><div><h3>{analysis.title}</h3><small>中央版本 {analysis.revision} · 共 {analysis.rows.length} 条物料</small></div></div>
+        <LocalWorkbookEditPanel key={`${selectedItem.id}-${selectedItem.revision}`} workItemId={selectedItem.id} currentRevision={selectedItem.revision} onSaved={async item => { const values = await refreshItems(); await analyze(values.find(value => value.id === item.id) ?? item, monthPrefix, {}, true) }} />
         <section className="lc-choice"><div><span className="lc-step-label">独立加工流程</span><h3>{tab === 'artwork' ? '核验本系列印刷图档' : '编码处理'}</h3><p>{tab === 'artwork' ? '按图片工作表的图案名称和截图核验 PDF；切到编码处理也不会中断下载或清除核验结果。' : '69 码、物料编码与印刷图档核验可同时进行；切换流程会保留各自进度。'}</p></div><nav className="lc-tabs" aria-label="加工流程"><button aria-pressed={tab !== 'artwork'} onClick={() => setTab('barcode')}>2. 编码处理{codingBusy ? ' · 处理中' : ''}</button><button aria-pressed={tab === 'artwork'} onClick={() => { setArtworkSessionActive(true); setTab('artwork') }}>3. 核验印刷图档{artworkBusy ? ' · 处理中' : ''}</button></nav></section>
         {tab !== 'artwork' && <nav className="lc-subtabs" aria-label="编码子步骤"><button aria-pressed={tab === 'barcode'} onClick={() => setTab('barcode')}>69 码</button><button aria-pressed={tab === 'material'} onClick={() => setTab('material')}>物料编码</button></nav>}
         <section className="lc-stage"><span className="lc-step-label">{tab === 'artwork' ? '步骤 3' : '步骤 2'}</span><h3>{tab === 'barcode' ? '确认 69 码' : tab === 'material' ? '确认物料编码' : '选择并核验本系列印刷图档'}</h3></section>
         {tab === 'barcode' ? <><section className="lc-allocation-controls"><div><label>69 码年月前缀<input value={monthPrefix} maxLength={6} inputMode="numeric" onChange={event => setMonthPrefix(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><small>默认取当前年月；遇到上月设计图档可改回上月，例如 202609。</small></div>
           <button disabled={selectionBusy || codingBusy || !/^\d{6}$/.test(monthPrefix)} onClick={() => void run(async () => analyze(selectedItem, monthPrefix, {}, true), 'coding')}>重新计算起始号</button></section><div className="lc-number-card"><div><small>选定前缀</small><strong>{analysis.barcodePlan.monthPrefix}</strong></div><div><small>总表最后已用</small><strong>{analysis.barcodePlan.previousCode ?? '该年月尚无号码'}</strong></div><div><small>本次第一个号码</small><strong>{analysis.barcodePlan.nextCode}</strong></div><div><small>待填写</small><strong>{analysis.barcodePlan.pendingCount} 条</strong></div></div>
           <p>系统只扫描中央总表“{analysis.barcodePlan.masterFileName}”中该年月的最大流水；未合并的共享工作簿不会改变基底。并行加工多份工作簿可能预览相同号码，请先合并一份并更新中央总表，再处理下一份。</p>
-          <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存后自动打开 WPS 检查</label><button disabled={selectionBusy || codingBusy || !analysis.barcodePlan.pendingCount} onClick={() => void run(async () => saveAllocation(true, false), 'coding')}>填写 69 码并保存</button><button disabled={selectionBusy || codingBusy || !analysis.barcodePlan.pendingCount || !candidateCount} onClick={() => void run(async () => saveAllocation(true, true), 'coding')}>两项一起填写并保存</button></div>
+          <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存中央修订后打开本地表格检查</label><button disabled={selectionBusy || codingBusy || !analysis.barcodePlan.pendingCount} onClick={() => void run(async () => saveAllocation(true, false), 'coding')}>填写 69 码并保存</button><button disabled={selectionBusy || codingBusy || !analysis.barcodePlan.pendingCount || !candidateCount} onClick={() => void run(async () => saveAllocation(true, true), 'coding')}>两项一起填写并保存</button></div>
         </> : tab === 'material' ? <><div className="lc-pattern-heading"><div><strong>图案编码识别结果</strong><small>系统已先完成图案分组、历史映射和占用检查。示例统一使用 iPhone 13 Pro，机型码为 53；保存时会替换为各行实际机型码。</small></div>
           {patternOverrideAllowed
             ? <button className={patternOverrideEnabled ? 'active' : ''} onClick={() => { if (patternOverrideEnabled) setVariants(analysis.patternVariants); setPatternOverrideEnabled(value => !value); setPatternOverrideReason('') }}>{patternOverrideEnabled ? '关闭自定义并恢复识别值' : '开启自定义图案标识'}</button>
@@ -317,7 +332,7 @@ export function MaterialLifecyclePage({ enabled }: { enabled: boolean }): React.
             return <article key={plan.key} className={plan.issues.length ? 'warning' : ''}><div><strong>{plan.patternName || '图案名称待核实'}</strong><span>{plan.productCode || '无产品图案号'} · {plan.frame === 'silver' ? '银框' : '普通款'} · {plan.rowCount} 行</span></div><label>最终两位图案标识<input disabled={!patternOverrideEnabled || !patternOverrideAllowed} maxLength={2} value={current} placeholder="例如 A0" onChange={event => { const value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 2); setVariants(previous => { const next = { ...previous }; if (value) next[plan.key] = value; else delete next[plan.key]; return next }) }} /></label><div className="lc-reference-code"><small>iPhone 13 Pro 预览</small><code>{preview ?? '确认标识后生成'}</code></div><small>自动识别：{plan.detectedVariant ?? '未识别'} · 最终采用：{current || '待确认'} · {customized ? '已自定义' : '未自定义'}{plan.source === 'master' ? ' · 历史复用' : plan.source === 'proposed' ? ' · 新图案候选' : ''}</small>{patternOverrideEnabled && customized && <button className="lc-restore" onClick={restore}>恢复自动值</button>}{Boolean(plan.issues.length || plan.warnings.length) && <small className="lc-plan-issues">{[...plan.issues, ...plan.warnings].join('；')}</small>}</article>
           })}</div>
           <div className="lc-summary">可填写 {candidateCount} 条 · 已有编码 {materialResults.filter(row => row.status === 'existing').length} 条 · 待核实 {blockedCount} 条<small>物料编码和 69 码互不作为前置条件；已有值不会覆盖。修改两位标识后，下方逐行预览会立即更新。</small></div>
-          <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存后自动打开 WPS 检查</label><button disabled={selectionBusy || codingBusy || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(false, true), 'coding')}>填写物料编码并保存</button><button disabled={selectionBusy || codingBusy || !analysis.barcodePlan.pendingCount || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(true, true), 'coding')}>两项一起填写并保存</button></div></> : <section className="lc-artwork-step">
+          <div className="lc-save-actions"><label><input type="checkbox" checked={openAfterSave} onChange={event => setOpenAfterSave(event.target.checked)} />保存中央修订后打开本地表格检查</label><button disabled={selectionBusy || codingBusy || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(false, true), 'coding')}>填写物料编码并保存</button><button disabled={selectionBusy || codingBusy || !analysis.barcodePlan.pendingCount || !candidateCount || !overrideReady} onClick={() => void run(async () => saveAllocation(true, true), 'coding')}>两项一起填写并保存</button></div></> : <section className="lc-artwork-step">
             <form className="lc-artwork-target" onSubmit={event => { event.preventDefault(); void run(bindArtworkTarget, 'artwork') }}><label>当前工作簿系列印刷图档文件夹<input value={artworkTargetUrl} onChange={event => setArtworkTargetUrl(event.target.value)} placeholder="https://alidocs.dingtalk.com/i/desktop/folders/..." /></label><button disabled={selectionBusy || artworkBusy || !artworkTargetUrl.trim()}>{artworkTarget ? '重新读取系列目录' : '读取系列目录'}</button></form>
             <p className="lc-artwork-hint">每个系列使用自己的文件夹链接；读取后再选择产品类别和样本机型，不需要绑定固定父目录。</p>
             {artworkTarget ? <><div className="lc-artwork-selected"><div><small>当前系列目录</small><strong>{artworkTarget.folderName}</strong></div><a href={artworkTarget.folderUrl} target="_blank" rel="noreferrer">打开钉盘检查</a></div>

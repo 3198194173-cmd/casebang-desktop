@@ -1,13 +1,15 @@
-import { app, net, session as electronSession, shell } from 'electron'
+import { app, dialog, net, session as electronSession, shell } from 'electron'
+import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import type { CollaborationMember, CollaborationWorkAction, CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkSource, DingTalkArtworkTarget } from '@shared/contracts'
+import type { CollaborationActivity, CollaborationMember, CollaborationWorkAction, CollaborationWorkItem, DingTalkArtworkEntry, DingTalkArtworkSource, DingTalkArtworkTarget, LocalWorkbookEditSession } from '@shared/contracts'
 import type { SettingsRepository } from '@main/infrastructure/settings-repository'
 import type { LifecycleService } from '@main/modules/lifecycle/lifecycle-service'
 import { logger } from '@main/infrastructure/logger'
 import { COLLABORATION_ORIGIN } from './collaboration-endpoint'
+import { readOoxmlParts } from '@main/modules/spreadsheet/ooxml-package'
 
 const MAX_WORKBOOK_SIZE = 64 * 1024 * 1024
 const CHUNK_UPLOAD_TIMEOUT_MS = 90_000
@@ -45,6 +47,19 @@ const openSchema = z.object({
   revision: z.number().int().positive()
 }).strict()
 const openOnlineSchema = z.object({ workItemId: z.string().uuid() }).strict()
+const localEditSchema = z.object({ workItemId: z.string().uuid() }).strict()
+const localEditSessionSchema = localEditSchema.extend({ sessionId: z.string().uuid() }).strict()
+const localEditManifestSchema = z.object({
+  id: z.string().uuid(), workItemId: z.string().uuid(), userId: z.string().min(1),
+  title: z.string().min(1), baseVersion: z.number().int().positive(),
+  baseRevision: z.number().int().positive(), baseSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  createdAt: z.string().datetime()
+}).strict()
+type LocalEditManifest = z.infer<typeof localEditManifestSchema>
+const workbookMetadataSchema = z.object({
+  title: z.string().min(1), state: z.string(), version: z.number().int().positive(),
+  revision: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/)
+})
 
 interface MembersResponse { members?: CollaborationMember[] }
 interface WorkItemsResponse { items?: CollaborationWorkItem[] }
@@ -83,6 +98,7 @@ interface WorkbookUploadMetadata {
   expectedVersion?: number
   expectedRevision?: number
   changeReason?: string
+  editMethod?: 'software' | 'local-manual'
   patternOverrides?: Array<{ key: string; detectedVariant: string | null; finalVariant: string }>
 }
 interface WebOfficeSessionResponse { editorUrl?: string }
@@ -90,6 +106,7 @@ interface RequestTiming { timeoutMs?: number; timeoutMessage?: string }
 
 export class CollaborationService {
   private readonly artworkDownloads = new Map<string, Set<AbortController>>()
+  private readonly localCommits = new Set<string>()
   constructor(private readonly settings: SettingsRepository) {}
 
   async members(): Promise<CollaborationMember[]> {
@@ -102,6 +119,13 @@ export class CollaborationService {
     const response = await this.request('/api/v1/collaboration/work-items')
     const body = await response.json() as WorkItemsResponse
     return (body.items ?? []).map(item => ({ ...item, activities: item.activities ?? [] }))
+  }
+
+  async activities(input: unknown): Promise<{ activities: CollaborationActivity[]; nextBeforeVersion: number | null }> {
+    const value = localEditSchema.extend({ beforeVersion: z.number().int().positive().optional() }).parse(input)
+    const query = value.beforeVersion ? `?beforeVersion=${value.beforeVersion}` : ''
+    const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/activities${query}`)
+    return await response.json() as { activities: CollaborationActivity[]; nextBeforeVersion: number | null }
   }
 
   async materialMaster(): Promise<CollaborationWorkItem | null> {
@@ -313,14 +337,206 @@ export class CollaborationService {
     await mkdir(directory, { recursive: true })
     const exists = await access(destination).then(() => true).catch(() => false)
     if (!exists) {
-      const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/workbook`)
+      const metadataResponse = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/workbook-metadata`)
+      const metadata = workbookMetadataSchema.parse(await metadataResponse.json())
+      if (metadata.revision !== value.revision) throw new Error('中央修订已变化，请刷新工作簿记录后重试。')
+      const response = await this.request(`/api/v1/collaboration/work-items/${value.workItemId}/workbook?revision=${value.revision}`)
       const bytes = Buffer.from(await response.arrayBuffer())
-      if (!bytes.length) throw new Error('服务端返回的工作簿为空。')
+      if (!bytes.length || sha256(bytes) !== metadata.sha256) throw new Error('服务端返回的工作簿与中央修订摘要不符。')
       await writeFile(destination, bytes, { flag: 'wx' })
     }
     const openError = await shell.openPath(destination)
     if (openError) throw new Error(`无法打开工作簿：${openError}`)
     return { path: destination }
+  }
+
+  async activeLocalEdit(input: unknown): Promise<LocalWorkbookEditSession | null> {
+    const { workItemId } = localEditSchema.parse(input)
+    const userId = await this.localUserId()
+    const manifest = await this.readActiveLocalEdit(workItemId, userId)
+    return manifest ? this.publicLocalEdit(manifest) : null
+  }
+
+  async localEditor(): Promise<string | null> { return this.settings.getLocalWorkbookEditorPath() }
+
+  async selectLocalEditor(): Promise<string | null> {
+    const selection = await dialog.showOpenDialog({
+      title: '选择本机 WPS 或 Excel 程序',
+      properties: ['openFile'],
+      filters: [{ name: 'Windows 程序', extensions: ['exe'] }]
+    })
+    if (selection.canceled) return this.localEditor()
+    const filePath = selection.filePaths[0]
+    if (!filePath || path.extname(filePath).toLowerCase() !== '.exe' || !(await stat(filePath)).isFile()) {
+      throw new Error('请选择已安装的 WPS 或 Excel 程序（.exe）。')
+    }
+    await this.settings.setLocalWorkbookEditorPath(filePath)
+    return filePath
+  }
+
+  async clearLocalEditor(): Promise<void> { await this.settings.setLocalWorkbookEditorPath(null) }
+
+  async beginLocalEdit(input: unknown): Promise<LocalWorkbookEditSession> {
+    const { workItemId, forceNew } = localEditSchema.extend({ forceNew: z.boolean().optional() }).parse(input)
+    const userId = await this.localUserId()
+    if (!forceNew) {
+      const current = await this.readActiveLocalEdit(workItemId, userId)
+      if (current) return this.openLocalEdit({ workItemId, sessionId: current.id })
+    }
+    const metadataResponse = await this.request(`/api/v1/collaboration/work-items/${workItemId}/workbook-metadata`)
+    const metadata = workbookMetadataSchema.parse(await metadataResponse.json())
+    if (['COMPLETED', 'CANCELLED'].includes(metadata.state)) throw new Error('工作簿已经归档或作废，不能开始本地编辑。')
+    const response = await this.request(`/api/v1/collaboration/work-items/${workItemId}/workbook?revision=${metadata.revision}`, {}, {
+      timeoutMs: 120_000, timeoutMessage: '下载共享工作簿超时，请稍后重试。'
+    })
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (!bytes.length || bytes.length > MAX_WORKBOOK_SIZE) throw new Error('共享工作簿为空或超过 64 MB。')
+    if (sha256(bytes) !== metadata.sha256) throw new Error('下载的工作簿与中央修订摘要不符，请重试。')
+    const manifest: LocalEditManifest = {
+      id: randomUUID(), workItemId, userId, title: metadata.title,
+      baseVersion: metadata.version, baseRevision: metadata.revision,
+      baseSha256: metadata.sha256, createdAt: new Date().toISOString()
+    }
+    const directory = this.localEditDirectory(manifest)
+    await mkdir(directory, { recursive: true })
+    await writeFile(path.join(directory, 'workbook.xlsx'), bytes, { flag: 'wx' })
+    await this.validateLocalWorkbook(path.join(directory, 'workbook.xlsx'))
+    await writeFile(path.join(directory, 'session.json'), JSON.stringify(manifest), { flag: 'wx' })
+    await this.writeActiveLocalEdit(manifest)
+    await this.launchLocalWorkbook(path.join(directory, 'workbook.xlsx'))
+    return this.publicLocalEdit(manifest)
+  }
+
+  async openLocalEdit(input: unknown): Promise<LocalWorkbookEditSession> {
+    const { workItemId, sessionId } = localEditSessionSchema.parse(input)
+    const manifest = await this.requireLocalEdit(workItemId, sessionId)
+    const filePath = path.join(this.localEditDirectory(manifest), 'workbook.xlsx')
+    await stat(filePath)
+    await this.launchLocalWorkbook(filePath)
+    return this.publicLocalEdit(manifest)
+  }
+
+  async commitLocalEdit(input: unknown): Promise<{ item: CollaborationWorkItem | null; duplicate: boolean; unchanged: boolean; hasRemainingChanges: boolean }> {
+    const value = localEditSessionSchema.extend({ changeReason: z.string().trim().min(1).max(500).optional() }).parse(input)
+    const key = `${value.workItemId}:${value.sessionId}`
+    if (this.localCommits.has(key)) throw new Error('这份本地稿正在提交，请等待结果。')
+    this.localCommits.add(key)
+    try {
+      const manifest = await this.requireLocalEdit(value.workItemId, value.sessionId)
+      const filePath = path.join(this.localEditDirectory(manifest), 'workbook.xlsx')
+      const before = await stat(filePath)
+      if (!before.isFile() || before.size === 0 || before.size > MAX_WORKBOOK_SIZE) throw new Error('本地工作簿为空或超过 64 MB。')
+      const bytes = await readFile(filePath)
+      await new Promise(resolve => setTimeout(resolve, 350))
+      const after = await stat(filePath)
+      if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || sha256(bytes) !== sha256(await readFile(filePath))) {
+        throw new Error('本地工作簿仍在保存中，请在 WPS 保存完成后重试。')
+      }
+      const digest = sha256(bytes)
+      if (digest === manifest.baseSha256) return { item: null, duplicate: true, unchanged: true, hasRemainingChanges: false }
+      const snapshotPath = path.join(this.localEditDirectory(manifest), `submission-${randomUUID()}.xlsx`)
+      await writeFile(snapshotPath, bytes, { flag: 'wx' })
+      try { await this.validateLocalWorkbook(snapshotPath) }
+      finally { await unlink(snapshotPath).catch(() => undefined) }
+      const saved = await this.saveWorkbookRevision({
+        workItemId: manifest.workItemId, title: manifest.title,
+        expectedVersion: manifest.baseVersion, expectedRevision: manifest.baseRevision,
+        bytes, changeReason: value.changeReason, editMethod: 'local-manual'
+      })
+      const currentDigest = await readFile(filePath).then(sha256).catch(() => null)
+      let hasRemainingChanges = currentDigest !== digest
+      try {
+        if (hasRemainingChanges) {
+          const updatedManifest = { ...manifest, baseVersion: saved.item.version, baseRevision: saved.item.revision, baseSha256: digest }
+          const manifestPath = path.join(this.localEditDirectory(manifest), 'session.json')
+          const temporaryPath = `${manifestPath}.tmp`
+          await writeFile(temporaryPath, JSON.stringify(updatedManifest))
+          await rename(temporaryPath, manifestPath)
+        } else {
+          await unlink(this.localEditPointerPath(manifest.workItemId, manifest.userId))
+        }
+      } catch (reason) {
+        hasRemainingChanges = true
+        logger.warn('Workbook saved centrally but local edit state could not be finalized', {
+          workItemId: manifest.workItemId, error: reason instanceof Error ? reason.message : String(reason)
+        })
+      }
+      return { item: saved.item, duplicate: saved.duplicate, unchanged: false, hasRemainingChanges }
+    } finally {
+      this.localCommits.delete(key)
+    }
+  }
+
+  private async localUserId(): Promise<string> {
+    const current = await this.settings.getCollaborationSession()
+    if (!current || Date.parse(current.expiresAt) <= Date.now()) throw new Error('请先登录钉钉账号。')
+    return current.user.id
+  }
+
+  private localEditRoot(workItemId: string, userId: string): string {
+    return path.join(app.getPath('userData'), 'collaboration-workbooks', workItemId, 'edit-sessions', sha256(Buffer.from(userId)).slice(0, 24))
+  }
+
+  private localEditPointerPath(workItemId: string, userId: string): string {
+    return path.join(this.localEditRoot(workItemId, userId), 'active.json')
+  }
+
+  private localEditDirectory(manifest: LocalEditManifest): string {
+    return path.join(this.localEditRoot(manifest.workItemId, manifest.userId), manifest.id)
+  }
+
+  private async readActiveLocalEdit(workItemId: string, userId: string): Promise<LocalEditManifest | null> {
+    const pointer = await readFile(this.localEditPointerPath(workItemId, userId), 'utf8').catch((reason: NodeJS.ErrnoException) => {
+      if (reason.code === 'ENOENT') return null
+      throw reason
+    })
+    if (!pointer) return null
+    const sessionId = z.object({ sessionId: z.string().uuid() }).parse(JSON.parse(pointer)).sessionId
+    const file = path.join(this.localEditRoot(workItemId, userId), sessionId, 'session.json')
+    const manifest = localEditManifestSchema.parse(JSON.parse(await readFile(file, 'utf8')))
+    if (manifest.workItemId !== workItemId || manifest.userId !== userId || manifest.id !== sessionId) throw new Error('本地编辑会话与当前账号不匹配。')
+    return manifest
+  }
+
+  private async requireLocalEdit(workItemId: string, sessionId: string): Promise<LocalEditManifest> {
+    const manifest = await this.readActiveLocalEdit(workItemId, await this.localUserId())
+    if (!manifest || manifest.id !== sessionId) throw new Error('本地编辑会话已失效，请重新打开工作簿记录。')
+    return manifest
+  }
+
+  private async writeActiveLocalEdit(manifest: LocalEditManifest): Promise<void> {
+    const pointerPath = this.localEditPointerPath(manifest.workItemId, manifest.userId)
+    const temporary = `${pointerPath}.${manifest.id}.tmp`
+    await writeFile(temporary, JSON.stringify({ sessionId: manifest.id }), { flag: 'wx' })
+    await rename(temporary, pointerPath)
+  }
+
+  private async publicLocalEdit(manifest: LocalEditManifest): Promise<LocalWorkbookEditSession> {
+    const filePath = path.join(this.localEditDirectory(manifest), 'workbook.xlsx')
+    const hasChanges = sha256(await readFile(filePath)) !== manifest.baseSha256
+    return { id: manifest.id, workItemId: manifest.workItemId, title: manifest.title, filePath,
+      baseVersion: manifest.baseVersion, baseRevision: manifest.baseRevision, createdAt: manifest.createdAt, hasChanges }
+  }
+
+  private async validateLocalWorkbook(filePath: string): Promise<void> {
+    await readOoxmlParts(filePath, ['[Content_Types].xml', 'xl/workbook.xml'])
+  }
+
+  private async launchLocalWorkbook(filePath: string): Promise<void> {
+    const editorPath = await this.settings.getLocalWorkbookEditorPath()
+    if (!editorPath) {
+      const openError = await shell.openPath(filePath)
+      if (openError) throw new Error(`本地稿已保存，但默认表格程序无法打开：${openError}`)
+      return
+    }
+    if (!(await stat(editorPath).catch(() => null))?.isFile()) {
+      throw new Error(`已选编辑器不存在：${editorPath}。请重新选择程序，或恢复系统默认程序。`)
+    }
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(editorPath, [filePath], { detached: true, stdio: 'ignore', windowsHide: false })
+      child.once('error', reject)
+      child.once('spawn', () => { child.unref(); resolve() })
+    })
   }
 
   async openLocalWorkbook(input: unknown): Promise<{ path: string }> {
@@ -343,16 +559,18 @@ export class CollaborationService {
   async saveWorkbookRevision(input: {
     workItemId: string; title: string; expectedVersion: number; expectedRevision: number; bytes: Buffer
     changeReason?: string
+    editMethod?: 'software' | 'local-manual'
     patternOverrides?: Array<{ key: string; detectedVariant: string | null; finalVariant: string }>
   }): Promise<{ item: CollaborationWorkItem; duplicate: boolean }> {
     const value = z.object({
       workItemId: z.string().uuid(), title: z.string().trim().min(1).max(240),
       expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive(),
       changeReason: z.string().trim().min(1).max(500).optional(),
+      editMethod: z.enum(['software', 'local-manual']).optional(),
       patternOverrides: z.array(z.object({ key: z.string().max(1000), detectedVariant: z.string().regex(/^[A-Z0-9]{2}$/).nullable(), finalVariant: z.string().regex(/^[A-Z0-9]{2}$/) }).strict()).max(200).optional()
     }).strict().parse({
       workItemId: input.workItemId, title: input.title, expectedVersion: input.expectedVersion, expectedRevision: input.expectedRevision,
-      changeReason: input.changeReason, patternOverrides: input.patternOverrides
+      changeReason: input.changeReason, editMethod: input.editMethod, patternOverrides: input.patternOverrides
     })
     if (!input.bytes.length || input.bytes.length > MAX_WORKBOOK_SIZE) throw new Error('要保存的共享工作簿为空或超过 64 MB。')
     const sha256 = createHash('sha256').update(input.bytes).digest('hex')
@@ -360,6 +578,7 @@ export class CollaborationService {
       sourceWorkflow: 'manual', sourceId: value.workItemId, title: value.title,
       sha256, requestKey: randomUUID(), targetWorkItemId: value.workItemId,
       expectedVersion: value.expectedVersion, expectedRevision: value.expectedRevision,
+      ...(value.editMethod ? { editMethod: value.editMethod } : {}),
       ...(value.changeReason ? { changeReason: value.changeReason } : {}),
       ...(value.patternOverrides?.length ? { patternOverrides: value.patternOverrides } : {})
     }, value.title)
@@ -508,6 +727,8 @@ export class CollaborationService {
     return response
   }
 }
+
+function sha256(bytes: Buffer): string { return createHash('sha256').update(bytes).digest('hex') }
 
 function serverError(code?: string, status?: number): string {
   const messages: Record<string, string> = {

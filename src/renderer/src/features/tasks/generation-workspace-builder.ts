@@ -15,6 +15,52 @@ interface GeneratedProductRow {
   fileName: string
 }
 
+type ProductSheetGroup = 'other' | 'mirror' | 'print' | 'color'
+type ProductImageField = 'barcode' | 'image' | 'frame' | 'material' | 'series' | 'seriesUpper' | 'seriesCode' | 'productCode' | 'pattern' | 'patternUpper' | 'fileName'
+
+const PRODUCT_SHEET_TEMPLATES: Record<ProductSheetGroup, { label: string; fields: ProductImageField[]; columns: string[] }> = {
+  other: {
+    label: '可拆卸+其他',
+    fields: ['barcode', 'image', 'material', 'series', 'seriesUpper', 'seriesCode', 'productCode', 'pattern', 'patternUpper', 'fileName'],
+    columns: ['条码名', '图片', '颜色', '系列名称', '系列名称（大写）', '系列编码', '产品编码', '图片对应名称', '图片对应名称（大写）', '图档名']
+  },
+  mirror: {
+    label: '出镜',
+    fields: ['barcode', 'image', 'frame', 'material', 'series', 'seriesUpper', 'seriesCode', 'productCode', 'pattern', 'patternUpper', 'fileName'],
+    columns: ['条码名', '图片', '', '颜色', '系列名称', '系列名称（大写）', '系列编码', '产品编码', '图片对应名称', '图片对应名称（大写）', '图档名']
+  },
+  print: {
+    label: '出片',
+    fields: ['barcode', 'image', 'frame', 'series', 'seriesUpper', 'seriesCode', 'productCode', 'pattern', 'patternUpper', 'fileName'],
+    columns: ['条码名', '图片', '', '系列名称', '系列名称（大写）', '系列编码', '产品编码', '图片对应名称', '图片对应名称（大写）', '图档名']
+  },
+  color: {
+    label: '出彩',
+    fields: ['barcode', 'image', 'material', 'series', 'seriesUpper', 'seriesCode', 'productCode', 'pattern', 'patternUpper', 'fileName'],
+    columns: ['条码名', '图片', '颜色', '系列名称', '系列名称（大写）', '系列编码', '产品编码', '图片对应名称', '图片对应名称（大写）', '图档名']
+  }
+}
+
+function productSheetGroup(category: string): ProductSheetGroup {
+  const value = normalize(category)
+  if (value.includes('出镜壳')) return 'mirror'
+  if (value.includes('出片壳')) return 'print'
+  if (value.includes('出彩壳')) return 'color'
+  return 'other'
+}
+
+function buildGeneratedProductSheets(form: TaskDraftInput, overview: CropBox | undefined, rows: GeneratedProductRow[], seriesCode: string, seriesUpper: string): PreviewSheet[] {
+  const groups: ProductSheetGroup[] = ['other', 'mirror', 'print', 'color']
+  return groups.flatMap((group) => {
+    const groupRows = orderProductRowsByCodeWithinCategory(rows.filter((row) => productSheetGroup(row.crop.productCategory) === group))
+    if (!groupRows.length) return []
+    return [
+      buildProductSheet(form, overview, groupRows, seriesCode, seriesUpper, group),
+      buildBarcodeSheet(form, groupRows, group)
+    ]
+  })
+}
+
 export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAnalysisResult, encoding: EncodingPreviewResult, domesticNames: DomesticPatternNameRecord[]): GenerationWorkspaceData {
   const overview = analysis.crops.find((crop) => crop.role === 'series-overview')
   const products = orderProductsForTemplate(analysis.crops.filter((crop) => crop.role !== 'series-overview'))
@@ -54,7 +100,7 @@ export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAn
   const workbooks: PreviewWorkbook[] = ([
     { id: 'barcode-reference', name: 'A条码参考', role: '按源工作簿的两个真实工作表并显示实际新增行。', sheets: barcodeSheets },
     { id: 'domestic-naming', name: '国内命名表', role: '对应“可拆卸+其他”：上图下名，首列保留全系列主图；图案组只取首图。', sheets: [buildDomesticNamingSheet(overview, domesticDisplayCrops(products), seriesDisplay, domesticNames)] },
-    { id: 'generated-product', name: '新建产品表', role: '先生成图片表，再由图片表条码名组合机型生成条码表。', sheets: [buildProductSheet(form, overview, productRows, seriesCode, seriesUpper), buildBarcodeSheet(form, productRows)] }
+    { id: 'generated-product', name: '新建产品表', role: '按实际产品类型分别生成图片与条码分表；不受步骤 1 默认模板限制。', sheets: buildGeneratedProductSheets(form, overview, productRows, seriesCode, seriesUpper) }
   ] satisfies PreviewWorkbook[]).map((workbook) => ({ ...workbook, sheets: workbook.sheets.map(sealSheetWritePlan) }))
   const codes = productRows.map((row) => row.code).filter(Boolean)
   const enabledModels = orderedBarcodeModels(form)
@@ -79,7 +125,13 @@ export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAn
     check('code-rule', '产品编码规则完整', codes.length === productRows.length, `已检查 ${codes.length} 条产品编码；编码格式为 5 位数字序列。`),
     check('used-code-columns', '已使用编码按类别列完整写入', [...expectedUsedCodeColumns].every((column) => plannedUsedCodeColumns.has(column)), `本次涉及 ${expectedUsedCodeColumns.size} 个编码类别列，生成计划已逐列核对。`),
     check('sealed-write-plan', '预览与覆盖共用坐标计划', workbooks.every((workbook) => workbook.sheets.every(hasSealedWritePlan)), '04 中每个绿色单元格均已锁定 Excel 坐标；05 只能执行这些坐标。'),
-    check('generated-product-sheets', '新建产品表结构完整', workbooks.find((item) => item.id === 'generated-product')?.sheets.map((sheet) => sheet.name).join('/') === '图片/条码', `先生成图片表 ${productRows.length} 行，再生成条码表 ${buildBarcodeRows(form, productRows).length} 行。`),
+    check('generated-product-sheets', '新建产品表结构完整', (() => {
+      const sheets = workbooks.find((item) => item.id === 'generated-product')?.sheets ?? []
+      return sheets.length > 0 && sheets.length % 2 === 0 && sheets.every((sheet, index) => {
+        const group = (['other', 'mirror', 'print', 'color'] as const).find((candidate) => sheet.id === `generated-${index % 2 ? 'barcodes' : 'products'}-${candidate}`)
+        return Boolean(group && sheet.name === `${PRODUCT_SHEET_TEMPLATES[group].label}${index % 2 ? '条码' : '图片'}`)
+      }) && sheets.filter((_, index) => index % 2 === 0).reduce((sum, sheet) => sum + sheet.rows.filter((row) => row.some((cell) => cell.cropId)).length, 0) === imageVariants.length
+    })(), `按类别生成 ${workbooks.find((item) => item.id === 'generated-product')?.sheets.length ?? 0} 个分表；图片 ${imageVariants.length} 行，条码 ${populatedBarcodeRows.length} 行。`),
     check('three-outputs', '输出工作簿已建立', workbooks.length === 3 && barcodeSheets.length === 2, '已建立 A 条码参考、国内命名表和新建产品表 3 个工作簿预览。')
   ]
   return { title: `${form.seriesNameEn}#${seriesCode}系列-表格更新`, generatedAt: new Date().toISOString(), workbooks, checks }
@@ -203,53 +255,47 @@ function buildProductSheet(
   overview: CropBox | undefined,
   rows: GeneratedProductRow[],
   seriesCode: string,
-  seriesUpper: string
+  seriesUpper: string,
+  group: ProductSheetGroup
 ): PreviewSheet {
-  const headerCells: PreviewCell[] = [
-    cell('条码名', true),
-    overview ? imageCell(overview, true, containerImageLayout({
+  const template = PRODUCT_SHEET_TEMPLATES[group]
+  const headerCells: PreviewCell[] = template.fields.map((field, index) => field === 'image' && overview
+    ? imageCell(overview, true, containerImageLayout({
       containerWidthPx: 120,
       containerHeightPx: 92,
       imageWidth: overview.width,
       imageHeight: overview.height
-    })) : cell('', true),
-    cell('', true),
-    cell('颜色', true),
-    cell('系列名称', true),
-    cell('系列名称（大写）', true),
-    cell('系列编码', true),
-    cell('产品编码', true),
-    cell('图片对应名称', true),
-    cell('图片对应名称（大写）', true),
-    cell('图档名', true)
-  ]
+    }))
+    : cell(template.columns[index] ?? '', true))
   const imageRows = expandProductImageRows(rows)
   return {
-    id: 'generated-products',
-    name: '图片',
-    columns: ['条码名', '图片', '', '颜色', '系列名称', '系列名称（大写）', '系列编码', '产品编码', '图片对应名称', '图片对应名称（大写）', '图档名'],
+    id: `generated-products-${group}`,
+    name: `${template.label}图片`,
+    columns: template.columns,
     headerCells,
-    rows: imageRows.map(({ row: { crop, code, barcode, patternUpper, fileName }, frame }) => [
-      cell(barcode, true),
-      imageCell(crop, true, containerImageLayout({
-        containerWidthPx: 120,
-        containerHeightPx: 92,
-        imageWidth: crop.width,
-        imageHeight: crop.height
-      })),
-      cell(frame === 'silver' ? '银框' : '', true),
-      cell(crop.material || defaultColor(crop.productCategory), true),
-      cell(form.seriesNameEn, true),
-      cell(seriesUpper, true),
-      cell(`${seriesCode}系列`, true),
-      cell(code, true),
-      cell(crop.patternNameEn, true),
-      cell(patternUpper, true),
-      cell(fileName, true)
-    ]),
+    rows: imageRows.map(({ row: { crop, code, barcode, patternUpper, fileName }, frame }) => template.fields.map((field) => {
+      switch (field) {
+        case 'barcode': return cell(group === 'print' && frame === 'silver' ? `${barcode}（银框）` : barcode, true)
+        case 'image': return imageCell(crop, true, containerImageLayout({
+          containerWidthPx: 120,
+          containerHeightPx: 92,
+          imageWidth: crop.width,
+          imageHeight: crop.height
+        }))
+        case 'frame': return cell(frame === 'silver' ? '银框' : '', true)
+        case 'material': return cell(crop.material || defaultColor(crop.productCategory), true)
+        case 'series': return cell(form.seriesNameEn, true)
+        case 'seriesUpper': return cell(seriesUpper, true)
+        case 'seriesCode': return cell(`${seriesCode}系列`, true)
+        case 'productCode': return cell(code, true)
+        case 'pattern': return cell(crop.patternNameEn, true)
+        case 'patternUpper': return cell(patternUpper, true)
+        case 'fileName': return cell(fileName, true)
+      }
+    })),
     startRow: 1,
     showBusinessHeader: true,
-    columnWidths: [460, 120, 86, 90, 210, 220, 105, 125, 210, 230, 330],
+    columnWidths: template.fields.map((field) => ({ barcode: 460, image: 120, frame: 86, material: 90, series: 210, seriesUpper: 220, seriesCode: 105, productCode: 125, pattern: 210, patternUpper: 230, fileName: 330 })[field]),
     rowHeights: imageRows.map(() => 92)
   }
 }
@@ -259,29 +305,34 @@ function expandProductImageRows(rows: GeneratedProductRow[]): Array<{ row: Gener
   const categories = [...new Set(rows.map((row) => row.crop.productCategory))]
   for (const category of categories) {
     const categoryRows = rows.filter((row) => row.crop.productCategory === category)
-      .sort((left, right) => compareProductCodesDescending(left.code, right.code))
-    for (const row of categoryRows) {
-      result.push({ row, frame: 'normal' })
-      if (usesSilverFrame(category)) result.push({ row, frame: 'silver' })
-    }
+      .sort((left, right) => compareProductCodesAscending(left.code, right.code))
+    for (const row of categoryRows) result.push({ row, frame: 'normal' })
+    if (usesSilverFrame(category)) for (const row of categoryRows) result.push({ row, frame: 'silver' })
   }
   return result
 }
 
-function compareProductCodesDescending(left: string, right: string): number {
-  const leftMatch = /^([A-Z]+)(\d{5})$/.exec(left)
-  const rightMatch = /^([A-Z]+)(\d{5})$/.exec(right)
-  if (!leftMatch) return rightMatch ? 1 : 0
-  if (!rightMatch) return -1
-  const byNumber = Number(rightMatch[2]) - Number(leftMatch[2])
-  return byNumber || rightMatch[1]!.localeCompare(leftMatch[1]!, 'en')
+function orderProductRowsByCodeWithinCategory(rows: GeneratedProductRow[]): GeneratedProductRow[] {
+  const categories = [...new Set(rows.map((row) => row.crop.productCategory))]
+  return categories.flatMap((category) => rows
+    .filter((row) => row.crop.productCategory === category)
+    .sort((left, right) => compareProductCodesAscending(left.code, right.code)))
 }
 
-function buildBarcodeSheet(form: TaskDraftInput, rows: GeneratedProductRow[]): PreviewSheet {
+function compareProductCodesAscending(left: string, right: string): number {
+  const leftMatch = /^([A-Z]+)(\d+)$/.exec(left)
+  const rightMatch = /^([A-Z]+)(\d+)$/.exec(right)
+  if (!leftMatch) return rightMatch ? 1 : 0
+  if (!rightMatch) return -1
+  const byPrefix = leftMatch[1]!.localeCompare(rightMatch[1]!, 'en')
+  return byPrefix || Number(leftMatch[2]) - Number(rightMatch[2])
+}
+
+function buildBarcodeSheet(form: TaskDraftInput, rows: GeneratedProductRow[], group: ProductSheetGroup): PreviewSheet {
   const barcodeRows = buildBarcodeRows(form, rows)
   return {
-    id: 'generated-barcodes',
-    name: '条码',
+    id: `generated-barcodes-${group}`,
+    name: `${PRODUCT_SHEET_TEMPLATES[group].label}条码`,
     columns: ['类目', '69码', '物料编码（工厂）', '物料名称', '建议零售价', '海外零售价', '材质', '备注（IP）', '名称对应'],
     rows: barcodeRows,
     startRow: 1,

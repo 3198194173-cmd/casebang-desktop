@@ -28,7 +28,7 @@ import {
   suggestImageNamesInputSchema,
   translateSeriesNameInputSchema,
   workbookPreviewRequestSchema,
-  taskDraftInputSchema
+  taskDraftBasicsInputSchema
 } from '@shared/schemas'
 import type { BaseFileService } from '@main/modules/base-files/base-file-service'
 import type { ConnectorRegistry } from '@main/modules/integrations/connector-registry'
@@ -94,7 +94,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     assertTrustedSender(event.senderFrame)
     const request = sharedAnalysisSchema.omit({ version: true, revision: true }).extend({
       expectedVersion: z.number().int().positive(), expectedRevision: z.number().int().positive(),
-      fillBarcodes: z.boolean(), fillMaterialCodes: z.boolean(), openOnlineAfterSave: z.boolean().optional()
+      fillBarcodes: z.boolean(), fillMaterialCodes: z.boolean()
     }).strict().parse(input)
     await dependencies.collaboration.syncMaterialMaster()
     const workItem = (await dependencies.collaboration.workItems()).find(item => item.id === request.workItemId)
@@ -116,12 +116,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
         changeReason: counts.patternOverrides.length ? request.patternOverrideReason : undefined,
         patternOverrides: counts.patternOverrides
       })
-      let openedOnline = false
-      if (request.openOnlineAfterSave) {
-        await dependencies.collaboration.openOnlineWorkbook({ workItemId: request.workItemId })
-        openedOnline = true
-      }
-      return { item: saved.item, ...counts, openedOnline }
+      return { item: saved.item, ...counts }
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -199,6 +194,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     return dependencies.collaboration.workItems()
   })
 
+  ipcMain.handle(IPC_CHANNELS.collaborationActivities, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.activities(input)
+  })
+
   ipcMain.handle(IPC_CHANNELS.collaborationPublishWorkbook, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.publishWorkbook(input)
@@ -227,6 +227,41 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC_CHANNELS.collaborationOpenOnlineWorkbook, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
     return dependencies.collaboration.openOnlineWorkbook(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationActiveLocalEdit, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.activeLocalEdit(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationLocalEditor, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.localEditor()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationSelectLocalEditor, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.selectLocalEditor()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationClearLocalEditor, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.clearLocalEditor()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationBeginLocalEdit, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.beginLocalEdit(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationOpenLocalEdit, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.openLocalEdit(input)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.collaborationCommitLocalEdit, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.collaboration.commitLocalEdit(input)
   })
 
   ipcMain.handle(IPC_CHANNELS.collaborationMaterialMaster, async (event) => {
@@ -313,8 +348,8 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
 
   ipcMain.handle(IPC_CHANNELS.tasksCreateDraft, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame)
-    const taskInput = taskDraftInputSchema.parse(input)
-    logger.info('Creating task draft', { templateName: taskInput.templateName })
+    const taskInput = taskDraftBasicsInputSchema.parse(input)
+    logger.info('Creating task draft')
     return dependencies.tasks.createDraft(taskInput)
   })
 

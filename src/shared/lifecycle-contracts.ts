@@ -116,13 +116,11 @@ export interface ApplySharedLifecycleInput {
   patternVariants: Record<string, string>
   patternOverrideEnabled?: boolean
   patternOverrideReason?: string
-  openOnlineAfterSave?: boolean
 }
 export interface SharedLifecycleWriteResult {
   item: import('./contracts').CollaborationWorkItem
   barcodeFilled: number
   materialCodeFilled: number
-  openedOnline: boolean
 }
 export interface MaterialMasterPreview {
   path: string

@@ -8,6 +8,7 @@ import { applyBatchNameSuggestions, mergeForbiddenEnglishNames } from '@shared/i
 import { desktopApi } from '../../app/desktop-api'
 import type { HistoricalPatternOption } from './existing-series'
 import { HistoricalNamePicker } from './HistoricalNamePicker'
+import { supportsSilverFrame } from '@shared/product-model-settings'
 
 interface ImageCropWorkspaceProps {
   sourceImagePath: string
@@ -787,7 +788,7 @@ export function ImageCropWorkspace({
                       </div>
                     })}
                   </div>}
-                  {comparisonMode && !isPairedWireless(selectedCrop.productCategory) && <div className="comparison-price-note">普通款、银框款及不同品牌/机型的价格统一在下一步“编码与机型”中设置。</div>}
+                  {comparisonMode && supportsSilverFrame(selectedCrop.productCategory) && <div className="comparison-price-note">黑框款（无尾缀）、银框款及不同品牌/机型的价格统一在下一步“编码与机型”中设置。</div>}
                   {!comparisonMode && !isPairedWireless(selectedCrop.productCategory) && <><label className="price-preset-field">
                     <span>常用价格组合</span>
                     <select

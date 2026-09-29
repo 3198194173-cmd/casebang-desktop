@@ -258,6 +258,9 @@ export interface TaskDraftInput {
   modelBrandAssignments: Record<string, import('./product-business-rules').PhoneModelBrand>
   /** Stable editable model records used by barcode generation. Legacy drafts fall back to selectedModels. */
   modelSettings?: BarcodeModelSetting[]
+  /** Independent, persisted model choices for each model-expanding product type. */
+  productModelSettings?: import('./product-model-settings').ProductModelSettings
+  productModelsConfirmed?: import('./product-model-settings').ProductModelType[]
   /** Category + frame + brand price defaults. A model-level override has higher priority. */
   framePriceRules?: Record<string, CategoryFramePriceRule>
   masterImagePath: string
@@ -319,6 +322,8 @@ export interface CasebangDesktopApi {
   settings: {
     get(): Promise<ApplicationSettings>
     save(input: ApplicationSettings): Promise<ApplicationSettings>
+    getProductModelSettings(): Promise<import('./product-model-settings').ProductModelSettings>
+    saveProductModelSettings(input: { productType: import('./product-model-settings').ProductModelType; models: BarcodeModelSetting[] }): Promise<import('./product-model-settings').ProductModelSettings>
   }
   account: {
     get(): Promise<CollaborationAccountState>

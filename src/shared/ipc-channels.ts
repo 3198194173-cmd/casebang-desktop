@@ -19,6 +19,8 @@ export const IPC_CHANNELS = {
   appGetSnapshot: 'app:get-snapshot',
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',
+  settingsGetProductModels: 'settings:get-product-models',
+  settingsSaveProductModels: 'settings:save-product-models',
   accountGet: 'account:get',
   accountLogin: 'account:login',
   accountLogout: 'account:logout',

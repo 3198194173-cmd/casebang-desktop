@@ -1,8 +1,10 @@
 import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { AiSettingsSummary, ApplicationSettings, BaseFileKind, BaseFileUpdateRecord, CollaborationUser, SaveAiSettingsInput } from '@shared/contracts'
+import type { AiSettingsSummary, ApplicationSettings, BarcodeModelSetting, BaseFileKind, BaseFileUpdateRecord, CollaborationUser, SaveAiSettingsInput } from '@shared/contracts'
 import { MATERIAL_MODELS, mergeMaterialModels, type MaterialModel } from '@shared/material-model-dictionary'
+import type { ProductModelSettings, ProductModelType } from '@shared/product-model-settings'
+import { productModelSettingsSchema, saveProductModelSettingsInputSchema } from '@shared/schemas'
 
 export interface CloudAiSettings {
   provider: 'aliyun'
@@ -26,6 +28,7 @@ interface PersistedSettings {
   materialMasterPath?: string | null
   localWorkbookEditorPath?: string | null
   materialModels?: MaterialModel[]
+  productModelSettings?: ProductModelSettings
   application: ApplicationSettings
   cloudAi: PersistedCloudAiSettings
   collaboration: PersistedCollaborationSession
@@ -73,6 +76,29 @@ const EMPTY_SETTINGS: PersistedSettings = {
 }
 
 export class SettingsRepository {
+  private productModelSettingsWriteQueue: Promise<void> = Promise.resolve()
+
+  async getProductModelSettings(): Promise<ProductModelSettings> {
+    // A new series may request remembered choices while the previous confirmation is still saving.
+    await this.productModelSettingsWriteQueue
+    const parsed = productModelSettingsSchema.safeParse((await this.read()).productModelSettings ?? {})
+    return parsed.success ? structuredClone(parsed.data) : {}
+  }
+
+  async setProductModelSettings(input: { productType: ProductModelType; models: BarcodeModelSetting[] }): Promise<ProductModelSettings> {
+    const request = saveProductModelSettingsInputSchema.parse(input)
+    // Two type confirmations must not read the same old settings and overwrite each other.
+    const write = this.productModelSettingsWriteQueue.then(async () => {
+      const settings = await this.read()
+      const parsed = productModelSettingsSchema.safeParse(settings.productModelSettings ?? {})
+      settings.productModelSettings = { ...(parsed.success ? parsed.data : {}), [request.productType]: structuredClone(request.models) }
+      await this.write(settings)
+      return structuredClone(settings.productModelSettings)
+    })
+    this.productModelSettingsWriteQueue = write.then(() => undefined, () => undefined)
+    return write
+  }
+
   async getMaterialMasterPath(): Promise<string | null> { return (await this.read()).materialMasterPath ?? null }
   async setMaterialMasterPath(path: string): Promise<void> { const settings = await this.read(); settings.materialMasterPath = path; await this.write(settings) }
   async getLocalWorkbookEditorPath(): Promise<string | null> { return (await this.read()).localWorkbookEditorPath ?? null }
@@ -217,6 +243,7 @@ export class SettingsRepository {
         materialMasterPath: parsed.materialMasterPath ?? null,
         localWorkbookEditorPath: parsed.localWorkbookEditorPath ?? null,
         materialModels: Array.isArray(parsed.materialModels) ? parsed.materialModels : undefined,
+        productModelSettings: parsed.productModelSettings,
         application: { ...DEFAULT_APPLICATION_SETTINGS, ...(parsed.application ?? {}) },
         cloudAi: { ...DEFAULT_CLOUD_AI, ...(parsed.cloudAi ?? {}) },
         collaboration: { ...DEFAULT_COLLABORATION, ...(parsed.collaboration ?? {}) }

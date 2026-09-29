@@ -13,6 +13,8 @@ import { buildGenerationWorkspace } from './generation-workspace-builder'
 import { GenerationQualityWorkspace } from './GenerationQualityWorkspace'
 import { ExportWorkspace } from './ExportWorkspace'
 import { REFERENCE_PHONE_MODELS } from '@shared/product-business-rules'
+import { PRODUCT_MODEL_TYPES, productModelType } from '@shared/product-model-settings'
+import { allProductModelsConfirmed } from './product-model-state'
 
 const WIZARD_STEPS = [
   { title: '系列与总图', short: '填写系列资料，按产品类型自动选模板', icon: '01' },
@@ -77,7 +79,15 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
     && Object.keys(duplicateNameIssues).length === 0
     && productCrops.every((crop) => crop.productCategory !== '待确认' && crop.patternNameEn.trim())
   const encodingDataComplete = getEncodingPreviewIssues(encodingPreview).length === 0
-  const encodingStepComplete = encodingDataComplete && modelsConfirmed
+  const requiredModelTypes = PRODUCT_MODEL_TYPES.filter(type => productCrops.some(crop => productModelType(crop.productCategory) === type))
+  const typedModelsConfirmed = allProductModelsConfirmed(requiredModelTypes, form.productModelsConfirmed ?? [], form.productModelSettings ?? {})
+  const encodingStepComplete = encodingDataComplete && modelsConfirmed && typedModelsConfirmed
+  useEffect(() => {
+    if (activeStep >= 3 && namingStepComplete && !typedModelsConfirmed) {
+      setActiveStep(2)
+      setMessage('请在步骤 3 按本次产品类型分别确认机型，旧草稿的共用机型确认不再用于生成。')
+    }
+  }, [activeStep, namingStepComplete, typedModelsConfirmed])
   const currentLayout = useExistingSeriesLayout(existingSeries, activeStep, selection, target)
   const generationWorkspace = useMemo(
     () => imageAnalysis && encodingPreview && encodingStepComplete && (!existingSeries || Boolean(currentLayout.selection && currentLayout.target))
@@ -118,7 +128,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
   const chooseImage = async (): Promise<string | null> => {
     const result = await desktopApi.tasks.selectMasterImage()
     if (result.path) {
-      setForm((current) => ({ ...current, masterImagePath: result.path! }))
+      setForm((current) => ({ ...current, masterImagePath: result.path!, productModelSettings: undefined, productModelsConfirmed: undefined }))
       setImageAnalysis(null)
       setEncodingPreview(null)
       setModelsConfirmed(false)
@@ -151,7 +161,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
   const updateChineseSeriesName = (seriesNameZh: string): void => {
     setEncodingPreview(null)
     setEnglishNameManuallyEdited(false)
-    setForm((current) => ({ ...current, seriesNameZh, seriesNameEn: '' }))
+    setForm((current) => ({ ...current, seriesNameZh, seriesNameEn: '', productModelSettings: undefined, productModelsConfirmed: undefined }))
   }
 
   const applyAutomaticTranslation = async (): Promise<void> => {
@@ -223,7 +233,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
         )}
         {message && <div className="alert info">{message}</div>}
         {existingSeries && activeStep >= 3 && !generationWorkspace && <div className={`alert ${currentLayout.error ? 'error' : 'info'}`}>{currentLayout.error || '正在读取原表并重新计算当前系列的追加位置…'}</div>}
-        {existingSeries && activeStep === 1 && <ExistingSeriesPicker selection={selection} target={target} confirmed={historyConfirmed} onSelect={value => { setSelection(value); setHistoryConfirmed(false); setForm(current => ({ ...current, seriesNameEn: value.englishName, seriesNameZh: value.chineseName })); setEncodingPreview(null); setModelsConfirmed(false) }} onTarget={value => { setTarget(value); setHistoryConfirmed(false) }} onConfirmedChange={setHistoryConfirmed} analysis={imageAnalysis} onAnalysis={value => { setImageAnalysis(value); setEncodingPreview(null); setModelsConfirmed(false) }} onHistoricalPatterns={setHistoricalPatterns} />}
+        {existingSeries && activeStep === 1 && <ExistingSeriesPicker selection={selection} target={target} confirmed={historyConfirmed} onSelect={value => { setSelection(value); setHistoryConfirmed(false); setForm(current => ({ ...current, seriesNameEn: value.englishName, seriesNameZh: value.chineseName, productModelSettings: undefined, productModelsConfirmed: undefined })); setEncodingPreview(null); setModelsConfirmed(false) }} onTarget={value => { setTarget(value); setHistoryConfirmed(false) }} onConfirmedChange={setHistoryConfirmed} analysis={imageAnalysis} onAnalysis={value => { setImageAnalysis(value); setEncodingPreview(null); setModelsConfirmed(false) }} onHistoricalPatterns={setHistoricalPatterns} />}
         {activeStep === 0 ? (
           <TaskBasics
             existingSeries={existingSeries}
@@ -235,7 +245,7 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
               translationRequestRef.current += 1
               setEnglishNameManuallyEdited(true)
               setEncodingPreview(null)
-              setForm((current) => ({ ...current, seriesNameEn }))
+              setForm((current) => ({ ...current, seriesNameEn, productModelSettings: undefined, productModelsConfirmed: undefined }))
             }}
             applyAutomaticTranslation={applyAutomaticTranslation}
             translationBusy={translationBusy}
@@ -251,15 +261,10 @@ export function NewTaskPage({ snapshot, onDataChanged, existingSeries = false }:
             analysis={imageAnalysis}
             preview={encodingPreview}
             setPreview={setEncodingPreview}
-            selectedModels={form.selectedModels}
-            setSelectedModels={(selectedModels) => setForm((current) => ({ ...current, selectedModels }))}
-            modelBrandAssignments={form.modelBrandAssignments}
-            setModelBrandAssignments={(modelBrandAssignments) => setForm((current) => ({ ...current, modelBrandAssignments }))}
-            modelSettings={form.modelSettings ?? []}
-            setModelSettings={(modelSettings) => setForm((current) => ({ ...current, modelSettings }))}
+            form={form}
+            onModelSettingsChange={(productModelSettings, productModelsConfirmed) => setForm(current => ({ ...current, productModelSettings, productModelsConfirmed }))}
             framePriceRules={form.framePriceRules ?? {}}
             setFramePriceRules={(framePriceRules) => setForm((current) => ({ ...current, framePriceRules }))}
-            modelsConfirmed={modelsConfirmed}
             setModelsConfirmed={setModelsConfirmed}
           />
         ) : activeStep === 3 && imageAnalysis && generationWorkspace ? (

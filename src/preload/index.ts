@@ -29,7 +29,9 @@ const api: CasebangDesktopApi = {
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
-    save: (input) => ipcRenderer.invoke(IPC_CHANNELS.settingsSave, input)
+    save: (input) => ipcRenderer.invoke(IPC_CHANNELS.settingsSave, input),
+    getProductModelSettings: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGetProductModels),
+    saveProductModelSettings: (input) => ipcRenderer.invoke(IPC_CHANNELS.settingsSaveProductModels, input)
   },
   account: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.accountGet),

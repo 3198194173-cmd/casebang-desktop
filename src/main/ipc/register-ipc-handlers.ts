@@ -24,6 +24,7 @@ import {
   refineCropInputSchema,
   generateTemplateConfigInputSchema,
   saveAiSettingsInputSchema,
+  saveProductModelSettingsInputSchema,
   suggestImageNamesBatchInputSchema,
   suggestImageNamesInputSchema,
   translateSeriesNameInputSchema,
@@ -167,6 +168,17 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     const request = applicationSettingsSchema.parse(input)
     logger.info('Saving application settings', request)
     return dependencies.settings.setApplicationSettings(request)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.settingsGetProductModels, async (event) => {
+    assertTrustedSender(event.senderFrame)
+    return dependencies.settings.getProductModelSettings()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.settingsSaveProductModels, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame)
+    const request = saveProductModelSettingsInputSchema.parse(input)
+    return dependencies.settings.setProductModelSettings(request)
   })
 
   ipcMain.handle(IPC_CHANNELS.accountGet, async (event) => {

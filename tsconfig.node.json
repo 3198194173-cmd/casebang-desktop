@@ -22,6 +22,7 @@
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
     "src/renderer/src/features/tasks/generation-workspace-builder.ts",
+    "src/renderer/src/features/tasks/product-model-state.ts",
     "src/renderer/src/features/tasks/product-image-mapping-builder.ts",
     "src/renderer/src/features/tasks/quality-focus.ts",
     "src/renderer/src/features/tasks/existing-series.ts",

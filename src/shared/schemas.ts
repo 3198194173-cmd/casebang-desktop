@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isValidEnglishPatternName } from './pattern-name'
+import { normalizeProductModels, normalizeProductModelSettings, PRODUCT_MODEL_TYPES } from './product-model-settings'
 
 export const baseFileKindSchema = z.enum([
   'namingFormula',
@@ -18,6 +19,41 @@ export const workbookPreviewRequestSchema = z.object({
 
 export const baseFileRollbackSchema = z.string().uuid()
 
+export const productModelTypeSchema = z.enum(PRODUCT_MODEL_TYPES)
+export const barcodeModelSettingSchema = z.object({
+  id: z.string().trim().min(1).max(150),
+  name: z.string().trim().min(1).max(100),
+  brand: z.enum(['apple', 'huawei', 'samsung', 'other']),
+  enabled: z.boolean(),
+  silverEnabled: z.boolean(),
+  pricesByCategory: z.record(z.string().trim().min(1).max(100), z.object({
+    normal: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional(),
+    silver: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional()
+  })).optional()
+})
+
+/** Empty lists are intentional: an operator can clear a type that is absent from the current series. */
+export const productBarcodeModelsSchema = z.array(barcodeModelSettingSchema).max(100).superRefine((models, context) => {
+  const ids = new Set<string>()
+  const enabledNames = new Set<string>()
+  models.forEach((model, index) => {
+    if (ids.has(model.id)) context.addIssue({ code: 'custom', path: [index, 'id'], message: '机型记录编号重复，请重新添加。' })
+    ids.add(model.id)
+    if (!model.enabled) return
+    const name = model.name.normalize('NFKC').toLocaleLowerCase('en-US').replace(/\s+/g, '')
+    if (enabledNames.has(name)) context.addIssue({ code: 'custom', path: [index, 'name'], message: '已启用的机型名称重复，请修改或取消启用。' })
+    enabledNames.add(name)
+  })
+})
+
+export const productModelSettingsSchema = z.partialRecord(productModelTypeSchema, productBarcodeModelsSchema)
+  .transform(normalizeProductModelSettings)
+
+export const saveProductModelSettingsInputSchema = z.object({
+  productType: productModelTypeSchema,
+  models: productBarcodeModelsSchema
+}).strict().transform((input) => ({ ...input, models: normalizeProductModels(input.productType, input.models) }))
+
 export const taskDraftInputSchema = z.object({
   templateName: z.string().trim().min(1).max(100),
   seriesNameZh: z.string().trim().max(100),
@@ -28,17 +64,10 @@ export const taskDraftInputSchema = z.object({
     z.string().trim().min(1).max(100),
     z.enum(['apple', 'huawei', 'samsung', 'other'])
   ),
-  modelSettings: z.array(z.object({
-    id: z.string().trim().min(1).max(150),
-    name: z.string().trim().min(1).max(100),
-    brand: z.enum(['apple', 'huawei', 'samsung', 'other']),
-    enabled: z.boolean(),
-    silverEnabled: z.boolean(),
-    pricesByCategory: z.record(z.string().trim().min(1).max(100), z.object({
-      normal: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional(),
-      silver: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional()
-    })).optional()
-  })).max(100).optional(),
+  modelSettings: z.array(barcodeModelSettingSchema).max(100).optional(),
+  productModelSettings: productModelSettingsSchema.optional(),
+  productModelsConfirmed: z.array(productModelTypeSchema).max(PRODUCT_MODEL_TYPES.length)
+    .refine((types) => new Set(types).size === types.length, '产品类型确认记录重复').optional(),
   framePriceRules: z.record(z.string().trim().min(1).max(100), z.object({
     normal: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional(),
     silver: z.object({ domestic: z.number().positive().max(1_000_000).nullable(), overseas: z.number().positive().max(1_000_000).nullable() }).optional(),

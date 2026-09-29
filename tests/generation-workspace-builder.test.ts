@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EncodingPreviewResult } from '../src/shared/coding-contracts'
-import type { TaskDraftInput } from '../src/shared/contracts'
+import type { BarcodeModelSetting, TaskDraftInput } from '../src/shared/contracts'
 import type { ImageAnalysisResult } from '../src/shared/image-contracts'
 import {
   BARCODE_ITEM_CLASSES,
@@ -20,6 +20,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, posix } from 'node:path'
 import sharp from 'sharp'
+import { createDefaultProductModelSettings } from '../src/shared/product-model-settings'
+import { resolveFrameModelPrice } from '../src/shared/frame-price-resolver'
+import { SettingsRepository } from '../src/main/infrastructure/settings-repository'
 
 describe('generated product workbook business flow', () => {
   it('derives barcode rows from image barcode names and confirmed models', () => {
@@ -95,6 +98,270 @@ describe('generated product workbook business flow', () => {
     expect(barcodeCodes('generated-barcodes-mirror')).toEqual(['CJ00009', 'CJ00010', 'CJ00009', 'CJ00010'])
     expect(imageCodes('generated-products-color', 6)).toEqual(['CCK00009', 'CCK00010'])
     expect(barcodeCodes('generated-barcodes-color')).toEqual(['CCK00009', 'CCK00010'])
+  })
+
+  it('uses independent enabled models for every product type without leaking phone models or silver variants', () => {
+    const { form, analysis, encoding } = typedProductFixture([
+      { category: 'Macbook保护壳', code: 'MB00001' },
+      { category: '镜头膜', code: 'JM00001' },
+      { category: '出片壳', code: 'CJ00010' },
+      { category: 'iPad保护壳', code: 'PD00001' },
+      { category: '出镜壳', code: 'CJ00002' },
+      { category: '出镜壳', code: 'CJ00001' },
+      { category: '磁吸背盖', code: 'BG00010' },
+      { category: '磁吸背盖', code: 'BG00009' },
+      { category: '出彩壳', code: 'CCK00001' },
+      { category: '奇趣壳', code: 'QQK00001' }
+    ])
+    form.productModelSettings = {
+      磁吸背盖: [barcodeModel('P70'), barcodeModel('iP13 Pro'), { ...barcodeModel('iP17'), enabled: false }],
+      出镜壳: [
+        { ...barcodeModel('SAM S24'), silverEnabled: false },
+        { ...barcodeModel('iP14 Pro'), pricesByCategory: { 出镜壳: { normal: { domestic: 179, overseas: 39.99 }, silver: { domestic: 189, overseas: 41.99 } } } }
+      ],
+      出片壳: [{ ...barcodeModel('iP15 Pro'), silverEnabled: false }],
+      出彩壳: [barcodeModel('SAM S26U')],
+      奇趣壳: [barcodeModel('PX Max')],
+      MacBook: [barcodeModel('Macbook Air 13 (2018-2020)')],
+      iPad: [barcodeModel('Pad Pro 11英寸（2024）')],
+      镜头膜: [barcodeModel('iP18 Pro/17 Pro'), barcodeModel('iP18 Pro Max/17 Pro Max')]
+    }
+    const workspace = buildGenerationWorkspace(form, analysis, encoding, [])
+    const sheets = workspace.workbooks.find((book) => book.id === 'generated-product')!.sheets
+    const barcodeRows = sheets.filter((sheet) => sheet.id.startsWith('generated-barcodes-')).flatMap((sheet) => sheet.rows).filter((row) => row[3]?.value)
+    const namesFor = (category: string): string[] => barcodeRows.filter((row) => row[3]!.value.startsWith(`CASEBANG ${category}-`)).map((row) => row[3]!.value)
+    const suffixesFor = (category: string): string[] => namesFor(category).map((name) => name.replace(/^.*? [A-Z]+\d+ /, ''))
+    expect(suffixesFor('磁吸背盖')).toEqual(['iP13 Pro', 'iP13 Pro', 'P70', 'P70'])
+    expect(namesFor('磁吸背盖').map((name) => /BG\d+/.exec(name)?.[0])).toEqual(['BG00009', 'BG00010', 'BG00009', 'BG00010'])
+    expect(suffixesFor('出镜壳')).toEqual(['iP14 Pro', 'iP14 Pro', 'SAM S24', 'SAM S24', 'iP14 Pro（银框）', 'iP14 Pro（银框）'])
+    expect(namesFor('出镜壳').map((name) => /CJ\d+/.exec(name)?.[0])).toEqual(['CJ00001', 'CJ00002', 'CJ00001', 'CJ00002', 'CJ00001', 'CJ00002'])
+    expect(suffixesFor('出片壳')).toEqual(['iP15 Pro'])
+    expect(suffixesFor('出彩壳')).toEqual(['SAM S26U'])
+    expect(suffixesFor('奇趣壳')).toEqual(['PX Max'])
+    expect(suffixesFor('Macbook保护壳')).toEqual(['Macbook Air 13 (2018-2020)'])
+    expect(suffixesFor('iPad保护壳')).toEqual(['Pad Pro 11英寸（2024）'])
+    expect(suffixesFor('镜头膜')).toEqual(['iP18 Pro/17 Pro', 'iP18 Pro Max/17 Pro Max'])
+    expect(barcodeRows).toHaveLength(17)
+    expect(barcodeRows.filter((row) => row[3]!.value.includes('（银框）'))).toHaveLength(2)
+    expect(barcodeRows.filter((row) => row[3]!.value.includes('出镜壳-') && row[3]!.value.endsWith('iP14 Pro')).map((row) => row[4]?.numericValue)).toEqual([179, 179])
+    expect(barcodeRows.filter((row) => row[3]!.value.includes('出镜壳-') && row[3]!.value.endsWith('iP14 Pro（银框）')).map((row) => row[4]?.numericValue)).toEqual([189, 189])
+    expect(workspace.checks.find((check) => check.id === 'barcode-models')?.passed).toBe(true)
+    expect(workspace.checks.find((check) => check.id === 'barcode-models')?.detail).toContain('Macbook保护壳 1 个')
+    expect(workspace.checks.find((check) => check.id === 'frame-variant-counts')?.detail).toContain('条码表：普通款 15 行、银框款 2 行')
+    const mirrorRows = sheets.find((sheet) => sheet.id === 'generated-barcodes-mirror')!.rows
+    expect(mirrorRows.map((row) => row[3]?.value.includes('（银框）'))).toEqual([false, false, false, false, false, true, true])
+  })
+
+  it('defaults specialized products to their own lists while preserving legacy phone selections', () => {
+    const { form, analysis, encoding } = typedProductFixture([
+      { category: '磁吸背盖', code: 'BG00001' },
+      { category: 'iPad保护壳', code: 'PD00001' },
+      { category: 'Macbook保护壳', code: 'MB00001' },
+      { category: '镜头膜', code: 'JM00001' }
+    ])
+    form.modelSettings = [barcodeModel('Legacy Phone X')]
+    const sheets = buildGenerationWorkspace(form, analysis, encoding, []).workbooks.find((book) => book.id === 'generated-product')!.sheets
+    const names = sheets.find((sheet) => sheet.id === 'generated-barcodes-other')!.rows.map((row) => row[3]!.value)
+    const defaults = createDefaultProductModelSettings()
+    expect(names.filter((name) => name.startsWith('CASEBANG 磁吸背盖-'))).toHaveLength(1)
+    expect(names.find((name) => name.startsWith('CASEBANG 磁吸背盖-'))).toContain('Legacy Phone X')
+    for (const [category, type] of [['iPad保护壳', 'iPad'], ['Macbook保护壳', 'MacBook'], ['镜头膜', '镜头膜']] as const) {
+      const selectedNames = defaults[type]!.filter((model) => model.enabled).map((model) => model.name)
+      const actualNames = names.filter((name) => name.startsWith(`CASEBANG ${category}-`))
+      expect(actualNames).toHaveLength(selectedNames.length)
+      expect(actualNames.every((name) => selectedNames.some((model) => name.endsWith(` ${model}`)))).toBe(true)
+      expect(actualNames.some((name) => name.includes('Legacy Phone X') || name.includes('（银框）'))).toBe(false)
+    }
+  })
+
+  it('does not replace an explicitly empty or disabled product profile with another type or legacy models', () => {
+    const { form, analysis, encoding } = typedProductFixture([
+      { category: '磁吸背盖', code: 'BG00001' },
+      { category: '出镜壳', code: 'CJ00001' },
+      { category: 'iPad保护壳', code: 'PD00001' }
+    ])
+    form.productModelSettings = {
+      磁吸背盖: [],
+      出镜壳: [{ ...barcodeModel('iP13 Pro'), enabled: false }],
+      iPad: [barcodeModel('Pad Pro 11英寸（2024）')]
+    }
+    const workspace = buildGenerationWorkspace(form, analysis, encoding, [])
+    const names = workspace.workbooks.find((book) => book.id === 'generated-product')!.sheets
+      .filter((sheet) => sheet.id.startsWith('generated-barcodes-')).flatMap((sheet) => sheet.rows.map((row) => row[3]!.value)).filter(Boolean)
+    expect(names).toHaveLength(1)
+    expect(names[0]).toContain('iPad保护壳-')
+    expect(workspace.checks.find((check) => check.id === 'barcode-models')).toMatchObject({ passed: false })
+    expect(workspace.checks.find((check) => check.id === 'barcode-models')?.detail).toContain('磁吸背盖 0 个')
+    expect(workspace.checks.find((check) => check.id === 'barcode-models')?.detail).toContain('出镜壳 0 个')
+  })
+
+  it('validates prices from the profile for the actual product type, not unused global models', () => {
+    const { form, analysis, encoding } = typedProductFixture([{ category: '出片壳', code: 'CJ00001' }])
+    form.modelSettings = [{ ...barcodeModel('iP13 Pro'), pricesByCategory: { 出片壳: { normal: { domestic: 777, overseas: 77.77 } } } }]
+    form.productModelSettings = {
+      出片壳: [{ ...barcodeModel('P70'), silverEnabled: false, pricesByCategory: { 出片壳: { normal: { domestic: 219, overseas: 46.99 } } } }]
+    }
+    const workspace = buildGenerationWorkspace(form, analysis, encoding, [])
+    const barcodeRows = workspace.workbooks.find((book) => book.id === 'generated-product')!.sheets.find((sheet) => sheet.id === 'generated-barcodes-print')!.rows
+    expect(barcodeRows).toHaveLength(1)
+    expect(barcodeRows[0]?.[3]?.value).toMatch(/ P70$/)
+    expect(barcodeRows[0]?.[4]?.numericValue).toBe(219)
+    expect(barcodeRows[0]?.[5]?.numericValue).toBe(46.99)
+    expect(workspace.checks.find((check) => check.id === 'barcode-prices')?.passed).toBe(true)
+  })
+
+  it('routes category aliases to the correct template, model profile and paired price rules', () => {
+    const { form, analysis, encoding } = typedProductFixture([{ category: '出片材', code: 'CJ00001' }])
+    form.productModelSettings = {
+      出片壳: [{ ...barcodeModel('P70'), pricesByCategory: { 出片壳: { normal: { domestic: 199, overseas: 42.99 } } } }]
+    }
+    form.framePriceRules = { 出片壳: { silver: { domestic: 219, overseas: 46.99 } } }
+    const sheets = buildGenerationWorkspace(form, analysis, encoding, []).workbooks.find((book) => book.id === 'generated-product')!.sheets
+    expect(sheets.map((sheet) => sheet.name)).toEqual(['出片图片', '出片条码'])
+    expect(sheets[0]?.rows.map((row) => row[2]?.value)).toEqual(['', '银框'])
+    const barcodeRows = sheets[1]!.rows.filter((row) => row[3]?.value)
+    expect(barcodeRows.map((row) => row[3]!.value.endsWith(' P70（银框）'))).toEqual([false, true])
+    expect(barcodeRows.map((row) => row[4]?.numericValue)).toEqual([199, 219])
+  })
+
+  it('ignores stale hidden frame, brand and model price overrides for non-frame products', () => {
+    const { form, analysis, encoding } = typedProductFixture([
+      { category: '磁吸背盖', code: 'BG00001' },
+      { category: 'iPad保护壳', code: 'PD00001' }
+    ])
+    form.productModelSettings = {
+      磁吸背盖: [{ ...barcodeModel('iP13 Pro'), pricesByCategory: { 磁吸背盖: { normal: { domestic: 777, overseas: 77.77 } } } }],
+      iPad: [{ ...barcodeModel('iPad Pro 11英寸（2024）'), pricesByCategory: { iPad保护壳: { normal: { domestic: 666, overseas: 66.66 } } } }]
+    }
+    form.framePriceRules = {
+      磁吸背盖: { normal: { domestic: 555, overseas: 55.55 }, brands: { apple: { normal: { domestic: 444, overseas: 44.44 } } } },
+      iPad保护壳: { normal: { domestic: 333, overseas: 33.33 }, brands: { apple: { normal: { domestic: 222, overseas: 22.22 } } } }
+    }
+    analysis.crops[2] = { ...analysis.crops[2]!, suggestedRetailPrice: null, overseasRetailPrice: null }
+    const workspace = buildGenerationWorkspace(form, analysis, encoding, [])
+    const rows = workspace.workbooks.find((book) => book.id === 'generated-product')!.sheets.find((sheet) => sheet.id === 'generated-barcodes-other')!.rows
+    expect(rows[0]?.[4]?.numericValue).toBe(89)
+    expect(rows[0]?.[5]?.numericValue).toBe(19.99)
+    expect(rows[1]?.[4]?.value).toBe('')
+    expect(rows[1]?.[5]?.value).toBe('')
+    expect(workspace.checks.find((check) => check.id === 'barcode-prices')?.passed).toBe(false)
+    expect(workspace.checks.find((check) => check.id === 'barcode-prices')?.detail).toContain('iPad保护壳')
+  })
+
+  it('generates the six-sheet reference black/silver models and prices independently for mirror and print cases', () => {
+    const { form, analysis, encoding } = typedProductFixture([
+      { category: '出镜壳', code: 'CJ00001' },
+      { category: '出片壳', code: 'CJ00002' }
+    ])
+    form.productModelSettings = createDefaultProductModelSettings()
+    const workspace = buildGenerationWorkspace(form, analysis, encoding, [])
+    const sheets = workspace.workbooks.find((book) => book.id === 'generated-product')!.sheets
+    const mirror = sheets.find((sheet) => sheet.id === 'generated-barcodes-mirror')!.rows.filter((row) => row[3]?.value)
+    const print = sheets.find((sheet) => sheet.id === 'generated-barcodes-print')!.rows.filter((row) => row[3]?.value)
+    const silver = (rows: typeof mirror) => rows.filter((row) => row[3]!.value.endsWith('（银框）'))
+    const black = (rows: typeof mirror) => rows.filter((row) => !row[3]!.value.endsWith('（银框）'))
+    expect(mirror).toHaveLength(61)
+    expect(print).toHaveLength(27)
+    expect(black(mirror)).toHaveLength(51)
+    expect(black(print)).toHaveLength(17)
+    expect(silver(mirror)).toHaveLength(10)
+    expect(silver(print)).toHaveLength(10)
+    expect([...black(mirror), ...black(print)].every((row) => !row[3]!.value.includes('黑框'))).toBe(true)
+    expect(mirror.slice(0, 51).every((row) => !row[3]!.value.endsWith('（银框）'))).toBe(true)
+    expect(print.slice(0, 17).every((row) => !row[3]!.value.endsWith('（银框）'))).toBe(true)
+    expect([...silver(mirror), ...silver(print)].every((row) => row[4]!.numericValue === 169 && row[5]!.numericValue === 36.99)).toBe(true)
+    expect(black(print).every((row) => row[4]!.numericValue === 149 && row[5]!.numericValue === 31.99)).toBe(true)
+    expect(black(mirror).filter((row) => row[4]!.numericValue === 149)).toHaveLength(20)
+    expect(black(mirror).filter((row) => row[4]!.numericValue === 129)).toHaveLength(31)
+    expect(workspace.checks.find((check) => check.id === 'barcode-prices')?.passed).toBe(true)
+    expect(workspace.checks.find((check) => check.id === 'frame-variant-counts')?.passed).toBe(true)
+  })
+
+  it('uses model-specific reference prices including the three Huawei exceptions rather than one brand price', () => {
+    const { form, analysis, encoding } = typedProductFixture([{ category: '出镜壳', code: 'CJ00001' }])
+    form.productModelSettings = { 出镜壳: [
+      'iP13 Pro', 'SAM S25', 'HW Mate 70', 'HW PX View', 'HW Mate 90/90 Pro', 'HW Mate 90 Pro Max'
+    ].map((name) => ({ ...barcodeModel(name), silverEnabled: false })) }
+    const rows = buildGenerationWorkspace(form, analysis, encoding, []).workbooks.find((book) => book.id === 'generated-product')!.sheets
+      .find((sheet) => sheet.id === 'generated-barcodes-mirror')!.rows
+    const prices = (name: string) => {
+      const row = rows.find((row) => row[3]?.value.endsWith(` ${name}`))!
+      return [row[4]!.numericValue, row[5]!.numericValue]
+    }
+    expect(prices('iP13 Pro')).toEqual([149, 31.99])
+    expect(prices('SAM S25')).toEqual([129, 28.99])
+    expect(prices('HW Mate 70')).toEqual([129, 28.99])
+    expect(prices('HW PX View')).toEqual([149, 31.99])
+    expect(prices('HW Mate 90/90 Pro')).toEqual([149, 31.99])
+    expect(prices('HW Mate 90 Pro Max')).toEqual([149, 31.99])
+  })
+
+  it('inherits domestic and overseas prices field by field through model, brand, category and reference layers', () => {
+    const model: BarcodeModelSetting = { ...barcodeModel('SAM S25'), silverEnabled: false }
+    expect(resolveFrameModelPrice({ category: '出镜壳', model, frame: 'normal' })).toEqual({ domestic: 129, overseas: 28.99 })
+    const rules: TaskDraftInput['framePriceRules'] = { 出镜壳: {
+      normal: { domestic: 155, overseas: null },
+      brands: { samsung: { normal: { domestic: null, overseas: 34.99 } } }
+    } }
+    expect(resolveFrameModelPrice({ category: '出镜壳', model, frame: 'normal', rules })).toEqual({ domestic: 155, overseas: 34.99 })
+    model.pricesByCategory = { 出镜壳: { normal: { domestic: 188, overseas: null } } }
+    expect(resolveFrameModelPrice({ category: '出镜壳', model, frame: 'normal', rules })).toEqual({ domestic: 188, overseas: 34.99 })
+    model.pricesByCategory['出镜壳']!.normal = { domestic: null, overseas: 41.99 }
+    expect(resolveFrameModelPrice({ category: '出镜壳', model, frame: 'normal', rules })).toEqual({ domestic: 155, overseas: 41.99 })
+    expect(resolveFrameModelPrice({ category: '出镜壳', model, frame: 'normal' })).toEqual({ domestic: 129, overseas: 41.99 })
+    expect(resolveFrameModelPrice({ category: '出片材', model: barcodeModel('iP13 Pro'), frame: 'normal', rules: {
+      出片壳: { normal: { domestic: null, overseas: 33.99 } }
+    } })).toEqual({ domestic: 149, overseas: 33.99 })
+  })
+
+  it('inherits missing alias frame rules from the canonical type but treats null fields as clearing that manual layer', () => {
+    const model = barcodeModel('iP13 Pro')
+    model.pricesByCategory = {
+      出片壳: { normal: { domestic: 188, overseas: 41.99 }, silver: { domestic: 199, overseas: 43.99 } },
+      出片材: { silver: { domestic: null, overseas: 55.99 } }
+    }
+    const rules: NonNullable<TaskDraftInput['framePriceRules']> = {
+      出片壳: {
+        normal: { domestic: 155, overseas: 36.99 }, silver: { domestic: 209, overseas: 45.99 },
+        brands: { apple: { normal: { domestic: 170, overseas: 37.99 }, silver: { domestic: null, overseas: 47.99 } } }
+      },
+      出片材: { normal: { domestic: 160, overseas: null }, brands: { apple: { silver: { domestic: 205, overseas: null } } } }
+    }
+    const resolve = (frame: 'normal' | 'silver') => resolveFrameModelPrice({ category: '出片材', model, frame, rules })
+    expect(resolve('normal')).toEqual({ domestic: 188, overseas: 41.99 })
+    expect(resolve('silver')).toEqual({ domestic: 205, overseas: 55.99 })
+    model.pricesByCategory['出片材']!.normal = { domestic: null, overseas: null }
+    expect(resolve('normal')).toEqual({ domestic: 170, overseas: 37.99 })
+    rules['出片材']!.brands!.apple!.normal = { domestic: null, overseas: null }
+    expect(resolve('normal')).toEqual({ domestic: 160, overseas: 31.99 })
+    rules['出片材']!.normal = { domestic: null, overseas: null }
+    expect(resolve('normal')).toEqual({ domestic: 149, overseas: 31.99 })
+  })
+
+  it('restores manually adjusted per-model prices from local memory into a later series generation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'casebang-frame-model-price-memory-'))
+    try {
+      const file = join(directory, 'settings.json')
+      const repository = new SettingsRepository(file)
+      const models = createDefaultProductModelSettings()['出镜壳'].filter((model) => model.name === 'iP14 Pro')
+      expect(models).toHaveLength(1)
+      expect(models[0]!.pricesByCategory).toBeUndefined()
+      models[0]!.pricesByCategory = { 出镜壳: {
+        normal: { domestic: 179, overseas: null }, silver: { domestic: null, overseas: 39.99 }
+      } }
+      await repository.setProductModelSettings({ productType: '出镜壳', models })
+      const { form, analysis, encoding } = typedProductFixture([{ category: '出镜壳', code: 'CJ00123' }])
+      form.seriesNameEn = 'Another Series'
+      form.productModelSettings = await new SettingsRepository(file).getProductModelSettings()
+      const rows = buildGenerationWorkspace(form, analysis, encoding, []).workbooks.find((book) => book.id === 'generated-product')!.sheets
+        .find((sheet) => sheet.id === 'generated-barcodes-mirror')!.rows.filter((row) => row[3]?.value)
+      expect(rows.map((row) => [row[4]!.numericValue, row[5]!.numericValue])).toEqual([[179, 31.99], [169, 39.99]])
+      expect(rows.every((row) => row[3]!.value.includes('Another Series'))).toBe(true)
+      const fresh = createDefaultProductModelSettings()['出镜壳'].find((model) => model.name === 'iP14 Pro')!
+      expect(fresh.pricesByCategory).toBeUndefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('exports the real A-K image layout and configurable normal/silver frame rows', () => {
@@ -467,6 +734,29 @@ describe('generated product workbook business flow', () => {
     expect(barcodeRows[3]?.[4]?.numericValue).toBe(299)
   })
 })
+
+function barcodeModel(name: string): BarcodeModelSetting {
+  return { id: `model-${name}`, name, brand: phoneModelBrand(name), enabled: true, silverEnabled: true }
+}
+
+function typedProductFixture(products: Array<{ category: string; code: string }>): { form: TaskDraftInput; analysis: ImageAnalysisResult; encoding: EncodingPreviewResult } {
+  const analysis = analysisFixture()
+  const product = analysis.crops[1]!
+  analysis.crops = [analysis.crops[0]!, ...products.map((item, index) => ({
+    ...product, id: `typed-product-${index}`, productCategory: item.category, patternNameEn: `Pattern ${index + 1}`
+  }))]
+  const encoding = encodingFixture()
+  encoding.rows = products.map((item, index) => ({
+    ...encoding.rows[0]!, cropId: `typed-product-${index}`, order: index + 1,
+    productCategory: item.category, patternNameEn: `Pattern ${index + 1}`, productCode: item.code,
+    prefix: item.code.replace(/\d+$/, '')
+  }))
+  const form: TaskDraftInput = {
+    templateName: '自动按产品类型', seriesNameZh: '测试', seriesNameEn: 'Test Series', ipRemark: '',
+    selectedModels: ['iP13 Pro Max'], modelBrandAssignments: {}, masterImagePath: analysis.sourceImagePath
+  }
+  return { form, analysis, encoding }
+}
 
 function analysisFixture(): ImageAnalysisResult {
   return {

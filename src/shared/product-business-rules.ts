@@ -138,7 +138,7 @@ export function productBusinessSpecification(category: string): ProductBusinessS
   if (normalized.includes(normalizeProductCategory('出镜壳'))) {
     return { section: 'case', itemClass: '一体壳', suggestedRetailPrice: 129, overseasRetailPrice: 28.99, expandsByModel: true }
   }
-  if (normalized.includes(normalizeProductCategory('出片壳'))) {
+  if (normalized.includes(normalizeProductCategory('出片壳')) || normalized === normalizeProductCategory('出片材')) {
     return { section: 'case', itemClass: '一体壳', suggestedRetailPrice: 149, overseasRetailPrice: 31.99, expandsByModel: true }
   }
   if (normalized.includes(normalizeProductCategory('出彩壳'))) {
@@ -147,11 +147,11 @@ export function productBusinessSpecification(category: string): ProductBusinessS
   if (normalized.includes(normalizeProductCategory('奇趣壳'))) {
     return { section: 'case', itemClass: '一体壳', suggestedRetailPrice: 99, overseasRetailPrice: 20.99, expandsByModel: true }
   }
-  if (normalized.includes(normalizeProductCategory('Macbook保护壳')) || normalized === normalizeProductCategory('Macbook')) {
-    return { section: 'case', itemClass: '一体壳', suggestedRetailPrice: 169, overseasRetailPrice: 36.99, expandsByModel: false }
+  if (normalized.includes('macbook')) {
+    return { section: 'case', itemClass: '一体壳', suggestedRetailPrice: 169, overseasRetailPrice: 36.99, expandsByModel: true }
   }
-  if (normalized.includes(normalizeProductCategory('iPad保护壳'))) {
-    return { section: 'case', itemClass: '一体壳', suggestedRetailPrice: null, overseasRetailPrice: null, expandsByModel: false }
+  if (normalized.includes('ipad') || normalized === 'pad' || normalized.includes(normalizeProductCategory('Pad保护壳'))) {
+    return { section: 'case', itemClass: '一体壳', suggestedRetailPrice: null, overseasRetailPrice: null, expandsByModel: true }
   }
   if (normalized.includes(normalizeProductCategory('礼盒'))) {
     return { section: 'gift', itemClass: '礼盒套装', suggestedRetailPrice: 149, overseasRetailPrice: 31.99, expandsByModel: false }
@@ -168,7 +168,7 @@ export function productBusinessSpecification(category: string): ProductBusinessS
       section: 'accessory', itemClass: '配件',
       suggestedRetailPrice: flowingSand ? 89 : 69,
       overseasRetailPrice: flowingSand ? 19.99 : 14.99,
-      expandsByModel: false
+      expandsByModel: true
     }
   }
   if (normalized.includes(normalizeProductCategory('盲盒'))) {

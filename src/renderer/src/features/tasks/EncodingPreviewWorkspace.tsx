@@ -1,19 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { EncodingPreviewResult, EncodingPreviewRow } from '@shared/coding-contracts'
 import type { ImageAnalysisResult } from '@shared/image-contracts'
-import type { BarcodeModelSetting, CategoryFramePriceRule, FramePricePair } from '@shared/contracts'
+import type { CategoryFramePriceRule, TaskDraftInput } from '@shared/contracts'
+import { ProductModelSelector } from './ProductModelSelector'
+import type { ProductModelSettings, ProductModelType } from '@shared/product-model-settings'
 import { desktopApi } from '../../app/desktop-api'
 import { buildSeriesCodeReservePlan, isValidSeriesCode } from '@shared/series-code'
-import { phoneModelBrand, productBusinessSpecification, REFERENCE_PHONE_MODELS, sortBarcodeModelsByReference, type PhoneModelBrand } from '@shared/product-business-rules'
-
-const MODEL_BRANDS: Array<{ id: PhoneModelBrand; label: string }> = [
-  { id: 'apple', label: '苹果' },
-  { id: 'samsung', label: '三星' },
-  { id: 'huawei', label: '华为' },
-  { id: 'other', label: '其他' }
-]
-
 interface EncodingPreviewWorkspaceProps {
   existingSeriesCode?: string
   seriesNameZh: string
@@ -21,15 +14,10 @@ interface EncodingPreviewWorkspaceProps {
   analysis: ImageAnalysisResult
   preview: EncodingPreviewResult | null
   setPreview: Dispatch<SetStateAction<EncodingPreviewResult | null>>
-  selectedModels: string[]
-  setSelectedModels: (models: string[]) => void
-  modelBrandAssignments: Record<string, PhoneModelBrand>
-  setModelBrandAssignments: (assignments: Record<string, PhoneModelBrand>) => void
-  modelSettings: BarcodeModelSetting[]
-  setModelSettings: (settings: BarcodeModelSetting[]) => void
+  form: TaskDraftInput
+  onModelSettingsChange: (settings: ProductModelSettings, confirmed: ProductModelType[]) => void
   framePriceRules: Record<string, CategoryFramePriceRule>
   setFramePriceRules: (rules: Record<string, CategoryFramePriceRule>) => void
-  modelsConfirmed: boolean
   setModelsConfirmed: (confirmed: boolean) => void
 }
 
@@ -40,27 +28,17 @@ export function EncodingPreviewWorkspace({
   analysis,
   preview,
   setPreview,
-  selectedModels,
-  setSelectedModels,
-  modelBrandAssignments,
-  setModelBrandAssignments,
-  modelSettings,
-  setModelSettings,
+  form,
+  onModelSettingsChange,
   framePriceRules,
   setFramePriceRules,
-  modelsConfirmed,
   setModelsConfirmed
 }: EncodingPreviewWorkspaceProps): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const [newModel, setNewModel] = useState('')
-  const [newModelBrand, setNewModelBrand] = useState<PhoneModelBrand>('apple')
-  const [activeModelBrand, setActiveModelBrand] = useState<PhoneModelBrand>('apple')
-  const pairedFrameCategories = useMemo(() => [...new Set(analysis.crops
-    .filter((crop) => /出镜壳|出片壳/.test(crop.productCategory))
-    .map((crop) => crop.productCategory))], [analysis])
-
+  const previewRequest = useRef(0)
   const loadPreview = async (): Promise<void> => {
+    const requestId = ++previewRequest.current
     try {
       setBusy(true)
       setMessage(null)
@@ -76,17 +54,20 @@ export function EncodingPreviewWorkspace({
             patternNameEn: crop.patternNameEn
           }))
       })
+      if (requestId !== previewRequest.current) return
       setPreview(existingSeriesCode ? { ...result, seriesCode: existingSeriesCode, recommendedSeriesCode: existingSeriesCode, seriesCodeWithSuffix: `${existingSeriesCode}系列`, seriesCodeStatus: 'existing', seriesCodeMessage: '已锁定选定系列；产品编码仍按类别新增。' } : result)
       setMessage(`已读取 A条码参考，共生成 ${result.rows.length} 条产品编码预览。`)
     } catch (reason) {
+      if (requestId !== previewRequest.current) return
       setMessage(reason instanceof Error ? reason.message : '编码预览生成失败')
     } finally {
-      setBusy(false)
+      if (requestId === previewRequest.current) setBusy(false)
     }
   }
 
   useEffect(() => {
     if (!preview && !busy) void loadPreview()
+    return () => { previewRequest.current += 1 }
   }, [])
 
   const issues = useMemo(() => getEncodingPreviewIssues(preview), [preview])
@@ -99,96 +80,6 @@ export function EncodingPreviewWorkspace({
     }
     return [...groups.entries()]
   }, [preview])
-  const availableModels = useMemo(
-    () => [...new Set([...REFERENCE_PHONE_MODELS, ...Object.keys(modelBrandAssignments), ...selectedModels])],
-    [modelBrandAssignments, selectedModels]
-  )
-  const effectiveModelSettings = useMemo<BarcodeModelSetting[]>(() => modelSettings.length > 0
-    ? modelSettings
-    : availableModels.map((name, index) => ({
-        id: 'model-' + index + '-' + name,
-        name,
-        brand: modelBrandAssignments[name] ?? phoneModelBrand(name),
-        enabled: selectedModels.includes(name),
-        silverEnabled: true
-      })), [modelSettings, availableModels, modelBrandAssignments, selectedModels])
-  const modelGroups = useMemo(() => MODEL_BRANDS.map((brand) => ({
-    ...brand,
-    models: sortBarcodeModelsByReference(effectiveModelSettings.filter((model) => model.brand === brand.id))
-  })), [effectiveModelSettings])
-  const modelDependentProductCount = useMemo(
-    () => analysis.crops.filter((crop) => crop.role !== 'series-overview' && productBusinessSpecification(crop.productCategory).expandsByModel).length,
-    [analysis]
-  )
-
-  useEffect(() => {
-    if (modelSettings.length === 0 && effectiveModelSettings.length > 0) setModelSettings(effectiveModelSettings)
-  }, [modelSettings.length])
-
-  const commitModelSettings = (settings: BarcodeModelSetting[]): void => {
-    const ordered = sortBarcodeModelsByReference(settings)
-    setModelsConfirmed(false)
-    setModelSettings(ordered)
-    const enabled = ordered.filter((model) => model.enabled && model.name.trim())
-    setSelectedModels(enabled.map((model) => model.name.trim()))
-    setModelBrandAssignments(Object.fromEntries(ordered.filter((model) => model.name.trim()).map((model) => [model.name.trim(), model.brand])))
-  }
-
-  const updateModels = (models: string[]): void => {
-    const enabled = new Set(models)
-    commitModelSettings(effectiveModelSettings.map((model) => ({ ...model, enabled: enabled.has(model.name) })))
-  }
-
-  const toggleModel = (model: BarcodeModelSetting): void => {
-    commitModelSettings(effectiveModelSettings.map((item) => item.id === model.id ? { ...item, enabled: !item.enabled } : item))
-  }
-
-  const selectModelGroup = (models: BarcodeModelSetting[]): void => {
-    const ids = new Set(models.map((model) => model.id))
-    commitModelSettings(effectiveModelSettings.map((model) => ids.has(model.id) ? { ...model, enabled: true } : model))
-  }
-
-  const clearModelGroup = (models: BarcodeModelSetting[]): void => {
-    const ids = new Set(models.map((model) => model.id))
-    commitModelSettings(effectiveModelSettings.map((model) => ids.has(model.id) ? { ...model, enabled: false } : model))
-  }
-
-  const addModel = (): void => {
-    const model = newModel.trim()
-    if (!model) return
-    const existing = availableModels.find((item) => item.toLocaleLowerCase() === model.toLocaleLowerCase())
-    const canonicalModel = existing ?? model
-    const existingSetting = effectiveModelSettings.find((item) => item.name.toLocaleLowerCase() === canonicalModel.toLocaleLowerCase())
-    if (existingSetting) commitModelSettings(effectiveModelSettings.map((item) => item.id === existingSetting.id ? { ...item, enabled: true, brand: newModelBrand } : item))
-    else commitModelSettings([...effectiveModelSettings, { id: 'custom-' + Date.now(), name: canonicalModel, brand: newModelBrand, enabled: true, silverEnabled: true }])
-    setNewModel('')
-    setActiveModelBrand(newModelBrand)
-  }
-
-  const confirmModels = (): void => {
-    const enabledModels = effectiveModelSettings.filter((model) => model.enabled)
-    const names = enabledModels.map((model) => model.name.trim()).filter(Boolean)
-    if (enabledModels.some((model) => !model.name.trim())) {
-      setModelsConfirmed(false)
-      setMessage('已启用机型的名称不能为空，请填写名称或取消勾选。')
-      return
-    }
-    if (modelDependentProductCount > 0 && names.length === 0) {
-      setModelsConfirmed(false)
-      setMessage('当前包含单个片材产品，请至少勾选一个机型。')
-      return
-    }
-    if (new Set(names.map((name) => name.toLocaleLowerCase())).size !== names.length) {
-      setModelsConfirmed(false)
-      setMessage('已启用机型的名称不能为空或重复，请修正后再确认。')
-      return
-    }
-    setModelsConfirmed(true)
-    setMessage(modelDependentProductCount > 0
-      ? `已确认 ${names.length} 个机型；出镜壳/出片壳会按各机型的银框开关和价格设置生成。`
-      : '当前产品不需要按机型展开，已确认本次不生成机型条码记录。')
-  }
-
   const updateSeriesCode = (seriesCode: string): void => {
     const normalized = seriesCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
     setPreview((current) => current ? {
@@ -241,56 +132,7 @@ export function EncodingPreviewWorkspace({
         <section className={issues.length > 0 ? 'error' : 'ready'}><span>编码检查</span><strong>{issues.length > 0 ? `${issues.length} 项待处理` : '全部通过'}</strong><small>{issues.length > 0 ? '修正红色项目后才能进入生成步骤' : '未发现格式、占用或重复冲突'}</small></section>
       </div>
       {issues.length > 0 && <div className="alert warning">编码预览还有 {issues.length} 项问题。红色输入框会指出具体位置；修改后将即时重新检查。</div>}
-      <section className={`model-confirmation-panel ${modelsConfirmed ? 'confirmed' : ''}`}>
-        <header>
-          <div>
-            <strong>条码机型</strong>
-            <span>参考表统计到 {REFERENCE_PHONE_MODELS.length} 个机型。生成顺序为苹果 → 三星 → 华为 → 其他；每个机型下依次排列全部图案。</span>
-          </div>
-          <b>{modelsConfirmed ? '已确认' : '待确认'}</b>
-        </header>
-        <div className="model-toolbar">
-          <span>已勾选 {selectedModels.length} 个</span>
-          <button type="button" onClick={() => commitModelSettings(effectiveModelSettings.map((model) => ({ ...model, enabled: true })))}>全选</button>
-          <button type="button" onClick={() => updateModels([])}>清空</button>
-          <div>
-            <select aria-label="新增机型品牌" value={newModelBrand} onChange={(event) => setNewModelBrand(event.target.value as PhoneModelBrand)}>
-              {MODEL_BRANDS.map((brand) => <option key={brand.id} value={brand.id}>{brand.label}</option>)}
-            </select>
-            <input value={newModel} onChange={(event) => setNewModel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addModel() } }} placeholder="输入新增机型" />
-            <button type="button" onClick={addModel}>添加机型</button>
-          </div>
-        </div>
-        <div className="model-brand-tabs" aria-label="按品牌查看机型">
-          {modelGroups.map((group) => <button type="button" key={group.id} aria-pressed={activeModelBrand === group.id} onClick={() => setActiveModelBrand(group.id)}>
-            {group.label}<span>{group.models.filter((model) => model.enabled).length} / {group.models.length}</span>
-          </button>)}
-        </div>
-        <div className="model-brand-list" key={activeModelBrand}>
-          {modelGroups.filter((group) => group.id === activeModelBrand).map((group) => (
-            <section className="model-brand-group" key={group.id}>
-              <header>
-                <div><strong>{group.label}</strong><span>{group.models.length} 个机型 · 已选 {group.models.filter((model) => model.enabled).length} 个</span></div>
-                <div><button type="button" onClick={() => selectModelGroup(group.models)} disabled={group.models.length === 0}>全选</button><button type="button" onClick={() => clearModelGroup(group.models)} disabled={group.models.length === 0}>清空</button></div>
-              </header>
-              {group.models.length > 0
-                ? <div className="model-edit-list">{group.models.map((model) => <div className={'model-edit-row ' + (model.enabled ? 'enabled' : '')} key={model.id}>
-                  <label className="model-enabled"><input type="checkbox" checked={model.enabled} onChange={() => toggleModel(model)} /><span>启用</span></label>
-                  <label><span>机型名称</span><input value={model.name} onChange={(event) => commitModelSettings(effectiveModelSettings.map((item) => item.id === model.id ? { ...item, name: event.target.value } : item))} /></label>
-                  <label><span>品牌</span><select value={model.brand} onChange={(event) => commitModelSettings(effectiveModelSettings.map((item) => item.id === model.id ? { ...item, brand: event.target.value as PhoneModelBrand } : item))}>{MODEL_BRANDS.map((brand) => <option key={brand.id} value={brand.id}>{brand.label}</option>)}</select></label>
-                  {pairedFrameCategories.length > 0 && <label className="model-silver-enabled"><input type="checkbox" checked={model.silverEnabled} onChange={(event) => commitModelSettings(effectiveModelSettings.map((item) => item.id === model.id ? { ...item, silverEnabled: event.target.checked } : item))} /><span>生成银框</span></label>}
-                  {model.enabled && pairedFrameCategories.length > 0 && <ModelPriceOverrides model={model} categories={pairedFrameCategories} onChange={(next) => commitModelSettings(effectiveModelSettings.map((item) => item.id === model.id ? next : item))} />}
-                </div>)}</div>
-                : <p>暂无机型，可通过上方输入框添加。</p>}
-            </section>
-          ))}
-        </div>
-        {pairedFrameCategories.length > 0 && <FramePriceEditor categories={pairedFrameCategories} rules={framePriceRules} onChange={(rules) => { setModelsConfirmed(false); setFramePriceRules(rules) }} />}
-        <footer>
-          <span>{modelDependentProductCount > 0 ? `${modelDependentProductCount} 个单个片材产品 × ${selectedModels.length} 个机型` : '当前产品类型不按机型展开'}</span>
-          <button className="primary-button" type="button" onClick={confirmModels}>{modelsConfirmed ? '重新确认机型 ✓' : '确认机型 ✓'}</button>
-        </footer>
-      </section>
+      <ProductModelSelector analysis={analysis} form={form} onChange={onModelSettingsChange} framePriceRules={framePriceRules} onFramePriceRulesChange={setFramePriceRules} onConfirmedChange={setModelsConfirmed} />
       <div className="encoding-category-list">
         {rowsByCategory.map(([category, rows]) => (
           <section className="encoding-category-card" key={category}>
@@ -321,84 +163,6 @@ export function EncodingPreviewWorkspace({
       </div>
     </div>
   )
-}
-
-function ModelPriceOverrides({ model, categories, onChange }: {
-  model: BarcodeModelSetting
-  categories: string[]
-  onChange(model: BarcodeModelSetting): void
-}): React.JSX.Element {
-  const update = (category: string, frame: 'normal' | 'silver', field: 'domestic' | 'overseas', raw: string): void => {
-    const numeric = raw.trim() ? Number(raw) : null
-    const categoriesMap = model.pricesByCategory ?? {}
-    const categoryRule = categoriesMap[category] ?? {}
-    const price = categoryRule[frame] ?? { domestic: null, overseas: null }
-    onChange({
-      ...model,
-      pricesByCategory: {
-        ...categoriesMap,
-        [category]: { ...categoryRule, [frame]: { ...price, [field]: Number.isFinite(numeric) ? numeric : null } }
-      }
-    })
-  }
-  return <details className="model-price-overrides">
-    <summary>单独设置此机型价格（可选）</summary>
-    {categories.map((category) => <div className="model-price-category" key={category}>
-      <strong>{category}</strong>
-      {(['normal', 'silver'] as const).map((frame) => {
-        const value = model.pricesByCategory?.[category]?.[frame]
-        return <div key={frame}><span>{frame === 'normal' ? '普通款' : '银框款'}</span>
-          <label><span>建议零售价（元）</span><input type="number" min="0.01" step="0.01" value={value?.domestic ?? ''} placeholder="留空继承品牌价格" onChange={(event) => update(category, frame, 'domestic', event.target.value)} /></label>
-          <label><span>海外零售价（美元）</span><input type="number" min="0.01" step="0.01" value={value?.overseas ?? ''} placeholder="留空继承品牌价格" onChange={(event) => update(category, frame, 'overseas', event.target.value)} /></label>
-        </div>
-      })}
-    </div>)}
-  </details>
-}
-
-function FramePriceEditor({ categories, rules, onChange }: {
-  categories: string[]
-  rules: Record<string, CategoryFramePriceRule>
-  onChange(rules: Record<string, CategoryFramePriceRule>): void
-}): React.JSX.Element {
-  const pair = (category: string, brand: PhoneModelBrand | null, frame: 'normal' | 'silver'): FramePricePair['normal'] => {
-    const existing = brand ? rules[category]?.brands?.[brand]?.[frame] : rules[category]?.[frame]
-    if (existing) return existing
-    if (brand) return { domestic: null, overseas: null }
-    return frame === 'silver'
-      ? { domestic: 169, overseas: 36.99 }
-      : { domestic: 149, overseas: 31.99 }
-  }
-  const update = (category: string, brand: PhoneModelBrand | null, frame: 'normal' | 'silver', field: 'domestic' | 'overseas', raw: string): void => {
-    const value = raw.trim() ? Number(raw) : null
-    const current = rules[category] ?? {}
-    if (brand) {
-      const brands = current.brands ?? {}
-      const brandRule = brands[brand] ?? {}
-      onChange({ ...rules, [category]: { ...current, brands: { ...brands, [brand]: { ...brandRule, [frame]: { ...pair(category, brand, frame), [field]: Number.isFinite(value) ? value : null } } } } })
-    } else {
-      onChange({ ...rules, [category]: { ...current, [frame]: { ...pair(category, null, frame), [field]: Number.isFinite(value) ? value : null } } })
-    }
-  }
-  const priceInputs = (category: string, brand: PhoneModelBrand | null, frame: 'normal' | 'silver'): React.JSX.Element => {
-    const value = pair(category, brand, frame)
-    const defaults = pair(category, null, frame)
-    return <div className="frame-price-pair" role="group" aria-label={`${category} / ${brand ? MODEL_BRANDS.find((item) => item.id === brand)?.label : '类别默认'} / ${frame === 'normal' ? '普通款' : '银框款'}`}>
-      <label><span>建议零售价（元）</span><input type="number" min="0.01" step="0.01" value={value?.domestic ?? ''} placeholder={brand ? `继承 ${defaults?.domestic ?? '类别价格'}` : ''} onChange={(event) => update(category, brand, frame, 'domestic', event.target.value)} /></label>
-      <label><span>海外零售价（美元）</span><input type="number" min="0.01" step="0.01" value={value?.overseas ?? ''} placeholder={brand ? `继承 ${defaults?.overseas ?? '类别价格'}` : ''} onChange={(event) => update(category, brand, frame, 'overseas', event.target.value)} /></label>
-    </div>
-  }
-  return <section className="frame-price-editor">
-    <header><div><strong>出镜壳 / 出片壳价格</strong><span>普通款与银框款分别设置。生效顺序：单机型价格 → 品牌价格 → 类别默认；留空自动继承。</span></div></header>
-    {categories.map((category) => <details key={category} open>
-      <summary>{category}</summary>
-      <div className="frame-price-table">
-        <div className="frame-price-header"><span>适用范围</span><b>普通款</b><b>银框款</b></div>
-        <div className="frame-price-row"><strong>类别默认</strong>{priceInputs(category, null, 'normal')}{priceInputs(category, null, 'silver')}</div>
-        {MODEL_BRANDS.map((brand) => <div className="frame-price-row" key={brand.id}><strong>{brand.label}</strong>{priceInputs(category, brand.id, 'normal')}{priceInputs(category, brand.id, 'silver')}</div>)}
-      </div>
-    </details>)}
-  </section>
 }
 
 export function getEncodingPreviewIssues(preview: EncodingPreviewResult | null): string[] {

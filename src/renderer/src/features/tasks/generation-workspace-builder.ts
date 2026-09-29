@@ -4,6 +4,8 @@ import type { GenerationQualityCheck, GenerationWorkspaceData, PreviewCell, Prev
 import type { CropBox, ImageAnalysisResult } from '@shared/image-contracts'
 import { buildSeriesCodeReservePlan, resolveNextSeriesRecord } from '@shared/series-code'
 import { isPairedWireless, wirelessPrices, phoneModelBrand, productBusinessSpecification, sortBarcodeModelsByReference } from '@shared/product-business-rules'
+import { createDefaultProductModelSettings, productModelType, supportsSilverFrame } from '@shared/product-model-settings'
+import { resolveFrameModelPrice } from '@shared/frame-price-resolver'
 
 const USED_CODE_HEADERS = ['磁吸背盖', '出镜壳/出片壳', '出彩壳', '磁吸支架背盖', '磁吸气囊支架', 'CP002/MP16磁吸充电宝', 'CP006自带线移动电源', 'iPad保护壳', 'Macbook保护壳', '卡包', '奇趣礼盒', '奇趣壳', '奇趣气囊支架', '奇趣挂绳', '镜头框', '镜头膜']
 
@@ -42,10 +44,10 @@ const PRODUCT_SHEET_TEMPLATES: Record<ProductSheetGroup, { label: string; fields
 }
 
 function productSheetGroup(category: string): ProductSheetGroup {
-  const value = normalize(category)
-  if (value.includes('出镜壳')) return 'mirror'
-  if (value.includes('出片壳')) return 'print'
-  if (value.includes('出彩壳')) return 'color'
+  const type = productModelType(category)
+  if (type === '出镜壳') return 'mirror'
+  if (type === '出片壳') return 'print'
+  if (type === '出彩壳') return 'color'
   return 'other'
 }
 
@@ -103,7 +105,8 @@ export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAn
     { id: 'generated-product', name: '新建产品表', role: '按实际产品类型分别生成图片与条码分表；不受步骤 1 默认模板限制。', sheets: buildGeneratedProductSheets(form, overview, productRows, seriesCode, seriesUpper) }
   ] satisfies PreviewWorkbook[]).map((workbook) => ({ ...workbook, sheets: workbook.sheets.map(sealSheetWritePlan) }))
   const codes = productRows.map((row) => row.code).filter(Boolean)
-  const enabledModels = orderedBarcodeModels(form)
+  const modelCategories = [...new Set(productRows.filter((row) => requiresBarcodeModels(row.crop.productCategory)).map((row) => row.crop.productCategory))]
+  const modelSummary = modelCategories.map((category) => `${category} ${orderedBarcodeModels(form, category).length} 个`).join('；')
   const barcodeRows = buildBarcodeRows(form, productRows)
   const priceIssues = barcodePriceIssues(form, productRows)
   const imageVariants = expandProductImageRows(productRows)
@@ -112,6 +115,14 @@ export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAn
   const populatedBarcodeRows = barcodeRows.filter((row) => row[3]?.value)
   const normalBarcodeCount = populatedBarcodeRows.filter((row) => !row[3]?.value.includes('（银框）')).length
   const silverBarcodeCount = populatedBarcodeRows.filter((row) => row[3]?.value.includes('（银框）')).length
+  const expectedBarcodeCounts = productRows.reduce((counts, row) => {
+    if (!requiresBarcodeModels(row.crop.productCategory)) return { ...counts, normal: counts.normal + 1 }
+    const models = orderedBarcodeModels(form, row.crop.productCategory)
+    return {
+      normal: counts.normal + models.length,
+      silver: counts.silver + (usesSilverFrame(row.crop.productCategory) ? models.filter((model) => model.silverEnabled).length : 0)
+    }
+  }, { normal: 0, silver: 0 })
   const checks: GenerationQualityCheck[] = [
     check('base-safety', '基础表安全更新已启用', true, '05 导出可按选择生成副本，或在自动备份后覆盖 A 条码参考和国内命名表。'),
     check('overview', '全系列主图唯一', analysis.crops.filter((crop) => crop.role === 'series-overview').length === 1, overview ? '已确认 1 张全系列主图。' : '需要且只能保留 1 张全系列主图。'),
@@ -120,8 +131,8 @@ export function buildGenerationWorkspace(form: TaskDraftInput, analysis: ImageAn
     check('product-count', '产品数量对齐', products.length > 0 && products.length === encoding.rows.length, `图案 ${products.length} 项，产品 ${productRows.length} 项；无线充每图共用 PB 编码并生成 CP002 / MP16 两项。`),
     check('required-fields', '必填字段完整', productRows.every((row) => row.crop.productCategory !== '待确认' && row.crop.patternNameEn.trim() && row.code), '检查产品类别、英文图案名和产品编码。'),
     check('barcode-prices', '条码价格完整', priceIssues.length === 0, priceIssues.length ? `缺少有效价格：${priceIssues.slice(0, 6).join('；')}${priceIssues.length > 6 ? `；另有 ${priceIssues.length - 6} 项` : ''}` : '建议零售价和海外零售价已按产品类别、框型、品牌与机型逐级检查。'),
-    check('barcode-models', '条码机型已确认', productRows.every((row) => !productBusinessSpecification(row.crop.productCategory).expandsByModel || enabledModels.length > 0), `本次选用 ${enabledModels.length} 个机型。`),
-    check('frame-variant-counts', '普通款与银框款数量已核对', true, `图片表：普通款 ${normalImageCount} 行、银框款 ${silverImageCount} 行；条码表：普通款 ${normalBarcodeCount} 行、银框款 ${silverBarcodeCount} 行。`),
+    check('barcode-models', '各产品类型条码机型完整', modelCategories.every((category) => orderedBarcodeModels(form, category).length > 0), modelCategories.length ? `按产品类型独立生成：${modelSummary}。` : '本次产品均为通用款，无需选择机型。'),
+    check('frame-variant-counts', '普通款与银框款数量已核对', normalBarcodeCount === expectedBarcodeCounts.normal && silverBarcodeCount === expectedBarcodeCounts.silver, `图片表：普通款 ${normalImageCount} 行、银框款 ${silverImageCount} 行；条码表：普通款 ${normalBarcodeCount} 行、银框款 ${silverBarcodeCount} 行。`),
     check('code-rule', '产品编码规则完整', codes.length === productRows.length, `已检查 ${codes.length} 条产品编码；编码格式为 5 位数字序列。`),
     check('used-code-columns', '已使用编码按类别列完整写入', [...expectedUsedCodeColumns].every((column) => plannedUsedCodeColumns.has(column)), `本次涉及 ${expectedUsedCodeColumns.size} 个编码类别列，生成计划已逐列核对。`),
     check('sealed-write-plan', '预览与覆盖共用坐标计划', workbooks.every((workbook) => workbook.sheets.every(hasSealedWritePlan)), '04 中每个绿色单元格均已锁定 Excel 坐标；05 只能执行这些坐标。'),
@@ -359,28 +370,45 @@ function buildBarcodeRows(form: TaskDraftInput, rows: GeneratedProductRow[]): Pr
     ...preferredItemClassOrder.filter((itemClass) => groups.has(itemClass)),
     ...[...groups.keys()].filter((itemClass) => !preferredItemClassOrder.includes(itemClass))
   ]
-  const models = orderedBarcodeModels(form)
   for (const itemClass of orderedItemClasses) {
     const groupRows = groups.get(itemClass) ?? []
-    const modelRows = groupRows.filter((row) => productBusinessSpecification(row.crop.productCategory).expandsByModel)
-    const standardRows = groupRows.filter((row) => !productBusinessSpecification(row.crop.productCategory).expandsByModel)
-    for (const model of models) {
-      for (const row of modelRows) result.push(buildBarcodeRow(form, row, model, 'normal'))
-    }
-    for (const row of standardRows) result.push(buildBarcodeRow(form, row, null, 'normal'))
-    const silverRows = modelRows.filter((row) => usesSilverFrame(row.crop.productCategory))
-    const silverModels = models.filter((model) => model.silverEnabled)
-    if (silverRows.length > 0 && silverModels.length > 0) {
-      if (result.length > 0) result.push(Array.from({ length: 9 }, () => cell('', true)))
-      for (const model of silverModels) {
-        for (const row of silverRows) result.push(buildBarcodeRow(form, row, model, 'silver'))
+    for (const category of new Set(groupRows.map((row) => row.crop.productCategory))) {
+      const categoryRows = groupRows.filter((row) => row.crop.productCategory === category)
+        .sort((left, right) => compareProductCodesAscending(left.code, right.code))
+      if (!requiresBarcodeModels(category)) {
+        for (const row of categoryRows) result.push(buildBarcodeRow(form, row, null, 'normal'))
+        continue
+      }
+      const models = orderedBarcodeModels(form, category)
+      for (const model of models) {
+        for (const row of categoryRows) result.push(buildBarcodeRow(form, row, model, 'normal'))
+      }
+      const silverModels = usesSilverFrame(category) ? models.filter((model) => model.silverEnabled) : []
+      if (silverModels.length > 0) {
+        if (result.length > 0) result.push(Array.from({ length: 9 }, () => cell('', true)))
+        for (const model of silverModels) {
+          for (const row of categoryRows) result.push(buildBarcodeRow(form, row, model, 'silver'))
+        }
       }
     }
   }
   return result
 }
 
-function orderedBarcodeModels(form: TaskDraftInput): BarcodeModelSetting[] {
+function requiresBarcodeModels(category: string): boolean {
+  return Boolean(productModelType(category)) || productBusinessSpecification(category).expandsByModel
+}
+
+function orderedBarcodeModels(form: TaskDraftInput, category: string): BarcodeModelSetting[] {
+  const type = productModelType(category)
+  // An explicitly empty profile means "generate no models", not "use the
+  // legacy phone selection". Missing specialized profiles get their own
+  // defaults so a tablet/laptop/lens can never inherit a phone-case model list.
+  const profile = type ? form.productModelSettings?.[type] : undefined
+  if (profile !== undefined) return sortBarcodeModelsByReference(profile.filter((model) => model.enabled && model.name.trim()))
+  if (type === 'MacBook' || type === 'iPad' || type === '镜头膜') {
+    return sortBarcodeModelsByReference((createDefaultProductModelSettings()[type] ?? []).filter((model) => model.enabled && model.name.trim()))
+  }
   const settings: BarcodeModelSetting[] = form.modelSettings?.length
     ? form.modelSettings.filter((model) => model.enabled && model.name.trim())
     : [...new Set(form.selectedModels)].map((name, index) => ({
@@ -412,28 +440,20 @@ function buildBarcodeRow(form: TaskDraftInput, row: GeneratedProductRow, model: 
 
 function resolveBarcodePrice(form: TaskDraftInput, row: GeneratedProductRow, model: BarcodeModelSetting | null, frame: 'normal' | 'silver'): BarcodePricePair {
   const category = row.crop.productCategory
-  const categoryRule = form.framePriceRules?.[category]
-  const modelRule = model?.pricesByCategory?.[category]?.[frame]
-  const brandRule = model ? categoryRule?.brands?.[model.brand]?.[frame] : undefined
-  const categoryFrameRule = categoryRule?.[frame]
-  const fallback = usesSilverFrame(category)
-    ? frame === 'silver'
-      ? { domestic: 169, overseas: 36.99 }
-      : { domestic: 149, overseas: 31.99 }
-    : { domestic: row.crop.suggestedRetailPrice, overseas: row.crop.overseasRetailPrice }
-  return {
-    domestic: firstPrice(modelRule?.domestic, brandRule?.domestic, categoryFrameRule?.domestic, fallback.domestic),
-    overseas: firstPrice(modelRule?.overseas, brandRule?.overseas, categoryFrameRule?.overseas, fallback.overseas)
+  // Only camera/print cases expose frame pricing in step 3. Other products
+  // must keep the prices confirmed for their crop in step 2, including null
+  // values that quality checks must reject instead of masking with old rules.
+  if (!usesSilverFrame(category)) {
+    return { domestic: row.crop.suggestedRetailPrice, overseas: row.crop.overseasRetailPrice }
   }
+  return resolveFrameModelPrice({ category, model, frame, rules: form.framePriceRules })
 }
 
 function barcodePriceIssues(form: TaskDraftInput, rows: GeneratedProductRow[]): string[] {
   const issues: string[] = []
-  const models = orderedBarcodeModels(form)
   for (const row of rows) {
-    const specification = productBusinessSpecification(row.crop.productCategory)
-    const targets: Array<{ model: BarcodeModelSetting | null; frame: 'normal' | 'silver' }> = specification.expandsByModel
-      ? models.flatMap((model) => [
+    const targets: Array<{ model: BarcodeModelSetting | null; frame: 'normal' | 'silver' }> = requiresBarcodeModels(row.crop.productCategory)
+      ? orderedBarcodeModels(form, row.crop.productCategory).flatMap((model) => [
           { model, frame: 'normal' as const },
           ...(usesSilverFrame(row.crop.productCategory) && model.silverEnabled ? [{ model, frame: 'silver' as const }] : [])
         ])
@@ -447,13 +467,8 @@ function barcodePriceIssues(form: TaskDraftInput, rows: GeneratedProductRow[]): 
   return [...new Set(issues)]
 }
 
-function firstPrice(...values: Array<number | null | undefined>): number | null {
-  return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0) ?? null
-}
-
 function usesSilverFrame(category: string): boolean {
-  const normalized = normalize(category)
-  return normalized.includes(normalize('出镜壳')) || normalized.includes(normalize('出片壳'))
+  return supportsSilverFrame(category)
 }
 
 function containerImageLayout(layout: { containerWidthPx: number; containerHeightPx: number; imageWidth: number; imageHeight: number }): NonNullable<PreviewCell['imageLayout']> {

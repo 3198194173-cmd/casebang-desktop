@@ -286,7 +286,7 @@ function buildProductSheet(
     headerCells,
     rows: imageRows.map(({ row: { crop, code, barcode, patternUpper, fileName }, frame }) => template.fields.map((field) => {
       switch (field) {
-        case 'barcode': return cell(group === 'print' && frame === 'silver' ? `${barcode}（银框）` : barcode, true)
+        case 'barcode': return cell(frame === 'silver' ? `${barcode}（银框）` : barcode, true)
         case 'image': return imageCell(crop, true, containerImageLayout({
           containerWidthPx: 120,
           containerHeightPx: 92,

@@ -419,6 +419,8 @@ describe('generated product workbook business flow', () => {
     expect(images.rows[0]?.[1]?.cropId).toBe('mirror-case')
     expect(images.rows[1]?.[1]?.cropId).toBe('mirror-case')
     expect(images.rows[0]?.[7]?.value).toBe(images.rows[1]?.[7]?.value)
+    expect(images.rows[0]?.[0]?.value).not.toContain('（银框）')
+    expect(images.rows[1]?.[0]?.value).toBe(`${images.rows[0]?.[0]?.value}（银框）`)
 
     expect(barcodes.rows).toHaveLength(4)
     expect(barcodes.rows[0]?.[3]?.value).toContain('iP Fold (Duo)')
@@ -433,26 +435,29 @@ describe('generated product workbook business flow', () => {
     expect(barcodes.rows.some((row) => row[3]?.value.includes('SAM Fold 8（银框）'))).toBe(false)
   })
 
-  it('puts all normal 出片壳 images before the silver images in a new-series workbook', () => {
+  it.each(['出镜壳', '出片壳', '出片材'])('puts all normal %s images before silver images with a name suffix in a new-series workbook', (category) => {
     const analysis = analysisFixture()
-    analysis.crops = [analysis.crops[0]!, ...analysis.crops.slice(1).map((crop) => ({ ...crop, productCategory: '出片壳' }))]
+    analysis.crops = [analysis.crops[0]!, ...analysis.crops.slice(1).map((crop) => ({ ...crop, productCategory: category }))]
     const encoding = encodingFixture()
-    encoding.rows = encoding.rows.map((row, index) => ({ ...row, productCategory: '出片壳', productCode: `CJ0000${index + 1}` }))
+    encoding.rows = encoding.rows.map((row, index) => ({ ...row, productCategory: category, productCode: `CJ0000${index + 1}` }))
     const form: TaskDraftInput = {
-      templateName: '出片壳', seriesNameZh: '测试', seriesNameEn: 'Test Series', ipRemark: '',
+      templateName: category === '出镜壳' ? '出镜壳' : '出片壳', seriesNameZh: '测试', seriesNameEn: 'Test Series', ipRemark: '',
       selectedModels: ['iP13 Pro'], modelBrandAssignments: {}, masterImagePath: analysis.sourceImagePath
     }
     const generated = buildGenerationWorkspace(form, analysis, encoding, [])
       .workbooks.find((book) => book.id === 'generated-product')!
-    const imageSheet = generated.sheets.find((sheet) => sheet.id === 'generated-products-print')!
-    expect(imageSheet.columns).toHaveLength(10)
-    expect(imageSheet.columns[3]).toBe('系列名称')
+    const group = category === '出镜壳' ? 'mirror' : 'print'
+    const codeColumn = group === 'mirror' ? 7 : 6
+    const imageSheet = generated.sheets.find((sheet) => sheet.id === `generated-products-${group}`)!
+    expect(imageSheet.columns).toHaveLength(group === 'mirror' ? 11 : 10)
+    expect(imageSheet.columns[group === 'mirror' ? 4 : 3]).toBe('系列名称')
     const images = imageSheet.rows
-    expect(images.map((row) => [row[6]?.value, row[2]?.value])).toEqual([
+    expect(images.map((row) => [row[codeColumn]?.value, row[2]?.value])).toEqual([
       ['CJ00001', ''], ['CJ00002', ''], ['CJ00001', '银框'], ['CJ00002', '银框']
     ])
-    expect(images[2]?.[0]?.value).toContain('（银框）')
-    const barcodes = generated.sheets.find((sheet) => sheet.id === 'generated-barcodes-print')!.rows
+    expect(images.slice(0, 2).every((row) => !row[0]?.value.includes('（银框）'))).toBe(true)
+    expect(images.slice(2).map((row) => row[0]?.value)).toEqual(images.slice(0, 2).map((row) => `${row[0]?.value}（银框）`))
+    const barcodes = generated.sheets.find((sheet) => sheet.id === `generated-barcodes-${group}`)!.rows
     expect(barcodes.map((row) => row[3]?.value.includes('（银框）'))).toEqual([false, false, false, true, true])
   })
 
@@ -494,6 +499,8 @@ describe('generated product workbook business flow', () => {
       expect(generated.sheets[2]?.rows[0]?.[7]?.value).toBe('CJ00001')
       expect(generated.sheets[4]?.rows[0]?.[6]?.value).toBe('CJ00002')
       expect(generated.sheets[6]?.rows[0]?.[6]?.value).toBe('CCK00001')
+      expect(generated.sheets[6]?.rows).toHaveLength(1)
+      expect(generated.sheets[6]?.rows[0]?.[0]?.value).not.toContain('（银框）')
       expect(workspace.checks.find((check) => check.id === 'generated-product-sheets')?.passed).toBe(true)
       const destination = join(directory, 'generated.xlsx')
       const request = exportGenerationWorkbookInputSchema.parse({
@@ -501,8 +508,16 @@ describe('generated product workbook business flow', () => {
         sourcePaths: { namingFormula: 'formula.xlsx', barcodeReference: 'barcode.xlsx', domesticNaming: 'domestic.xlsx' },
         imageSource: { path: analysis.sourceImagePath, crops: analysis.crops }, selectedWorkbookIds: ['generated-product']
       })
-      await exportFormatPreservingWorkbook(resolve(__dirname, '../resources/generated-product-template.xlsx'), destination, generated, request)
+      const templatePath = resolve(__dirname, '../resources/generated-product-template.xlsx')
+      await exportFormatPreservingWorkbook(templatePath, destination, generated, request)
       const entries = await readOoxmlPackage(destination)
+      const templateEntries = await readOoxmlPackage(templatePath)
+      expect(findPackageText(entries, 'xl/styles.xml')).toBe(findPackageText(templateEntries, 'xl/styles.xml'))
+      const templateWorkbookXml = findPackageText(templateEntries, 'xl/workbook.xml')!
+      const templateImageRelationshipId = /<sheet\b[^>]*name="图片"[^>]*r:id="([^"]+)"/.exec(templateWorkbookXml)![1]
+      const templateRelationships = findPackageText(templateEntries, 'xl/_rels/workbook.xml.rels')!
+      const templateImageTarget = new RegExp(`<Relationship\\b[^>]*Id="${templateImageRelationshipId}"[^>]*Target="([^"]+)"`).exec(templateRelationships)![1]!
+      const templateImageXml = findPackageText(templateEntries, posix.join('xl', templateImageTarget))!
       const workbookXml = findPackageText(entries, 'xl/workbook.xml') ?? ''
       expect([...workbookXml.matchAll(/<sheet\b[^>]*name="([^"]+)"/g)].map((match) => match[1])).toEqual(generated.sheets.map((sheet) => sheet.name))
       const relationships = findPackageText(entries, 'xl/_rels/workbook.xml.rels') ?? ''
@@ -512,6 +527,20 @@ describe('generated product workbook business flow', () => {
       })
       expect(new Set(worksheetTargets).size).toBe(8)
       expect(worksheetTargets.every((target) => findPackageText(entries, target) !== null)).toBe(true)
+      for (const index of [2, 4]) {
+        const xml = findPackageText(entries, worksheetTargets[index]!)!
+        const normalName = generated.sheets[index]!.rows[0]![0]!.value
+        for (const rowNumber of [2, 3]) {
+          const pattern = new RegExp(`<c\\b[^>]*r="A${rowNumber}"[^>]*>[\\s\\S]*?</c>`)
+          const nameCellXml = pattern.exec(xml)?.[0] ?? ''
+          const templateCellXml = pattern.exec(templateImageXml)?.[0] ?? ''
+          expect(nameCellXml).toContain(`${normalName}${rowNumber === 3 ? '（银框）' : ''}</t>`)
+          expect(templateCellXml).not.toBe('')
+          const templateStyle = /\bs="([^"]+)"/.exec(templateCellXml)?.[1]
+          expect(templateStyle).toBeDefined()
+          expect(/\bs="([^"]+)"/.exec(nameCellXml)?.[1]).toBe(templateStyle)
+        }
+      }
       expect(entries.filter((entry) => /^xl\/drawings\/drawing\d+\.xml$/.test(entry.path) && entry.buffer?.toString().includes('CASEBANG 图片'))).toHaveLength(4)
     } finally {
       await rm(directory, { recursive: true, force: true })
@@ -571,6 +600,8 @@ describe('generated product workbook business flow', () => {
       expect(mirrorImages.rows.map((row) => row[1]?.cropId)).toEqual(['case-first', 'case-second', 'case-first', 'case-second'])
       expect(mirrorImages.rows.map((row) => row[7]?.value)).toEqual(['CJ00001', 'CJ00003', 'CJ00001', 'CJ00003'])
       expect(mirrorImages.rows.map((row) => row[2]?.value)).toEqual(['', '', '银框', '银框'])
+      expect(mirrorImages.rows.slice(0, 2).every((row) => !row[0]?.value.includes('（银框）'))).toBe(true)
+      expect(mirrorImages.rows.slice(2).map((row) => row[0]?.value)).toEqual(mirrorImages.rows.slice(0, 2).map((row) => `${row[0]?.value}（银框）`))
       const otherBarcodeRows = generated.sheets.find((sheet) => sheet.id === 'generated-barcodes-other')!.rows.filter((row) => row[3]?.value)
       const mirrorBarcodeRows = generated.sheets.find((sheet) => sheet.id === 'generated-barcodes-mirror')!.rows.filter((row) => row[3]?.value)
       expect(otherBarcodeRows.map((row) => row[0]?.value)).toEqual(['单个片材', '单个片材'])
@@ -590,6 +621,10 @@ describe('generated product workbook business flow', () => {
       expect(otherXml).not.toMatch(/<c\b[^>]*r="K\d+"/)
       expect(mirrorXml).toContain('r="K2"')
       expect(mirrorXml).not.toContain('BG00004')
+      for (const rowNumber of [4, 5]) {
+        const nameCellXml = new RegExp(`<c\\b[^>]*r="A${rowNumber}"[^>]*>[\\s\\S]*?</c>`).exec(mirrorXml)?.[0] ?? ''
+        expect(nameCellXml).toContain('（银框）</t>')
+      }
       expect(entries.filter((entry) => /^xl\/drawings\/drawing\d+\.xml$/.test(entry.path) && entry.buffer?.toString().includes('CASEBANG 图片'))).toHaveLength(2)
       const drawingEntry = entries.find((entry) => /^xl\/drawings\/drawing\d+\.xml$/.test(entry.path) && entry.buffer?.toString().includes('CASEBANG 图片'))!
       expect(drawingEntry).toBeDefined()
